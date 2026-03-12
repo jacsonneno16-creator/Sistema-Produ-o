@@ -1,0 +1,28 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isAuth()   { return request.auth != null; }
+    function nivel()    { return get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.nivel; }
+    function isAtivo()  { return get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.ativo == true; }
+    function isAdmin()  { return isAuth() && isAtivo() && nivel() == 'admin'; }
+    function isPlan()   { return isAuth() && isAtivo() && nivel() in ['admin','planejamento']; }
+    function isOper()   { return isAuth() && isAtivo() && nivel() in ['admin','planejamento','operador']; }
+    function isAny()    { return isAuth() && isAtivo(); }
+
+    match /usuarios/{uid} {
+      allow read:  if isAuth() && (request.auth.uid == uid || isAdmin());
+      allow write: if isAdmin();
+    }
+    match /registros/{id}             { allow read: if isAny(); allow write: if isPlan(); }
+    match /maquinas/{id}              { allow read: if isAny(); allow write: if isPlan(); }
+    match /insumos/{id}               { allow read: if isAny(); allow write: if isPlan(); }
+    match /fichas/{id}                { allow read: if isAny(); allow write: if isPlan(); }
+    match /apontamentos/{id}          { allow read: if isAny(); allow write: if isOper(); }
+    match /apontamentos_producao/{id} { allow read: if isAny(); allow write: if isOper(); }
+    match /programacao_producao/{id}  { allow read: if isAny(); allow write: if isPlan(); }
+    match /Producao/{id}              { allow read: if isAny(); allow write: if isPlan(); }
+    match /auditoria/{id}             { allow read: if isAdmin(); allow write: if isAuth(); }
+    match /configuracoes/{id}         { allow read: if isAny(); allow write: if isPlan(); }
+  }
+}

@@ -1,0 +1,1904 @@
+// ============================================================
+//  app.js — PROGPROD MES v2 — Controlador principal
+// ============================================================
+import { initAuth, login, logout, currentUser, canAccess, NIVEL_META, PERMS } from './auth.js';
+import * as db from './db.js';
+
+// ── Chart.js defaults ─────────────────────────────────────────
+if (typeof Chart !== 'undefined') {
+  Chart.defaults.color = '#6b8499';
+  Chart.defaults.borderColor = '#1c2b3a';
+  Chart.defaults.font.family = "'JetBrains Mono', monospace";
+  Chart.defaults.font.size = 10;
+  Chart.defaults.plugins.legend.labels.boxWidth = 10;
+  Chart.defaults.plugins.legend.labels.padding = 14;
+}
+const charts = {};
+
+// ── Estado global ─────────────────────────────────────────────
+let registros   = [];     // todos os registros Firestore
+let maquinas    = [];     // lista de máquinas
+let aponTotals  = {};     // { registroId: totalUnidades }
+let activePanel = '';
+let insumosCache = [];
+let fichasCache = [];
+let baseMaqProdCache = [];
+let semanaBaseInsumos = getMonday(new Date());
+
+// ── Utilidades ────────────────────────────────────────────────
+const $ = id => document.getElementById(id);
+const fmtN = n => (n||0).toLocaleString('pt-BR');
+const fmtD = d => new Date(d).toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'});
+const dateStr = d => d.toISOString().slice(0,10);
+const today = () => dateStr(new Date());
+function getMonday(date) {
+  const d = new Date(date); const day = d.getDay();
+  d.setDate(d.getDate() + (day===0?-6:1-day)); d.setHours(0,0,0,0); return d;
+}
+function calcMin(r) {
+  const u = (r.qntCaixas||0)*(r.unidPorCx||0);
+  return (r.pcMin>0 && u>0) ? Math.round(u/r.pcMin) : 0;
+}
+function fmtMin(min) {
+  if(!min) return '—';
+  const h=Math.floor(min/60), m=min%60;
+  return h>0 ? `${h}h${m>0?m+'min':''}` : `${m}min`;
+}
+
+// ── Toast ─────────────────────────────────────────────────────
+export function toast(msg, type='ok', dur=3500) {
+  const wrap = $('toast-wrap'); if(!wrap) return;
+  const el = document.createElement('div');
+  el.className = 'toast '+type;
+  const ico = type==='ok'?'✓':type==='err'?'✕':'⚠';
+  el.innerHTML = `<span style="font-size:15px">${ico}</span><span>${msg}</span>`;
+  wrap.appendChild(el);
+  setTimeout(()=>{ el.style.animation='toastIn .28s ease reverse'; setTimeout(()=>el.remove(),280); }, dur);
+}
+
+// ================================================================
+//  LOGIN
+// ================================================================
+function showLogin() {
+  $('loading-screen').style.display = 'none';
+  $('login-screen').style.display  = 'flex';
+  $('login-screen').classList.remove('out');
+  $('app').hidden = true;
+}
+
+async function handleLogin() {
+  const email = $('lf-email').value.trim();
+  const pass  = $('lf-pass').value;
+  const btn   = $('lf-btn');
+  const err   = $('lf-error');
+  if(!email||!pass) return;
+  btn.disabled = true; btn.textContent = 'Autenticando...';
+  err.classList.remove('on');
+  try {
+    await login(email, pass);
+    // onAuthStateChanged vai disparar bootApp
+  } catch(e) {
+    err.textContent = e.code==='auth/invalid-credential'
+      ? 'Email ou senha incorretos.'
+      : e.message;
+    err.classList.add('on');
+    btn.disabled = false; btn.textContent = 'Acessar Sistema →';
+  }
+}
+
+// ================================================================
+//  APP BOOT
+// ================================================================
+async function bootApp(user) {
+  $('login-screen').classList.add('out');
+  setTimeout(()=>{ $('login-screen').style.display='none'; }, 400);
+  $('app').hidden = false;
+  $('loading-screen').style.display = 'none';
+
+  // Sidebar user info
+  const ri = NIVEL_META[user.nivel] || NIVEL_META.visualizacao;
+  const av = $('sb-avatar');
+  if(av) { av.textContent=(user.nome||user.email||'U')[0].toUpperCase(); av.style.background=ri.bg; av.style.color=ri.color; }
+  const nm=$('sb-uname'); if(nm) nm.textContent=user.nome||user.email;
+  const rl=$('sb-urole'); if(rl) rl.textContent=ri.label;
+
+  buildSidebar();
+  startListeners();
+  navigate('dashboard');
+}
+
+// ================================================================
+//  REAL-TIME LISTENERS
+// ================================================================
+function startListeners() {
+  db.onRegistros(recs => {
+    registros = recs;
+    // Rebuild apon totals async
+    if(recs.length) {
+      db.buildAponTotals(recs.map(r=>r.id)).then(t=>{ aponTotals=t; refreshActivePanel(); });
+    }
+    refreshActivePanel();
+  });
+
+  db.onMaquinas(maqs => {
+    maquinas = maqs;
+    refreshActivePanel();
+  });
+}
+
+function refreshActivePanel() {
+  if(activePanel) renderPanel(activePanel);
+}
+
+// ================================================================
+//  SIDEBAR & ROUTING
+// ================================================================
+const NAV = [
+  { id:'dashboard',      icon:'📊', label:'Dashboard',            grp:'PRINCIPAL' },
+  { id:'planejamento',   icon:'🧠', label:'Planejamento Auto',     grp:'PRINCIPAL' },
+  { id:'programacao',    icon:'📋', label:'Programação',           grp:'PRODUÇÃO'  },
+  { id:'gantt',          icon:'📅', label:'Gantt',                 grp:'PRODUÇÃO'  },
+  { id:'producao',       icon:'🔨', label:'Produção do Dia',       grp:'PRODUÇÃO'  },
+  { id:'maquinas',       icon:'🏭', label:'Máquinas',              grp:'PRODUÇÃO'  },
+  { id:'insumosmaq',     icon:'🧪', label:'Insumos por Máquina',    grp:'GESTÃO'    },
+  { id:'insumosgeral',   icon:'📦', label:'Insumos Geral',          grp:'GESTÃO'    },
+  { id:'realizado',      icon:'✅', label:'Realizado',              grp:'GESTÃO'    },
+  { id:'fichatecnica',   icon:'📝', label:'Ficha Técnica',          grp:'GESTÃO'    },
+  { id:'relatorios',     icon:'📈', label:'Relatórios',            grp:'GESTÃO'    },
+  { id:'usuarios',       icon:'👤', label:'Usuários',              grp:'SISTEMA'   },
+];
+
+function buildSidebar() {
+  const nav = $('sb-nav'); if(!nav) return;
+  let html=''; let lastGrp='';
+  NAV.forEach(item => {
+    if(item.grp!==lastGrp){ html+=`<div class="sb-grp">● ${item.grp}</div>`; lastGrp=item.grp; }
+    const locked = !canAccess(item.id);
+    html+=`<div class="sb-item${locked?' lock':''}" id="nav-${item.id}" 
+      title="${item.label}${locked?' (sem permissão)':''}"
+      onclick="${locked?'toast(\'Sem permissão para este módulo.\',\'warn\')':'navigate(\''+item.id+'\')'}"
+    ><span class="sb-icon">${item.icon}</span><span class="sb-lbl">${item.label}</span></div>`;
+  });
+  nav.innerHTML = html;
+}
+
+export function navigate(id) {
+  if(!canAccess(id)) { toast('Sem permissão para este módulo.','warn'); return; }
+  activePanel = id;
+  document.querySelectorAll('.sb-item').forEach(el=>el.classList.toggle('active', el.id==='nav-'+id));
+  const item = NAV.find(n=>n.id===id);
+  const bc = $('tb-bc');
+  if(bc) bc.innerHTML=`<span>PROGPROD MES</span><span style="opacity:.4">/</span><span class="cur">${item?.label||id}</span>`;
+  document.querySelectorAll('.panel').forEach(p=>p.classList.remove('on'));
+  const panel = $('panel-'+id);
+  if(panel) panel.classList.add('on');
+  renderPanel(id);
+  if(window.innerWidth<768) $('sidebar').classList.add('col');
+}
+
+function renderPanel(id) {
+  switch(id){
+    case 'dashboard':    renderDashboard();    break;
+    case 'planejamento': renderPlanejamento(); break;
+    case 'programacao':  renderProgramacao();  break;
+    case 'gantt':        renderGantt();        break;
+    case 'producao':     renderProducao();     break;
+    case 'maquinas':     renderMaquinas();      break;
+    case 'insumosmaq':   renderInsumosMaq();    break;
+    case 'insumosgeral': renderInsumosGeral();  break;
+    case 'realizado':    renderRealizado();     break;
+    case 'fichatecnica': renderFichaTecnica();  break;
+    case 'relatorios':   renderRelatorios();    break;
+    case 'configuracoes':renderConfiguracoes(); break;
+    case 'usuarios':     renderUsuarios();      break;
+  }
+}
+
+export function toggleSidebar() {
+  $('sidebar').classList.toggle('col');
+}
+
+// ================================================================
+//  DASHBOARD
+// ================================================================
+function renderDashboard() {
+  const p = $('panel-dashboard'); if(!p) return;
+  const now = new Date();
+  const mon = getMonday(now);
+  const sun = new Date(mon); sun.setDate(sun.getDate()+6);
+  const ms=dateStr(mon), se=dateStr(sun);
+
+  const semana  = registros.filter(r=>{ const dt=r.dtDesejada||r.dtSolicitacao||''; return dt>=ms&&dt<=se; });
+  const progSem = semana.reduce((a,r)=>a+(r.qntCaixas||0),0);
+  const realSem = semana.reduce((a,r)=>a+(aponTotals[r.id]||0),0);
+  const efic    = progSem>0 ? Math.round(realSem/progSem*100) : 0;
+  const maqAtivas= [...new Set(semana.filter(r=>r.status!=='Concluído').map(r=>r.maquina))].length;
+  const pendentes= registros.filter(r=>r.status==='Pendente').length;
+  const concl    = registros.filter(r=>r.status==='Concluído').length;
+
+  const wData = buildWeeklyData(8);
+  const maqLoad = buildMaqLoad();
+
+  p.innerHTML = `
+    <div class="pg-hd">
+      <h1 class="pg-title">📊 Dashboard Industrial</h1>
+      <div class="pg-sub">Semana ${fmtD(mon)} – ${fmtD(sun)} · atualizado em tempo real</div>
+    </div>
+
+    <div class="kpi-grid">
+      <div class="kpi" style="--kc:var(--cyan)">
+        <div class="kpi-lbl">Programado — Semana</div>
+        <div class="kpi-val">${fmtN(progSem)}</div>
+        <div class="kpi-trend">caixas programadas</div>
+      </div>
+      <div class="kpi" style="--kc:${efic>=90?'var(--green)':efic>=60?'var(--amber)':'var(--red)'}">
+        <div class="kpi-lbl">Eficiência</div>
+        <div class="kpi-val">${registros.length?efic+'%':'—'}</div>
+        <div class="kpi-trend ${efic>=90?'up':efic>=60?'':'dn'}">${efic>=90?'▲ Acima da meta':efic>=60?'● Na média':'▼ Abaixo da meta'}</div>
+      </div>
+      <div class="kpi" style="--kc:var(--purple)">
+        <div class="kpi-lbl">Máquinas Ativas</div>
+        <div class="kpi-val">${maqAtivas}</div>
+        <div class="kpi-trend">esta semana</div>
+      </div>
+      <div class="kpi" style="--kc:var(--amber)">
+        <div class="kpi-lbl">Ordens Pendentes</div>
+        <div class="kpi-val">${pendentes}</div>
+        <div class="kpi-trend">${concl} concluídas no total</div>
+      </div>
+    </div>
+
+    <div class="g2" style="margin-bottom:14px">
+      <div class="card">
+        <div class="card-hd">
+          <span class="card-ttl">📈 PRODUÇÃO SEMANAL — Últimas 8 semanas</span>
+          <span class="badge b-cyan">Prog. vs Real</span>
+        </div>
+        <div class="chart-wrap"><canvas id="chart-weekly"></canvas></div>
+      </div>
+
+      <div class="card">
+        <div class="card-hd">
+          <span class="card-ttl">🏭 GARGALO — Utilização de Máquinas</span>
+          <button class="btn btn-ghost btn-sm" onclick="navigate('maquinas')">Ver todas →</button>
+        </div>
+        <div class="card-bd">
+          ${maqLoad.length ? maqLoad.map(m=>{
+            const c=m.pct>=95?'var(--red)':m.pct>=80?'var(--amber)':m.pct>=40?'var(--cyan)':'var(--text3)';
+            return `<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+              <div style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text2);width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${m.nome}</div>
+              <div style="flex:1;height:7px;background:var(--s3);border-radius:4px;overflow:hidden">
+                <div style="height:100%;border-radius:4px;width:${m.pct}%;background:${c}"></div>
+              </div>
+              <div style="font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:700;width:36px;text-align:right;color:${c}">${m.pct}%</div>
+            </div>`;
+          }).join('') : '<div class="empty-st" style="padding:20px"><div class="ei">🏭</div>Sem dados de máquinas</div>'}
+        </div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:14px">
+      <div class="card-hd">
+        <span class="card-ttl">🗺️ MAPA DA FÁBRICA</span>
+      </div>
+      <div class="card-bd">
+        <div id="mapa-fabrica"></div>
+      </div>
+    </div>
+
+    <div class="g2">
+      <div class="card">
+        <div class="card-hd">
+          <span class="card-ttl">📋 ÚLTIMAS PROGRAMAÇÕES</span>
+          <button class="btn btn-ghost btn-sm" onclick="navigate('programacao')">Ver todas →</button>
+        </div>
+        <div class="tbl-wrap" style="border:none;border-radius:0">
+          <table>
+            <thead><tr><th>Produto</th><th>Máquina</th><th style="text-align:right">Cx</th><th>Status</th></tr></thead>
+            <tbody>${buildRecentRows()}</tbody>
+          </table>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-hd">
+          <span class="card-ttl">🔔 ALERTAS</span>
+        </div>
+        <div class="card-bd">
+          <div class="alerts">${buildAlerts()}</div>
+        </div>
+      </div>
+    </div>`;
+
+  setTimeout(()=>drawWeeklyChart(wData), 80);
+
+  setTimeout(async () => {
+    const container = $('mapa-fabrica');
+    if (!container) return;
+
+    try {
+      const mod = await import('./mapaFabrica.js');
+
+      const cargaMaquinas = {};
+      const ativos = registros.filter(r => r.status !== 'Concluído');
+
+      ativos.forEach(r => {
+        if (!r.maquina) return;
+        if (!cargaMaquinas[r.maquina]) {
+          cargaMaquinas[r.maquina] = {
+            capacidadeMin: 44 * 60,
+            usado: 0
+          };
+        }
+        cargaMaquinas[r.maquina].usado += calcMin(r);
+      });
+
+      const mapa = mod.gerarMapaFabrica(cargaMaquinas);
+      mod.renderMapaFabrica(mapa, container);
+    } catch (e) {
+      console.error('Erro ao renderizar mapa da fábrica:', e);
+    }
+  }, 120);
+}
+
+function buildWeeklyData(n) {
+  const data=[];
+  for(let i=n-1;i>=0;i--){
+    const mon=getMonday(new Date()); mon.setDate(mon.getDate()-i*7);
+    const sun=new Date(mon); sun.setDate(sun.getDate()+6);
+    const ms=dateStr(mon), se=dateStr(sun);
+    const week=registros.filter(r=>{const dt=r.dtDesejada||r.dtSolicitacao||'';return dt>=ms&&dt<=se;});
+    const prog=week.reduce((a,r)=>a+(r.qntCaixas||0),0);
+    const real=week.reduce((a,r)=>a+(aponTotals[r.id]||0),0);
+    data.push({label:fmtD(mon),prog,real});
+  }
+  return data;
+}
+
+function drawWeeklyChart(data) {
+  if(typeof Chart==='undefined') return;
+  const canvas=$('chart-weekly'); if(!canvas) return;
+  if(charts['weekly']){charts['weekly'].destroy();}
+  charts['weekly']=new Chart(canvas,{
+    type:'bar',
+    data:{
+      labels:data.map(d=>d.label),
+      datasets:[
+        {label:'Programado',data:data.map(d=>d.prog),backgroundColor:'rgba(0,229,204,.2)',borderColor:'#00e5cc',borderWidth:1.5,borderRadius:4},
+        {label:'Realizado', data:data.map(d=>d.real),backgroundColor:'rgba(34,211,164,.3)',borderColor:'#22d3a4',borderWidth:1.5,borderRadius:4},
+      ]
+    },
+    options:{responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{labels:{color:'#6b8499'}}},
+      scales:{x:{grid:{color:'rgba(28,43,58,.6)'},ticks:{color:'#6b8499'}},y:{grid:{color:'rgba(28,43,58,.6)'},ticks:{color:'#6b8499'},min:0}}
+    }
+  });
+}
+
+function buildMaqLoad() {
+  const map={};
+  registros.filter(r=>r.status!=='Concluído').forEach(r=>{
+    if(!map[r.maquina]) map[r.maquina]={nome:r.maquina,min:0,ordens:0};
+    map[r.maquina].min   += calcMin(r);
+    map[r.maquina].ordens++;
+  });
+  return Object.values(map).map(m=>({...m, pct:Math.min(200,Math.round(m.min/(44*60)*100))}))
+    .sort((a,b)=>b.pct-a.pct).slice(0,8);
+}
+
+function buildRecentRows() {
+  const recs=[...(registros||[])].sort((a,b)=>b.criadoEm?.seconds-a.criadoEm?.seconds||0).slice(0,8);
+  if(!recs.length) return `<tr><td colspan="4"><div class="empty-st"><div class="ei">📋</div>Sem registros</div></td></tr>`;
+  const bMap={Pendente:'b-amber','Em Andamento':'b-cyan',Concluído:'b-green'};
+  return recs.map(r=>`<tr>
+    <td style="max-width:180px;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${r.produto}">${r.produto||'—'}</td>
+    <td><span class="badge b-purple" style="font-size:9px">${r.maquina||'—'}</span></td>
+    <td style="text-align:right;font-family:'JetBrains Mono',monospace;color:var(--cyan);font-weight:600">${fmtN(r.qntCaixas)}</td>
+    <td><span class="badge ${bMap[r.status]||'b-mute'}" style="font-size:9px">${r.status||'—'}</span></td>
+  </tr>`).join('');
+}
+
+function buildAlerts() {
+  const alerts=[];
+  // Máquinas sobrecarregadas
+  buildMaqLoad().filter(m=>m.pct>=90).forEach(m=>{
+    alerts.push({tp:'err',icon:'🔴',title:`Sobrecarga: ${m.nome}`,desc:`${m.ordens} ordens ativas · ${m.pct}% utilização`});
+  });
+  // Ordens atrasadas
+  const atrasadas=registros.filter(r=>r.status!=='Concluído'&&r.dtDesejada&&r.dtDesejada<today());
+  if(atrasadas.length) alerts.push({tp:'warn',icon:'⚠️',title:`${atrasadas.length} ordens com data vencida`,desc:'Verifique a programação e reagende as ordens'});
+  // Ordens sem máquina
+  const semMaq=registros.filter(r=>!r.maquina&&r.status==='Pendente').length;
+  if(semMaq) alerts.push({tp:'warn',icon:'🟡',title:`${semMaq} ordens sem máquina`,desc:'Atribua máquinas antes de iniciar a produção'});
+  if(!alerts.length) alerts.push({tp:'ok',icon:'✅',title:'Tudo em ordem',desc:'Nenhum alerta crítico no momento'});
+  const cMap={err:'var(--red)',warn:'var(--amber)',ok:'var(--green)'};
+  return alerts.map(a=>`<div class="alert-item" style="--ac:${cMap[a.tp]}"><span style="font-size:16px">${a.icon}</span><div><div class="a-title">${a.title}</div><div class="a-desc">${a.desc}</div></div></div>`).join('');
+}
+
+// ================================================================
+//  PLANEJAMENTO AUTOMÁTICO
+// ================================================================
+function renderPlanejamento() {
+  const p=$('panel-planejamento'); if(!p) return;
+  const pending=registros.filter(r=>r.status==='Pendente');
+  const inProg =registros.filter(r=>r.status==='Em Andamento');
+
+  p.innerHTML=`
+    <div class="pg-hd">
+      <h1 class="pg-title">🧠 Planejamento Automático</h1>
+      <div class="pg-sub">Sequenciamento inteligente e previsão de gargalos</div>
+    </div>
+
+    <div class="kpi-grid" style="grid-template-columns:repeat(3,1fr)">
+      <div class="kpi" style="--kc:var(--amber)"><div class="kpi-lbl">Aguardando</div><div class="kpi-val">${pending.length}</div><div class="kpi-trend">ordens pendentes</div></div>
+      <div class="kpi" style="--kc:var(--cyan)"><div class="kpi-lbl">Em Andamento</div><div class="kpi-val">${inProg.length}</div><div class="kpi-trend">em produção</div></div>
+      <div class="kpi" style="--kc:var(--green)"><div class="kpi-lbl">Eficiência Geral</div>
+        <div class="kpi-val">${(()=>{const t=registros.reduce((a,r)=>a+(r.qntCaixas||0),0);const rl=registros.reduce((a,r)=>a+(aponTotals[r.id]||0),0);return t>0?Math.round(rl/t*100)+'%':'—';})()}</div>
+        <div class="kpi-trend">programado vs realizado</div>
+      </div>
+    </div>
+
+    <div class="g2" style="margin-bottom:14px">
+      <div class="card">
+        <div class="card-hd">
+          <span class="card-ttl">⚡ MOTOR DE SEQUENCIAMENTO</span>
+          <button class="btn btn-primary btn-sm" id="btn-seq" onclick="runSeq()">▶ Executar</button>
+        </div>
+        <div class="card-bd">
+          <p style="font-size:12px;color:var(--text2);line-height:1.7;margin-bottom:14px">
+            Organiza as ordens por máquina minimizando a troca de produto.<br>
+            <strong style="color:var(--text)">Critérios:</strong> produto similar → data desejada → volume → cliente
+          </p>
+          <div id="seq-result" style="background:var(--s2);border:1px solid var(--border);border-radius:var(--r);padding:14px;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text3);min-height:100px;white-space:pre-wrap">
+Clique em "Executar" para rodar o sequenciamento automático.</div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-hd">
+          <span class="card-ttl">🎯 SIMULADOR DE PEDIDO</span>
+          <button class="btn btn-ghost btn-sm" onclick="navigate('simulador')">Abrir →</button>
+        </div>
+        <div class="card-bd">
+          <div class="form-row fr2">
+            <div class="fgrp"><label class="flbl">Produto</label><input id="sim-prod" class="finp" placeholder="Nome do produto" oninput="simCalc()"></div>
+            <div class="fgrp"><label class="flbl">Caixas</label><input id="sim-cx" class="finp" type="number" value="1000" oninput="simCalc()"></div>
+            <div class="fgrp"><label class="flbl">Peças/min</label><input id="sim-pcm" class="finp" type="number" value="60" oninput="simCalc()"></div>
+            <div class="fgrp"><label class="flbl">Un/Caixa</label><input id="sim-ucx" class="finp" type="number" value="12" oninput="simCalc()"></div>
+          </div>
+          <div id="sim-res" style="font-size:12px;color:var(--text2)">Preencha os campos para simular.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-hd">
+        <span class="card-ttl">📋 FILA POR MÁQUINA — ${pending.length+inProg.length} ordens ativas</span>
+        <button class="btn btn-ghost btn-sm" onclick="navigate('programacao')">Editar →</button>
+      </div>
+      <div class="tbl-wrap" style="border:none;border-radius:0">
+        <table>
+          <thead><tr><th>#</th><th>Máquina</th><th>Produto</th><th style="text-align:right">Caixas</th><th>Tempo</th><th>Data</th><th>Status</th><th>Fila</th></tr></thead>
+          <tbody>${buildFilaRows()}</tbody>
+        </table>
+      </div>
+    </div>`;
+
+  simCalc();
+}
+
+function buildFilaRows() {
+  const recs=[...registros].filter(r=>r.status!=='Concluído')
+    .sort((a,b)=>(a.sortOrder||0)-(b.sortOrder||0)).slice(0,20);
+  if(!recs.length) return `<tr><td colspan="8"><div class="empty-st"><div class="ei">🧠</div>Nenhuma ordem ativa</div></td></tr>`;
+  const bMap={Pendente:'b-amber','Em Andamento':'b-cyan'};
+  return recs.map((r,i)=>`<tr>
+    <td style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text3)">${i+1}</td>
+    <td><span class="badge b-purple" style="font-size:9px">${r.maquina||'—'}</span></td>
+    <td style="max-width:220px;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${r.produto}">${r.produto||'—'}</td>
+    <td style="text-align:right;font-family:'JetBrains Mono',monospace;color:var(--cyan)">${fmtN(r.qntCaixas)}</td>
+    <td style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text2)">${fmtMin(calcMin(r))}</td>
+    <td style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text2)">${r.dtDesejada||'—'}</td>
+    <td><span class="badge ${bMap[r.status]||'b-mute'}" style="font-size:9px">${r.status}</span></td>
+    <td style="font-size:10px;color:var(--text3)">${i===0?'🟢 Próximo':i<3?'🔵 Fila':'⚪ Aguard.'}</td>
+  </tr>`).join('');
+}
+
+window.runSeq = function() {
+  const el=$('seq-result'); const btn=$('btn-seq');
+  if(!el) return;
+  el.textContent='⟳ Processando sequenciamento...';
+  el.style.color='var(--cyan)';
+  btn.disabled=true;
+  setTimeout(()=>{
+    const byMaq={};
+    registros.filter(r=>r.status!=='Concluído')
+      .sort((a,b)=>a.produto.localeCompare(b.produto)||(a.sortOrder||0)-(b.sortOrder||0))
+      .forEach(r=>{ if(!byMaq[r.maquina]) byMaq[r.maquina]=[]; byMaq[r.maquina].push(r); });
+    let out='✓ Sequenciamento concluído\n\n';
+    let totalTrocas=0;
+    Object.entries(byMaq).slice(0,6).forEach(([m,recs])=>{
+      out+=`${m}  (${recs.length} ordens):\n`;
+      recs.slice(0,5).forEach((r,i)=>{ out+=`  ${i+1}. ${r.produto.substring(0,40)}\n`; });
+      if(recs.length>5) out+=`  ... +${recs.length-5} mais\n`;
+      out+='\n';
+      for(let i=1;i<recs.length;i++) if(recs[i].produto!==recs[i-1].produto) totalTrocas++;
+    });
+    out+=`\n✓ ${totalTrocas} trocas de produto identificadas\n✓ Carga distribuída entre ${Object.keys(byMaq).length} máquinas`;
+    el.textContent=out;
+    el.style.color='var(--green)';
+    btn.disabled=false;
+    toast('Sequenciamento executado!','ok');
+  },1400);
+};
+
+window.simCalc = function() {
+  const cx=parseInt($('sim-cx')?.value)||0;
+  const pcm=parseFloat($('sim-pcm')?.value)||60;
+  const ucx=parseInt($('sim-ucx')?.value)||12;
+  const el=$('sim-res'); if(!el||!cx) return;
+  const totalUn=cx*ucx;
+  const totalMin=Math.round(totalUn/pcm);
+  const hrs=(totalMin/60).toFixed(1);
+  const dias=Math.ceil(totalMin/540);
+  const entrega=new Date(); entrega.setDate(entrega.getDate()+dias+1);
+  el.innerHTML=`<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px">
+    ${[['Total Unid.',fmtN(totalUn),'var(--cyan)'],['Tempo Prod.',hrs+'h','var(--purple)'],['Dias',dias,'var(--amber)'],['Entrega',fmtD(entrega),'var(--green)']].map(([l,v,c])=>`
+    <div style="background:var(--s2);border-radius:var(--r);padding:10px 12px">
+      <div style="font-size:9px;font-family:'JetBrains Mono',monospace;color:var(--text3);text-transform:uppercase;letter-spacing:.8px;margin-bottom:4px">${l}</div>
+      <div style="font-size:16px;font-weight:700;color:${c};font-family:'JetBrains Mono',monospace">${v}</div>
+    </div>`).join('')}</div>`;
+};
+
+let progSearch = "";
+let progFilterMaq = "";
+let progFilterStatus = "";
+
+function renderProgramacao() {
+  const p = $('panel-programacao'); if (!p) return;
+
+  const maqList = [...new Set([
+    ...maquinas.map(m => String(m.nome || '').trim()),
+    ...registros.map(r => String(r.maquina || '').trim())
+  ].filter(Boolean))].sort((a,b)=>a.localeCompare(b));
+
+  const statusList = ['', 'Pendente', 'Em Andamento', 'Concluído'];
+
+  const termo = String(progSearch || '').trim().toLowerCase();
+  const filtrados = registros.filter(r => {
+    const okMaq = !progFilterMaq || r.maquina === progFilterMaq;
+    const okStatus = !progFilterStatus || r.status === progFilterStatus;
+    const texto = `${r.produto || ''} ${r.maquina || ''} ${r.obs || ''}`.toLowerCase();
+    const okBusca = !termo || texto.includes(termo);
+    return okMaq && okStatus && okBusca;
+  });
+
+  const totalCx = filtrados.reduce((s, r) => s + (Number(r.qntCaixas) || 0), 0);
+  const pend = filtrados.filter(r => r.status === 'Pendente').length;
+  const andamento = filtrados.filter(r => r.status === 'Em Andamento').length;
+
+  p.innerHTML = `
+    <div class="pg-hd">
+      <h1 class="pg-title">📋 Programação de Produção</h1>
+      <div class="pg-sub">${fmtN(filtrados.length)} ordens ${filtrados.length === registros.length ? 'cadastradas' : 'filtradas'} no sistema</div>
+    </div>
+
+    <div class="kpi-grid" style="grid-template-columns:repeat(3,1fr)">
+      <div class="kpi" style="--kc:var(--cyan)"><div class="kpi-lbl">Ordens</div><div class="kpi-val">${fmtN(filtrados.length)}</div><div class="kpi-trend">registros exibidos</div></div>
+      <div class="kpi" style="--kc:var(--purple)"><div class="kpi-lbl">Caixas</div><div class="kpi-val">${fmtN(totalCx)}</div><div class="kpi-trend">volume programado</div></div>
+      <div class="kpi" style="--kc:var(--amber)"><div class="kpi-lbl">Pendentes / Em andamento</div><div class="kpi-val">${pend} / ${andamento}</div><div class="kpi-trend">status atuais</div></div>
+    </div>
+
+    <div class="toolbr" style="display:grid;grid-template-columns:1.3fr 1fr 1fr auto;gap:10px">
+      <input class="finp" placeholder="Buscar produto, máquina ou observação" value="${progSearch || ''}" oninput="progSearch_set(this.value)">
+      <select class="fsel" onchange="progFilterMaq_set(this.value)">
+        <option value="">Todas as máquinas</option>
+        ${maqList.map(m => `<option value="${m}" ${progFilterMaq === m ? 'selected' : ''}>${m}</option>`).join('')}
+      </select>
+      <select class="fsel" onchange="progFilterStatus_set(this.value)">
+        ${statusList.map(s => `<option value="${s}" ${progFilterStatus === s ? 'selected' : ''}>${s || 'Todos os status'}</option>`).join('')}
+      </select>
+      <button class="btn btn-primary" onclick="openModalRegistro(null)">+ Nova Ordem</button>
+    </div>
+
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Produto</th><th>Máquina</th><th style="text-align:right">Caixas</th><th style="text-align:right">Un/Cx</th><th style="text-align:right">Peças/Min</th><th>Data</th><th>Status</th><th>Ações</th></tr></thead>
+        <tbody>
+          ${filtrados.length ? filtrados.map(r => `
+            <tr>
+              <td style="font-weight:700;font-size:12px;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${r.produto || ''}">${r.produto || '—'}</td>
+              <td><span class="badge b-purple" style="font-size:9px">${r.maquina || '—'}</span></td>
+              <td style="text-align:right;font-family:'JetBrains Mono',monospace;color:var(--cyan)">${fmtN(r.qntCaixas || 0)}</td>
+              <td style="text-align:right;font-family:'JetBrains Mono',monospace">${fmtN(r.unidPorCx || 0)}</td>
+              <td style="text-align:right;font-family:'JetBrains Mono',monospace">${fmtN(r.pcMin || 0)}</td>
+              <td style="font-family:'JetBrains Mono',monospace">${r.dtDesejada || '—'}</td>
+              <td>${r.status === 'Concluído' ? '<span class="badge b-green" style="font-size:9px">✓ Concluído</span>' : r.status === 'Em Andamento' ? '<span class="badge" style="font-size:9px;background:rgba(0,229,204,.12);color:var(--cyan);border:1px solid rgba(0,229,204,.22)">▶ Em Andamento</span>' : '<span class="badge b-amber" style="font-size:9px">● Pendente</span>'}</td>
+              <td>
+                <div class="tbl-actions">
+                  <button class="btn btn-ghost btn-sm" onclick="openModalRegistro('${r.id}')">✏️ Editar</button>
+                  <button class="btn btn-danger btn-sm" onclick="confirmDelete('${r.id}', '${String(r.produto || '').replace(/'/g, "\'")}')">🗑 Excluir</button>
+                </div>
+              </td>
+            </tr>`).join('') : `<tr><td colspan="8"><div class="empty-st"><div class="ei">📋</div>Nenhuma ordem encontrada com os filtros atuais.</div></td></tr>`}
+        </tbody>
+      </table>
+    </div>`;
+}
+
+window.progFilterMaq_set = v => { progFilterMaq = v; renderProgramacao(); };
+window.progFilterStatus_set = v => { progFilterStatus = v; renderProgramacao(); };
+
+// ================================================================
+//  PROGRAMAÇÃO — CRUD completo com Firestore
+// ================================================================
+window.openModalRegistro = async function(id) {
+  const r = id ? registros.find(x => x.id === id) : null;
+
+  let baseCfg = null;
+  try {
+    baseCfg = await db.getConfig('baseMaquinaProduto');
+  } catch (e) {
+    console.error('Erro ao buscar baseMaquinaProduto:', e);
+  }
+
+  const base = (Array.isArray(baseCfg?.linhas) ? baseCfg.linhas : [])
+    .map(x => ({
+      ...x,
+      maquina: String(x.maquina || '').trim(),
+      produto: String(x.produto || '').trim()
+    }))
+    .filter(x => x.maquina && x.produto);
+
+  const maqList = [...new Set([
+    ...maquinas.map(m => String(m.nome || '').trim()),
+    ...base.map(x => x.maquina),
+    ...registros.map(x => String(x.maquina || '').trim())
+  ].filter(Boolean))].sort((a,b)=>a.localeCompare(b));
+
+  const statusOpts = ['Pendente', 'Em Andamento', 'Concluído'];
+
+  showModal(
+    'modal-reg',
+    `${r ? 'Editar' : 'Nova'} Ordem de Produção`,
+    `
+    <div class="form-row fr2">
+      <div class="fgrp">
+        <label class="flbl">Máquina *</label>
+        <select id="ri-maq" class="fsel">
+          <option value="">Selecionar...</option>
+          ${maqList.map(m => `<option value="${m}" ${r?.maquina === m ? 'selected' : ''}>${m}</option>`).join('')}
+        </select>
+      </div>
+
+      <div class="fgrp">
+        <label class="flbl">Produto *</label>
+        <select id="ri-prod-sel" class="fsel">
+          <option value="">Selecione primeiro a máquina</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="form-row fr3">
+      <div class="fgrp">
+        <label class="flbl">Qtd Caixas *</label>
+        <input id="ri-cx" class="finp" type="number" min="0" value="${r?.qntCaixas || ''}">
+      </div>
+
+      <div class="fgrp">
+        <label class="flbl">Un/Caixa</label>
+        <input id="ri-ucx" class="finp" type="number" min="0" value="${r?.unidPorCx || ''}" readonly>
+      </div>
+
+      <div class="fgrp">
+        <label class="flbl">Peças/Min</label>
+        <input id="ri-pcm" class="finp" type="number" min="0" step="0.1" value="${r?.pcMin || ''}" readonly>
+      </div>
+    </div>
+
+    <div class="form-row fr2">
+      <div class="fgrp">
+        <label class="flbl">Data Desejada</label>
+        <input id="ri-dt" class="finp" type="date" value="${r?.dtDesejada || ''}">
+      </div>
+
+      <div class="fgrp">
+        <label class="flbl">Status</label>
+        <select id="ri-status" class="fsel">
+          ${statusOpts.map(s => `<option ${r?.status === s ? 'selected' : ''}>${s}</option>`).join('')}
+        </select>
+      </div>
+    </div>
+
+    <div class="fgrp">
+      <label class="flbl">Observações</label>
+      <textarea id="ri-obs" class="ftxt">${r?.obs || ''}</textarea>
+    </div>
+
+    <div id="ri-hint" style="margin-top:8px;font-size:11px;color:var(--text3)"></div>
+    <div id="ri-err" class="lf-error" style="margin-top:10px"></div>
+    `,
+    async () => {
+      const maqVal = $('ri-maq').value.trim();
+      const produtoVal = $('ri-prod-sel').value.trim();
+
+      const itemBase = base.find(x =>
+        x.maquina === maqVal &&
+        x.produto === produtoVal
+      );
+
+      const existeBaseParaMaquina = base.some(x => x.maquina === maqVal);
+
+      const data = {
+        produto: produtoVal,
+        maquina: maqVal,
+        qntCaixas: parseFloat($('ri-cx').value) || 0,
+        unidPorCx: parseFloat($('ri-ucx').value) || 0,
+        pcMin: parseFloat($('ri-pcm').value) || 0,
+        dtDesejada: $('ri-dt').value || '',
+        status: $('ri-status').value,
+        obs: $('ri-obs').value.trim(),
+        codigoBase: itemBase?.codigo || 0
+      };
+
+      const err = $('ri-err');
+      err.textContent = '';
+      err.classList.remove('on');
+
+      if (!data.maquina) {
+        err.textContent = 'Máquina é obrigatória.';
+        err.classList.add('on');
+        return false;
+      }
+
+      if (!data.produto) {
+        err.textContent = 'Produto é obrigatório.';
+        err.classList.add('on');
+        return false;
+      }
+
+      if (existeBaseParaMaquina && !itemBase && !(r && r.maquina === maqVal && r.produto === produtoVal)) {
+        err.textContent = 'Esse produto não está vinculado à máquina selecionada na base máquina x produto.';
+        err.classList.add('on');
+        return false;
+      }
+
+      if (!data.qntCaixas) {
+        err.textContent = 'Quantidade de caixas é obrigatória.';
+        err.classList.add('on');
+        return false;
+      }
+
+      try {
+        if (r) {
+          await db.updateRegistro(r.id, data);
+        } else {
+          await db.addRegistro(data);
+        }
+
+        toast(r ? 'Ordem atualizada!' : 'Ordem criada!', 'ok');
+        return true;
+      } catch (e) {
+        console.error(e);
+        err.textContent = 'Erro: ' + e.message;
+        err.classList.add('on');
+        return false;
+      }
+    }
+  );
+
+  setTimeout(function() {
+    const maqSel = $('ri-maq');
+    const prodSel = $('ri-prod-sel');
+    const ucx = $('ri-ucx');
+    const pcm = $('ri-pcm');
+    const hint = $('ri-hint');
+
+    if (!maqSel || !prodSel || !ucx || !pcm) return;
+
+    function itensDaMaquina(maquinaEscolhida) {
+      return base
+        .filter(x => x.maquina === maquinaEscolhida)
+        .sort((a, b) => String(a.produto || '').localeCompare(String(b.produto || '')));
+    }
+
+    function preencherProdutosDaMaquina(maquinaEscolhida, produtoPreferido = '') {
+      const itens = itensDaMaquina(maquinaEscolhida);
+      const produtosUnicos = [...new Map(itens.map(x => [x.produto, x])).values()];
+
+      if (!maquinaEscolhida) {
+        prodSel.innerHTML = '<option value="">Selecione primeiro a máquina</option>';
+        prodSel.disabled = true;
+        ucx.value = '';
+        pcm.value = '';
+        if (hint) hint.textContent = '';
+        return;
+      }
+
+      let options = '';
+      if (produtosUnicos.length) {
+        options = '<option value="">Selecionar...</option>' +
+          produtosUnicos.map(x => `<option value="${x.produto}">${x.produto}</option>`).join('');
+        prodSel.disabled = false;
+        if (hint) hint.textContent = `${produtosUnicos.length} produto(s) disponível(is) para ${maquinaEscolhida}.`;
+      } else {
+        options = '<option value="">Nenhum produto vinculado a essa máquina</option>';
+        prodSel.disabled = true;
+        if (hint) hint.textContent = 'Essa máquina ainda não possui produtos vinculados na base máquina x produto.';
+      }
+
+      if (produtoPreferido && !produtosUnicos.some(x => x.produto === produtoPreferido)) {
+        options += `<option value="${produtoPreferido}">${produtoPreferido} (cadastro atual)</option>`;
+        prodSel.disabled = false;
+      }
+
+      prodSel.innerHTML = options;
+      prodSel.value = produtoPreferido || '';
+      ucx.value = '';
+      pcm.value = '';
+
+      if (prodSel.value) preencherDadosProduto();
+    }
+
+    function preencherDadosProduto() {
+      const itemBase = base.find(x =>
+        x.maquina === maqSel.value.trim() &&
+        x.produto === prodSel.value.trim()
+      );
+
+      ucx.value = itemBase?.unidPorCx || (r && r.maquina === maqSel.value && r.produto === prodSel.value ? (r.unidPorCx || '') : '');
+      pcm.value = itemBase?.pcMin || (r && r.maquina === maqSel.value && r.produto === prodSel.value ? (r.pcMin || '') : '');
+    }
+
+    maqSel.addEventListener('change', function() {
+      preencherProdutosDaMaquina(maqSel.value.trim());
+    });
+
+    prodSel.addEventListener('change', preencherDadosProduto);
+
+    preencherProdutosDaMaquina(r?.maquina || maqSel.value.trim(), r?.produto || '');
+  }, 80);
+};
+
+window.confirmDelete = function(id, nome) {
+  showConfirm(`Excluir a ordem <strong>${nome}</strong>?<br><small style="color:var(--text3)">Todos os apontamentos vinculados também serão removidos.</small>`,
+    async ()=>{ await db.deleteRegistro(id); toast('Ordem excluída.','ok'); }
+  );
+};
+
+// ================================================================
+//  APONTAMENTO MODAL
+// ================================================================
+window.abrirApontamento = async function(id) {
+  const r=registros.find(x=>x.id===id); if(!r) return;
+  const apDate=$('apon-date-input')?.value || today();
+
+  // Load existing
+  const apon = await db.getApontamento(id, apDate);
+  const HOURS=[7,8,9,10,11,12,13,14,15,16,17];
+
+  showModal('modal-apon', `Apontamento — ${r.produto.substring(0,40)}`,`
+    <div style="margin-bottom:16px;display:flex;align-items:center;gap:10px">
+      <label class="flbl" style="flex-shrink:0">Data:</label>
+      <input id="apon-date" class="finp" type="date" value="${apDate}" style="width:160px"
+        onchange="abrirApontamento('${id}')">
+      <span class="badge b-purple" style="font-size:9px">${r.maquina}</span>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(${HOURS.length},1fr);gap:6px;margin-bottom:16px">
+      ${HOURS.map(h=>`
+        <div style="text-align:center">
+          <div style="font-size:10px;font-family:'JetBrains Mono',monospace;color:var(--text3);margin-bottom:4px">${String(h).padStart(2,'0')}h</div>
+          <input id="ap-h${h}" type="number" min="0" max="9999" value="${apon?.horas?.[h]||0}"
+            class="finp" style="padding:8px 4px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:600"
+            oninput="updateAponTotal()">
+        </div>`).join('')}
+    </div>
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;background:var(--s2);border-radius:var(--r)">
+      <span style="font-size:12px;color:var(--text2)">Total apontado hoje:</span>
+      <span id="apon-total" style="font-family:'JetBrains Mono',monospace;font-size:18px;font-weight:700;color:var(--cyan)">${apon?.total||0} un</span>
+    </div>
+    <div style="margin-top:12px;font-size:11px;color:var(--text3);font-family:'JetBrains Mono',monospace">
+      Programado total: ${fmtN((r.qntCaixas||0)*(r.unidPorCx||0))} un · 
+      Realizado total: ${fmtN((aponTotals[id]||0))} un
+    </div>
+  `, async ()=>{
+    const HOURS2=[7,8,9,10,11,12,13,14,15,16,17];
+    const horas={}; HOURS2.forEach(h=>{ horas[h]=parseInt($(`ap-h${h}`)?.value)||0; });
+    const dateVal=$('apon-date')?.value||apDate;
+    await db.saveApontamento(id, dateVal, horas);
+    toast('Apontamento salvo!','ok');
+    // Refresh totals
+    db.buildAponTotals(registros.map(r=>r.id)).then(t=>{ aponTotals=t; refreshActivePanel(); });
+    return true;
+  });
+
+  window.updateAponTotal=()=>{
+    const HOURS3=[7,8,9,10,11,12,13,14,15,16,17];
+    const t=HOURS3.reduce((s,h)=>s+(parseInt($(`ap-h${h}`)?.value)||0),0);
+    const el=$('apon-total'); if(el) el.textContent=fmtN(t)+' un';
+  };
+};
+
+// ================================================================
+//  GANTT
+// ================================================================
+function renderGantt() {
+  const p=$('panel-gantt'); if(!p) return;
+  const mon=getMonday(new Date());
+  const days=Array.from({length:6},(_,i)=>{ const d=new Date(mon); d.setDate(d.getDate()+i); return d; });
+  const maqList=[...new Set([...maquinas.map(m=>m.nome),...registros.map(r=>r.maquina).filter(Boolean)])].sort();
+  const bMapColor={Pendente:'var(--amber)','Em Andamento':'var(--cyan)',Concluído:'var(--green)'};
+
+  p.innerHTML=`
+    <div class="pg-hd">
+      <h1 class="pg-title">📅 Gantt de Produção</h1>
+      <div class="pg-sub">Semana ${fmtD(mon)} – ${fmtD(days[5])} · Clique em uma célula para ver ou adicionar</div>
+    </div>
+
+    <div class="gantt-wrap">
+      <table style="min-width:900px">
+        <thead>
+          <tr style="background:var(--s2)">
+            <th style="width:130px;border-right:1px solid var(--border)">MÁQUINA</th>
+            ${days.map(d=>{
+              const isToday=dateStr(d)===today();
+              return `<th style="text-align:center;border-right:1px solid var(--border);${isToday?'background:rgba(0,229,204,.05)':''}">
+                <div style="font-family:'JetBrains Mono',monospace;font-size:9px;color:${isToday?'var(--cyan)':'var(--text3)'};font-weight:${isToday?'700':'400'}">
+                  ${['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'][d.getDay()]}
+                </div>
+                <div style="font-size:12px;font-weight:700;color:${isToday?'var(--cyan)':'var(--text)'}">
+                  ${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}
+                </div>
+              </th>`;
+            }).join('')}
+          </tr>
+        </thead>
+        <tbody>
+          ${(maqList.length?maqList:['Sem máquinas']).map(maq=>`
+            <tr style="border-bottom:1px solid var(--border)">
+              <td style="padding:8px 12px;border-right:1px solid var(--border);font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:600;color:var(--purple);vertical-align:top;white-space:nowrap">${maq}</td>
+              ${days.map(d=>{
+                const ds=dateStr(d);
+                const isToday=ds===today();
+                const dayRecs=registros.filter(r=>r.maquina===maq&&(r.dtDesejada||r.dtSolicitacao||'')===ds);
+                return `<td class="gantt-cell" style="${isToday?'background:rgba(0,229,204,.02)':''}">
+                  ${dayRecs.map(r=>{
+                    const c=bMapColor[r.status]||'var(--text3)';
+                    return `<div class="gantt-chip" style="background:${c}15;border-left-color:${c};cursor:pointer" onclick="openModalRegistro('${r.id}')" title="${r.produto} · ${fmtN(r.qntCaixas)} cx">
+                      <div style="font-size:10px;font-weight:700;color:${c};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:140px">${r.produto}</div>
+                      <div style="font-size:9px;color:var(--text3);font-family:'JetBrains Mono',monospace">${fmtN(r.qntCaixas)} cx</div>
+                    </div>`;
+                  }).join('')}
+                  <div class="gantt-empty" onclick="ganttAdd('${maq}','${ds}')">+</div>
+                </td>`;
+              }).join('')}
+            </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+    <div style="margin-top:12px;display:flex;gap:14px;font-size:11px;font-family:'JetBrains Mono',monospace;color:var(--text3)">
+      <span>Legenda:</span>
+      <span style="color:var(--amber)">■ Pendente</span>
+      <span style="color:var(--cyan)">■ Em Andamento</span>
+      <span style="color:var(--green)">■ Concluído</span>
+    </div>`;
+}
+
+window.ganttAdd = function(maquina, data) {
+  openModalRegistro(null);
+  setTimeout(()=>{
+    const sel=$('ri-maq'); const inp=$('ri-dt');
+    if(sel&&maquinas.map(m=>m.nome).includes(maquina)) { sel.value=maquina; sel.dispatchEvent(new Event('change')); }
+    else if(sel){ sel.value='__nova'; const ni=$('ri-maq-nova'); if(ni){ni.style.display='block';ni.value=maquina;} }
+    if(inp) inp.value=data;
+  },100);
+};
+
+// ================================================================
+//  PRODUÇÃO DO DIA
+// ================================================================
+function renderProducao() {
+  const p=$('panel-producao'); if(!p) return;
+  const hoje=today();
+  const hojeRecs=registros.filter(r=>(r.dtDesejada||r.dtSolicitacao||'')===hoje);
+
+  p.innerHTML=`
+    <div class="pg-hd">
+      <h1 class="pg-title">🔨 Produção do Dia</h1>
+      <div class="pg-sub">${hoje} · ${hojeRecs.length} ordens programadas para hoje</div>
+    </div>
+
+    <div class="kpi-grid" style="grid-template-columns:repeat(3,1fr)">
+      <div class="kpi" style="--kc:var(--cyan)"><div class="kpi-lbl">Programado Hoje</div>
+        <div class="kpi-val">${fmtN(hojeRecs.reduce((a,r)=>a+(r.qntCaixas||0),0))}</div>
+        <div class="kpi-trend">caixas</div></div>
+      <div class="kpi" style="--kc:var(--green)"><div class="kpi-lbl">Em Andamento</div>
+        <div class="kpi-val">${hojeRecs.filter(r=>r.status==='Em Andamento').length}</div>
+        <div class="kpi-trend">ordens ativas</div></div>
+      <div class="kpi" style="--kc:var(--amber)"><div class="kpi-lbl">Pendentes Hoje</div>
+        <div class="kpi-val">${hojeRecs.filter(r=>r.status==='Pendente').length}</div>
+        <div class="kpi-trend">aguardando início</div></div>
+    </div>
+
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Produto</th><th>Máquina</th><th style="text-align:right">Programado</th><th>Status</th><th>Ações</th></tr></thead>
+        <tbody>
+          ${hojeRecs.length ? hojeRecs.map(r=>`<tr>
+            <td style="font-weight:700;font-size:12px">${r.produto||'—'}</td>
+            <td><span class="badge b-purple" style="font-size:9px">${r.maquina||'—'}</span></td>
+            <td style="text-align:right;font-family:'JetBrains Mono',monospace;color:var(--cyan)">${fmtN(r.qntCaixas)} cx</td>
+            <td>${r.status==='Pendente'?`<button class="btn btn-warn btn-sm" onclick="setStatus('${r.id}','Em Andamento')">▶ Iniciar</button>`:
+              r.status==='Em Andamento'?`<button class="btn btn-green btn-sm" style="background:rgba(34,211,164,.1);color:var(--green);border:1px solid rgba(34,211,164,.25)" onclick="setStatus('${r.id}','Concluído')">✓ Concluir</button>`:
+              '<span class="badge b-green" style="font-size:9px">✓ Concluído</span>'}</td>
+            <td><button class="btn btn-ghost btn-sm" onclick="abrirApontamento('${r.id}')">📝 Apontar</button></td>
+          </tr>`).join('') : `<tr><td colspan="5"><div class="empty-st"><div class="ei">🔨</div>Nenhuma ordem programada para hoje.</div></td></tr>`}
+        </tbody>
+      </table>
+    </div>`;
+}
+
+window.setStatus = async function(id, status) {
+  await db.updateRegistro(id, {status});
+  toast(`Status → ${status}`,'ok');
+};
+
+// ================================================================
+//  MÁQUINAS
+// ================================================================
+function renderMaquinas() {
+  const p=$('panel-maquinas'); if(!p) return;
+
+  const maqStats={};
+  registros.forEach(r=>{
+    const m=r.maquina; if(!m) return;
+    if(!maqStats[m]) maqStats[m]={prog:0,min:0,ativos:0};
+    maqStats[m].prog+=(r.qntCaixas||0);
+    maqStats[m].min+=calcMin(r);
+    if(r.status!=='Concluído') maqStats[m].ativos++;
+  });
+
+  const allMaq=[...new Set([...maquinas.map(m=>m.nome),...Object.keys(maqStats)])].sort();
+
+  p.innerHTML=`
+    <div class="pg-hd">
+      <h1 class="pg-title">🏭 Máquinas</h1>
+      <div class="pg-sub">${allMaq.length} máquinas cadastradas</div>
+    </div>
+    <div class="toolbr">
+      <button class="btn btn-primary" onclick="openModalMaquina(null)">+ Cadastrar Máquina</button>
+    </div>
+    <div class="g-auto">
+      ${allMaq.map(nome=>{
+        const st=maqStats[nome]||{prog:0,min:0,ativos:0};
+        const pct=Math.min(200,Math.round(st.min/(44*60)*100));
+        const c=pct>=95?'var(--red)':pct>=80?'var(--amber)':pct>=30?'var(--cyan)':'var(--text3)';
+        const status=pct>=95?'🔴 Sobrecarregada':pct>=80?'🟡 Alta utilização':pct>=10?'🟢 Normal':'⚪ Disponível';
+        const maqDoc=maquinas.find(m=>m.nome===nome);
+        return `<div class="card">
+          <div class="card-hd">
+            <div style="font-family:'JetBrains Mono',monospace;font-weight:600;font-size:11px;color:var(--purple)">${nome}</div>
+            <div style="display:flex;gap:6px">
+              <button class="btn btn-ghost btn-sm" onclick="openModalMaquina('${maqDoc?.id||''}','${nome}')">✏️</button>
+            </div>
+          </div>
+          <div class="card-bd">
+            <div style="font-size:11px;color:var(--text3);margin-bottom:10px">${status}${maqDoc?.setor?' · '+maqDoc.setor:''}</div>
+            <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text2);margin-bottom:6px">
+              <span>${st.ativos} ordens ativas</span>
+              <span style="font-family:'JetBrains Mono',monospace;font-weight:700;color:${c}">${(st.min/60).toFixed(1)}h</span>
+            </div>
+            <div style="background:var(--s3);border-radius:4px;height:6px;overflow:hidden;margin-bottom:6px">
+              <div style="height:100%;border-radius:4px;width:${Math.min(100,pct)}%;background:${c}"></div>
+            </div>
+            <div style="display:flex;justify-content:space-between;font-size:10px">
+              <span style="font-family:'JetBrains Mono',monospace;color:var(--text3)">${fmtN(st.prog)} cx programadas</span>
+              <span style="font-family:'JetBrains Mono',monospace;font-weight:700;color:${c}">${pct}%</span>
+            </div>
+          </div>
+        </div>`;
+      }).join('')||'<div class="empty-st"><div class="ei">🏭</div>Nenhuma máquina ainda.</div>'}
+    </div>`;
+}
+
+window.openModalMaquina = function(id, nomeAtual='') {
+  const doc=id?maquinas.find(m=>m.id===id):null;
+  showModal('modal-maq','Cadastro de Máquina',`
+    <div class="form-row fr2">
+      <div class="fgrp"><label class="flbl">Nome *</label><input id="mq-nome" class="finp" value="${doc?.nome||nomeAtual}" placeholder="Ex: ALFATECK 14"></div>
+      <div class="fgrp"><label class="flbl">Setor</label><input id="mq-setor" class="finp" value="${doc?.setor||''}" placeholder="Ex: Zona A"></div>
+      <div class="fgrp"><label class="flbl">Capacidade (cx/h)</label><input id="mq-cap" class="finp" type="number" value="${doc?.capacidade||''}"></div>
+      <div class="fgrp"><label class="flbl">Status</label>
+        <select id="mq-status" class="fsel">
+          <option ${(!doc||doc.ativo)?'selected':''}>Ativa</option>
+          <option ${(doc&&!doc.ativo)?'selected':''}>Inativa</option>
+        </select>
+      </div>
+    </div>
+    <div class="fgrp"><label class="flbl">Observações</label><textarea id="mq-obs" class="ftxt">${doc?.obs||''}</textarea></div>
+    <div id="mq-err" class="lf-error" style="margin-top:8px"></div>
+  `, async ()=>{
+    const nome=$('mq-nome').value.trim();
+    if(!nome){const e=$('mq-err');e.textContent='Nome obrigatório.';e.classList.add('on');return false;}
+    const data={nome,setor:$('mq-setor').value.trim(),capacidade:parseFloat($('mq-cap').value)||0,ativo:$('mq-status').value==='Ativa',obs:$('mq-obs').value.trim()};
+    if(id) await db.updateMaquina(id,data); else await db.addMaquina(data);
+    toast(id?'Máquina atualizada!':'Máquina cadastrada!','ok'); return true;
+  });
+};
+
+// ================================================================
+//  RELATÓRIOS
+// ================================================================
+
+async function ensureDataSupport() {
+  if (!insumosCache.length) {
+    try { insumosCache = await db.getAllInsumos(); } catch(e) { console.warn('Insumos indisponíveis', e); insumosCache = []; }
+  }
+  if (!fichasCache.length) {
+    try { fichasCache = await db.getAllFichas(); } catch(e) { console.warn('Fichas indisponíveis', e); fichasCache = []; }
+  }
+  if (!baseMaqProdCache.length) {
+    try {
+      const cfg = await db.getConfig('baseMaquinaProduto');
+      baseMaqProdCache = Array.isArray(cfg?.linhas) ? cfg.linhas : [];
+    } catch(e) {
+      console.warn('Base máquina x produto indisponível', e);
+      baseMaqProdCache = [];
+    }
+  }
+}
+
+function getSemanaDias(baseDate = semanaBaseInsumos) {
+  const mon = getMonday(baseDate);
+  return Array.from({length:7}, (_,i)=>{ const d=new Date(mon); d.setDate(mon.getDate()+i); return d; });
+}
+
+function fichaDoProduto(produto) {
+  const nome = String(produto||'').trim().toLowerCase();
+  return fichasCache.find(f => String(f.produto||'').trim().toLowerCase() === nome) || null;
+}
+
+function normalizarItensFicha(ficha) {
+  const itens = Array.isArray(ficha?.itens) ? ficha.itens : [];
+  return itens.map((it, idx) => ({
+    id: it.id || `item_${idx+1}`,
+    nome: String(it.nome || it.insumo || '').trim(),
+    categoria: String(it.categoria || it.cat || 'OUTROS').trim() || 'OUTROS',
+    unidade: String(it.unidade || it.unid || '').trim(),
+    consumoPorCaixa: Number(it.consumoPorCaixa ?? it.qtd ?? it.quantidade ?? 0) || 0
+  })).filter(it => it.nome && it.consumoPorCaixa > 0);
+}
+
+function getUnidadeInsumo(nome) {
+  const n = String(nome||'').trim().toLowerCase();
+  const found = insumosCache.find(i => String(i.nome||'').trim().toLowerCase() === n);
+  return found?.unidade || found?.unid || '';
+}
+
+function buildNecessidadeInsumos(baseDate = semanaBaseInsumos) {
+  const dias = getSemanaDias(baseDate);
+  const ini = dateStr(dias[0]), fim = dateStr(dias[6]);
+  const semana = registros.filter(r => { const dt = r.dtDesejada || r.dtSolicitacao || ''; return dt >= ini && dt <= fim; });
+  const geral = {};
+  const porMaquina = {};
+
+  semana.forEach(r => {
+    const ficha = fichaDoProduto(r.produto);
+    const itens = normalizarItensFicha(ficha);
+    if (!itens.length) return;
+    const caixas = Number(r.qntCaixas || 0) || 0;
+    const diaIndex = Math.max(0, Math.min(6, dias.findIndex(d => dateStr(d) === (r.dtDesejada || r.dtSolicitacao))));
+    itens.forEach(it => {
+      const qtd = caixas * it.consumoPorCaixa;
+      if (!geral[it.nome]) geral[it.nome] = { nome: it.nome, categoria: it.categoria, unidade: it.unidade || getUnidadeInsumo(it.nome), total: 0, dias: Array(7).fill(0), produtos: new Set() };
+      geral[it.nome].total += qtd;
+      geral[it.nome].dias[diaIndex] += qtd;
+      geral[it.nome].produtos.add(r.produto);
+
+      const maq = r.maquina || 'Sem máquina';
+      if (!porMaquina[maq]) porMaquina[maq] = {};
+      if (!porMaquina[maq][it.nome]) porMaquina[maq][it.nome] = { nome: it.nome, categoria: it.categoria, unidade: it.unidade || getUnidadeInsumo(it.nome), total: 0, dias: Array(7).fill(0), produtos: new Set() };
+      porMaquina[maq][it.nome].total += qtd;
+      porMaquina[maq][it.nome].dias[diaIndex] += qtd;
+      porMaquina[maq][it.nome].produtos.add(r.produto);
+    });
+  });
+
+  return { dias, geral: Object.values(geral), porMaquina, semana };
+}
+
+function buildRealizadoRows() {
+  return registros.map(r => {
+    const programadoCx = Number(r.qntCaixas || 0) || 0;
+    const unidPorCx = Number(r.unidPorCx || 0) || 0;
+    const programadoUn = programadoCx * unidPorCx;
+    const realizadoUn = Number(aponTotals[r.id] || 0) || 0;
+    const saldoUn = Math.max(0, programadoUn - realizadoUn);
+    const eficiencia = programadoUn > 0 ? Math.round((realizadoUn / programadoUn) * 100) : 0;
+    return { ...r, programadoCx, programadoUn, realizadoUn, saldoUn, eficiencia };
+  }).sort((a,b) => String(b.dtDesejada || '').localeCompare(String(a.dtDesejada || '')));
+}
+
+async function renderInsumosMaq() {
+  await ensureDataSupport();
+  const p = $('panel-insumosmaq'); if(!p) return;
+  const { dias, porMaquina, semana } = buildNecessidadeInsumos();
+  const weekLabel = `${fmtD(dias[0])} – ${fmtD(dias[6])}`;
+  const maqs = Object.keys(porMaquina).sort();
+  p.innerHTML = `
+    <div class="pg-hd">
+      <h1 class="pg-title">🧪 Insumos por Máquina</h1>
+      <div class="pg-sub">Necessidade calculada pela programação da semana ${weekLabel}</div>
+    </div>
+    <div class="toolbr">
+      <button class="btn btn-ghost" onclick="changeSemanaInsumos(-7,'insumosmaq')">← Semana anterior</button>
+      <button class="btn btn-ghost" onclick="changeSemanaInsumos(7,'insumosmaq')">Próxima semana →</button>
+      <button class="btn btn-primary" onclick="navigate('fichatecnica')">Ajustar fichas</button>
+      <div class="badge b-mute">${semana.length} ordens</div>
+      <div class="badge b-mute">${maqs.length} máquinas com consumo</div>
+    </div>
+    ${!maqs.length ? `<div class="empty-st"><div class="ei">🧪</div>Sem necessidade calculada. Cadastre as fichas técnicas e programe ordens na semana.</div>` : maqs.map(maq => {
+      const itens = Object.values(porMaquina[maq]).sort((a,b)=>b.total-a.total);
+      return `
+      <div class="card" style="margin-bottom:14px">
+        <div class="card-hd"><span class="card-ttl">🏭 ${maq}</span><span class="badge b-purple">${itens.length} itens</span></div>
+        <div class="tbl-wrap" style="border:none;border-radius:0">
+          <table>
+            <thead><tr><th>Categoria</th><th>Insumo</th><th>Un.</th>${dias.map(d=>`<th style="text-align:right">${['D','S','T','Q','Q','S','S'][d.getDay()]} ${fmtD(d)}</th>`).join('')}<th style="text-align:right">Total</th></tr></thead>
+            <tbody>${itens.map(it => `<tr><td>${it.categoria}</td><td><strong>${it.nome}</strong><div style="font-size:10px;color:var(--text3)">${Array.from(it.produtos).slice(0,3).join(', ')}</div></td><td>${it.unidade||'—'}</td>${it.dias.map(v=>`<td style="text-align:right;font-family:'JetBrains Mono',monospace">${v?fmtN(Number(v.toFixed(3))):'—'}</td>`).join('')}<td style="text-align:right;color:var(--cyan);font-family:'JetBrains Mono',monospace">${fmtN(Number(it.total.toFixed(3)))}</td></tr>`).join('')}</tbody>
+          </table>
+        </div>
+      </div>`;
+    }).join('')}
+  `;
+}
+
+async function renderInsumosGeral() {
+  await ensureDataSupport();
+  const p = $('panel-insumosgeral'); if(!p) return;
+  const { dias, geral, semana } = buildNecessidadeInsumos();
+  const weekLabel = `${fmtD(dias[0])} – ${fmtD(dias[6])}`;
+  const itens = geral.sort((a,b)=>b.total-a.total);
+  p.innerHTML = `
+    <div class="pg-hd">
+      <h1 class="pg-title">📦 Insumos Geral</h1>
+      <div class="pg-sub">Consolidação da semana ${weekLabel} com base na programação e fichas técnicas</div>
+    </div>
+    <div class="toolbr">
+      <button class="btn btn-ghost" onclick="changeSemanaInsumos(-7,'insumosgeral')">← Semana anterior</button>
+      <button class="btn btn-ghost" onclick="changeSemanaInsumos(7,'insumosgeral')">Próxima semana →</button>
+      <button class="btn btn-primary" onclick="navigate('fichatecnica')">Gerenciar fichas</button>
+      <div class="badge b-mute">${semana.length} ordens</div>
+      <div class="badge b-mute">${itens.length} insumos</div>
+    </div>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Categoria</th><th>Insumo</th><th>Un.</th>${dias.map(d=>`<th style="text-align:right">${['D','S','T','Q','Q','S','S'][d.getDay()]} ${fmtD(d)}</th>`).join('')}<th style="text-align:right">Total</th><th>Produtos</th></tr></thead>
+        <tbody>${itens.length ? itens.map(it => `<tr><td>${it.categoria}</td><td><strong>${it.nome}</strong></td><td>${it.unidade||'—'}</td>${it.dias.map(v=>`<td style="text-align:right;font-family:'JetBrains Mono',monospace">${v?fmtN(Number(v.toFixed(3))):'—'}</td>`).join('')}<td style="text-align:right;color:var(--cyan);font-family:'JetBrains Mono',monospace">${fmtN(Number(it.total.toFixed(3)))}</td><td style="font-size:11px;color:var(--text2)">${Array.from(it.produtos).slice(0,4).join(', ')}${it.produtos.size>4?'...':''}</td></tr>`).join('') : `<tr><td colspan="${11}"><div class="empty-st"><div class="ei">📦</div>Sem dados para consolidar nessa semana.</div></td></tr>`}</tbody>
+      </table>
+    </div>`;
+}
+
+async function renderRealizado() {
+  const p = $('panel-realizado'); if(!p) return;
+  const rows = buildRealizadoRows();
+  const concl = rows.filter(r=>r.status==='Concluído').length;
+  const emAnd = rows.filter(r=>r.status==='Em Andamento').length;
+  const totalProg = rows.reduce((s,r)=>s+r.programadoUn,0);
+  const totalReal = rows.reduce((s,r)=>s+r.realizadoUn,0);
+  p.innerHTML = `
+    <div class="pg-hd">
+      <h1 class="pg-title">✅ Realizado</h1>
+      <div class="pg-sub">Programado x apontado em todas as ordens</div>
+    </div>
+    <div class="kpi-grid">
+      <div class="kpi" style="--kc:var(--cyan)"><div class="kpi-lbl">Programado (un)</div><div class="kpi-val">${fmtN(totalProg)}</div><div class="kpi-trend">unidades</div></div>
+      <div class="kpi" style="--kc:var(--green)"><div class="kpi-lbl">Realizado (un)</div><div class="kpi-val">${fmtN(totalReal)}</div><div class="kpi-trend">apontado</div></div>
+      <div class="kpi" style="--kc:var(--amber)"><div class="kpi-lbl">Em andamento</div><div class="kpi-val">${fmtN(emAnd)}</div><div class="kpi-trend">ordens</div></div>
+      <div class="kpi" style="--kc:var(--purple)"><div class="kpi-lbl">Concluídas</div><div class="kpi-val">${fmtN(concl)}</div><div class="kpi-trend">ordens</div></div>
+    </div>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Produto</th><th>Máquina</th><th>Data</th><th style="text-align:right">Prog. cx</th><th style="text-align:right">Prog. un</th><th style="text-align:right">Real. un</th><th style="text-align:right">Saldo</th><th>Efic.</th><th>Status</th><th>Ações</th></tr></thead>
+        <tbody>${rows.length ? rows.map(r => `<tr><td><strong>${r.produto||'—'}</strong></td><td><span class="badge b-purple">${r.maquina||'—'}</span></td><td style="font-family:'JetBrains Mono',monospace">${r.dtDesejada||'—'}</td><td style="text-align:right">${fmtN(r.programadoCx)}</td><td style="text-align:right">${fmtN(r.programadoUn)}</td><td style="text-align:right;color:var(--green)">${fmtN(r.realizadoUn)}</td><td style="text-align:right;color:${r.saldoUn>0?'var(--amber)':'var(--green)'}">${fmtN(r.saldoUn)}</td><td><span class="badge ${r.eficiencia>=100?'b-green':r.eficiencia>=60?'b-cyan':'b-amber'}">${r.eficiencia}%</span></td><td>${r.status||'—'}</td><td><div class="tbl-actions"><button class="btn btn-ghost btn-sm" onclick="abrirApontamento('${r.id}')">📝 Apontar</button><button class="btn btn-ghost btn-sm" onclick="openModalRegistro('${r.id}')">✏️ Ordem</button></div></td></tr>`).join('') : `<tr><td colspan="10"><div class="empty-st"><div class="ei">✅</div>Sem ordens para mostrar.</div></td></tr>`}</tbody>
+      </table>
+    </div>`;
+}
+
+async function renderFichaTecnica() {
+  await ensureDataSupport();
+  const p = $('panel-fichatecnica'); if(!p) return;
+  const produtosBase = baseMaqProdCache.map(x => String(x.produto||'').trim()).filter(Boolean);
+  const produtosOrdens = registros.map(x => String(x.produto||'').trim()).filter(Boolean);
+  const produtos = [...new Set([...produtosBase, ...produtosOrdens])].sort((a,b)=>a.localeCompare(b));
+  p.innerHTML = `
+    <div class="pg-hd">
+      <h1 class="pg-title">📝 Ficha Técnica</h1>
+      <div class="pg-sub">Cadastre os insumos por caixa para cada produto. Essa base alimenta Insumos Geral e Insumos por Máquina.</div>
+    </div>
+    <div class="toolbr">
+      <div class="srch" style="max-width:320px"><span>🔎</span><input id="ft-search" placeholder="Buscar produto" oninput="filterFichaCards(this.value)"></div>
+      <button class="btn btn-primary" onclick="openFichaModal()">+ Nova ficha</button>
+      <button class="btn btn-ghost" onclick="renderFichaTecnica()">Atualizar</button>
+      <div class="badge b-mute">${produtos.length} produtos</div>
+      <div class="badge b-mute">${fichasCache.length} fichas</div>
+    </div>
+    <div class="g-auto" id="ft-grid">
+      ${produtos.length ? produtos.map(prod => { const ficha = fichaDoProduto(prod); const itens = normalizarItensFicha(ficha); return `<div class="card ft-card" data-prod="${prod.toLowerCase()}"><div class="card-hd"><span class="card-ttl">📄 ${prod}</span><span class="badge ${itens.length?'b-green':'b-amber'}">${itens.length} itens</span></div><div class="card-bd">${itens.length ? `<div style="display:flex;flex-direction:column;gap:8px">${itens.slice(0,5).map(it=>`<div style="display:flex;justify-content:space-between;gap:8px;font-size:12px"><span>${it.nome}</span><strong style="color:var(--cyan)">${fmtN(it.consumoPorCaixa)} ${it.unidade||''}/cx</strong></div>`).join('')}${itens.length>5?`<div style="font-size:11px;color:var(--text3)">+${itens.length-5} itens</div>`:''}</div>` : `<div class="empty-st" style="padding:18px 8px"><div class="ei" style="font-size:24px">📝</div>Sem ficha cadastrada</div>`}<div style="margin-top:14px;display:flex;gap:8px"><button class="btn btn-primary btn-sm" onclick="openFichaModal('${prod.replace("'","\'")}')">${itens.length?'Editar':'Cadastrar'} ficha</button></div></div></div>`; }).join('') : `<div class="empty-st"><div class="ei">📝</div>Nenhum produto encontrado.</div>`}
+    </div>`;
+}
+
+window.filterFichaCards = function(q='') {
+  document.querySelectorAll('.ft-card').forEach(card => {
+    card.style.display = card.dataset.prod.includes(String(q).toLowerCase()) ? '' : 'none';
+  });
+};
+
+window.openFichaModal = async function(produto='') {
+  await ensureDataSupport();
+  const produtosBase = [...new Set([...baseMaqProdCache.map(x => String(x.produto||'').trim()).filter(Boolean), ...registros.map(x => String(x.produto||'').trim()).filter(Boolean)])].sort((a,b)=>a.localeCompare(b));
+  const ficha = fichaDoProduto(produto);
+  const itens = normalizarItensFicha(ficha);
+  showModal('modal-ficha', `${produto ? 'Ficha técnica — ' + produto : 'Nova ficha técnica'}`, `
+    <div class="fgrp" style="margin-bottom:14px">
+      <label class="flbl">Produto</label>
+      <input list="ft-produtos-list" id="ft-produto" class="finp" value="${produto||''}" placeholder="Digite ou selecione o produto">
+      <datalist id="ft-produtos-list">${produtosBase.map(p=>`<option value="${p}">`).join('')}</datalist>
+    </div>
+    <div id="ft-itens-wrap" style="display:flex;flex-direction:column;gap:10px">${(itens.length?itens:[{nome:'',categoria:'MATERIA PRIMA',unidade:'',consumoPorCaixa:''}]).map((it,idx)=>`<div class="ft-item-row form-row fr4" data-idx="${idx}" style="grid-template-columns:1.7fr 1.1fr .8fr .9fr">
+      <input class="finp ft-item-nome" placeholder="Insumo" value="${it.nome||''}">
+      <input class="finp ft-item-cat" placeholder="Categoria" value="${it.categoria||''}">
+      <input class="finp ft-item-un" placeholder="Un." value="${it.unidade||''}">
+      <input class="finp ft-item-qtd" type="number" step="0.001" min="0" placeholder="Qtd/cx" value="${it.consumoPorCaixa||''}">
+    </div>`).join('')}</div>
+    <div style="display:flex;gap:8px;margin-top:10px"><button class="btn btn-ghost btn-sm" onclick="addFichaItemRow()">+ Adicionar item</button></div>
+    <div id="ft-err" class="lf-error" style="margin-top:10px"></div>`,
+    async ()=>{
+      const prod = $('ft-produto').value.trim();
+      const rows = [...document.querySelectorAll('#ft-itens-wrap .ft-item-row')].map(row => ({
+        nome: row.querySelector('.ft-item-nome').value.trim(),
+        categoria: row.querySelector('.ft-item-cat').value.trim() || 'OUTROS',
+        unidade: row.querySelector('.ft-item-un').value.trim(),
+        consumoPorCaixa: parseFloat(row.querySelector('.ft-item-qtd').value) || 0
+      })).filter(it => it.nome && it.consumoPorCaixa > 0);
+      const err = $('ft-err'); err.textContent=''; err.classList.remove('on');
+      if(!prod){ err.textContent='Informe o produto.'; err.classList.add('on'); return false; }
+      if(!rows.length){ err.textContent='Adicione pelo menos um insumo com quantidade por caixa.'; err.classList.add('on'); return false; }
+      try { await db.setFicha({ produto: prod, itens: rows }); fichasCache = []; await ensureDataSupport(); renderFichaTecnica(); toast('Ficha técnica salva!','ok'); return true; } catch(e) { err.textContent='Erro: '+e.message; err.classList.add('on'); return false; }
+    }
+  );
+};
+
+window.addFichaItemRow = function() {
+  const wrap = $('ft-itens-wrap'); if(!wrap) return;
+  const div = document.createElement('div');
+  div.className = 'ft-item-row form-row fr4';
+  div.style.gridTemplateColumns = '1.7fr 1.1fr .8fr .9fr';
+  div.innerHTML = `<input class="finp ft-item-nome" placeholder="Insumo"><input class="finp ft-item-cat" placeholder="Categoria" value="OUTROS"><input class="finp ft-item-un" placeholder="Un."><input class="finp ft-item-qtd" type="number" step="0.001" min="0" placeholder="Qtd/cx">`;
+  wrap.appendChild(div);
+};
+
+window.changeSemanaInsumos = function(offset, panel) {
+  const d = new Date(semanaBaseInsumos);
+  d.setDate(d.getDate() + offset);
+  semanaBaseInsumos = getMonday(d);
+  if (panel === 'insumosmaq') renderInsumosMaq();
+  else renderInsumosGeral();
+};
+
+function renderRelatorios() {
+  const p=$('panel-relatorios'); if(!p) return;
+  const wData=buildWeeklyData(8);
+  const maqLoad=buildMaqLoad();
+
+  p.innerHTML=`
+    <div class="pg-hd">
+      <h1 class="pg-title">📈 Relatórios</h1>
+      <div class="pg-sub">Análise de produção, eficiência e desempenho</div>
+    </div>
+    <div class="g2" style="margin-bottom:14px">
+      <div class="card">
+        <div class="card-hd">
+          <span class="card-ttl">📊 PRODUÇÃO SEMANAL</span>
+          <button class="btn btn-ghost btn-sm" onclick="exportRelXLSX()">⬇ Excel</button>
+        </div>
+        <div class="chart-wrap" style="height:240px"><canvas id="chart-rel-weekly"></canvas></div>
+      </div>
+      <div class="card">
+        <div class="card-hd"><span class="card-ttl">🏭 UTILIZAÇÃO DE MÁQUINAS</span></div>
+        <div class="card-bd">
+          ${maqLoad.map(m=>{
+            const c=m.pct>=95?'var(--red)':m.pct>=80?'var(--amber)':'var(--cyan)';
+            return `<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+              <div style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text2);width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${m.nome}</div>
+              <div class="prog-track"><div class="prog-fill" style="width:${m.pct}%;background:${c}"></div></div>
+              <span style="font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:700;color:${c};width:34px;text-align:right">${m.pct}%</span>
+            </div>`;
+          }).join('')||'<div class="empty-st" style="padding:16px"><div class="ei">📊</div>Sem dados</div>'}
+        </div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-hd">
+        <span class="card-ttl">📋 RESUMO GERAL DE ORDENS</span>
+        <button class="btn btn-ghost btn-sm" onclick="exportRelPDF()">⬇ PDF</button>
+      </div>
+      <div class="tbl-wrap" style="border:none;border-radius:0">
+        <table>
+          <thead><tr><th>Produto</th><th>Máquina</th><th style="text-align:right">Programado</th><th style="text-align:right">Realizado</th><th>Efic.</th><th>Status</th></tr></thead>
+          <tbody>
+            ${registros.slice(0,50).map(r=>{
+              const prog=(r.qntCaixas||0)*(r.unidPorCx||0);
+              const real=aponTotals[r.id]||0;
+              const pct=prog>0?Math.round(real/prog*100):0;
+              const bMap={Pendente:'b-amber','Em Andamento':'b-cyan',Concluído:'b-green'};
+              return `<tr>
+                <td style="font-size:11px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.produto||'—'}</td>
+                <td><span class="badge b-purple" style="font-size:9px">${r.maquina||'—'}</span></td>
+                <td style="text-align:right;font-family:'JetBrains Mono',monospace">${fmtN(prog)}</td>
+                <td style="text-align:right;font-family:'JetBrains Mono',monospace;color:var(--cyan)">${fmtN(real)}</td>
+                <td style="font-family:'JetBrains Mono',monospace;font-size:10px;color:${pct>=90?'var(--green)':pct>=60?'var(--amber)':'var(--text2)'}">${prog>0?pct+'%':'—'}</td>
+                <td><span class="badge ${bMap[r.status]||'b-mute'}" style="font-size:9px">${r.status}</span></td>
+              </tr>`;
+            }).join('')||`<tr><td colspan="6"><div class="empty-st"><div class="ei">📈</div>Sem dados</div></td></tr>`}
+          </tbody>
+        </table>
+      </div>
+    </div>`;
+
+  setTimeout(()=>drawWeeklyChart2(wData),80);
+}
+
+function drawWeeklyChart2(data) {
+  if(typeof Chart==='undefined') return;
+  const canvas=$('chart-rel-weekly'); if(!canvas) return;
+  if(charts['relweekly']){charts['relweekly'].destroy();}
+  charts['relweekly']=new Chart(canvas,{type:'bar',data:{labels:data.map(d=>d.label),datasets:[
+    {label:'Programado',data:data.map(d=>d.prog),backgroundColor:'rgba(0,229,204,.2)',borderColor:'#00e5cc',borderWidth:1.5,borderRadius:4},
+    {label:'Realizado', data:data.map(d=>d.real),backgroundColor:'rgba(34,211,164,.3)',borderColor:'#22d3a4',borderWidth:1.5,borderRadius:4},
+  ]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{labels:{color:'#6b8499'}}},scales:{x:{grid:{color:'rgba(28,43,58,.6)'},ticks:{color:'#6b8499'}},y:{grid:{color:'rgba(28,43,58,.6)'},ticks:{color:'#6b8499'}}}}});
+}
+
+window.exportRelXLSX=function(){
+  if(typeof XLSX==='undefined'){toast('XLSX não disponível','err');return;}
+  const rows=registros.map(r=>{
+    const prog=(r.qntCaixas||0)*(r.unidPorCx||0), real=aponTotals[r.id]||0;
+    return {Produto:r.produto,Maquina:r.maquina,Caixas:r.qntCaixas,'Un Prog':prog,'Un Real':real,'Efic(%)':prog>0?Math.round(real/prog*100):0,Status:r.status,Data:r.dtDesejada||''};
+  });
+  const ws=XLSX.utils.json_to_sheet(rows), wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,ws,'Relatório');
+  XLSX.writeFile(wb,`relatorio_${today()}.xlsx`);
+  toast('Exportado!','ok');
+};
+window.exportRelPDF=function(){
+  if(typeof jspdf==='undefined'&&typeof window.jspdf==='undefined'){toast('jsPDF não disponível','err');return;}
+  const {jsPDF}=window.jspdf||jspdf;
+  const doc=new jsPDF({orientation:'landscape'});
+  doc.setFontSize(14); doc.setTextColor(0,229,204);
+  doc.text('PROGPROD MES — Relatório de Produção',14,14);
+  doc.setFontSize(9); doc.setTextColor(150);
+  doc.text(`Gerado em ${new Date().toLocaleDateString('pt-BR')}`,14,20);
+  const head=[['Produto','Máquina','Caixas','Un Prog','Un Real','Efic.','Status']];
+  const body=registros.map(r=>{
+    const prog=(r.qntCaixas||0)*(r.unidPorCx||0), real=aponTotals[r.id]||0;
+    return [r.produto?.substring(0,35)||'—',r.maquina||'—',r.qntCaixas||0,prog,real,prog>0?Math.round(real/prog*100)+'%':'—',r.status];
+  });
+  doc.autoTable({head,body,startY:26,styles:{fontSize:7},headStyles:{fillColor:[14,20,25],textColor:[0,229,204]},theme:'grid'});
+  doc.save(`relatorio_${today()}.pdf`);
+  toast('PDF exportado!','ok');
+};
+
+// ================================================================
+//  CONFIGURAÇÕES
+// ================================================================
+function renderConfiguracoes() {
+  const p = $('panel-configuracoes'); if(!p) return;
+
+  p.innerHTML = `
+    <div class="pg-hd">
+      <h1 class="pg-title">⚙️ Configurações</h1>
+      <div class="pg-sub">Jornada, backup, máquinas e importação de dados</div>
+    </div>
+
+    <div class="g-auto">
+      ${[
+        {icon:'🕐',title:'Jornada de Trabalho',desc:'Horas por dia da semana',color:'var(--cyan)',action:'openModalJornada()'},
+        {icon:'📥',title:'Importar Base Máquina x Produto',desc:'Cadastra máquinas automaticamente e salva tempos de produção',color:'var(--purple)',action:"document.getElementById('imp-base-maq').click()"},
+        {icon:'📦',title:'Importar Estoque',desc:'Lê o arquivo de estoque e salva a base no Firebase',color:'var(--green)',action:"document.getElementById('imp-estoque').click()"},
+        {icon:'🧾',title:'Importar Pedidos',desc:'Lê o arquivo de pedidos e salva a base no Firebase',color:'var(--amber)',action:"document.getElementById('imp-pedidos').click()"},
+        {icon:'📈',title:'Importar Escadinha',desc:'Lê a projeção de vendas e salva a base no Firebase',color:'var(--cyan)',action:"document.getElementById('imp-escadinha').click()"},
+        {icon:'💾',title:'Backup / Exportar',desc:'Exportar todos os dados em JSON',color:'var(--green)',action:'exportBackup()'},
+        {icon:'🏭',title:'Máquinas',desc:'Abrir cadastro de máquinas',color:'var(--purple)',action:"navigate('maquinas')"},
+      ].map(c=>`
+        <div class="card" style="cursor:pointer;transition:border-color .2s" onclick="${c.action}"
+          onmouseover="this.style.borderColor='${c.color}'" onmouseout="this.style.borderColor='var(--border)'">
+          <div class="card-bd">
+            <div style="font-size:32px;margin-bottom:12px">${c.icon}</div>
+            <div style="font-size:14px;font-weight:700;margin-bottom:6px">${c.title}</div>
+            <div style="font-size:12px;color:var(--text2)">${c.desc}</div>
+          </div>
+        </div>`).join('')}
+    </div>
+
+    <input type="file" id="imp-base-maq" accept=".xlsx,.xls" style="display:none" onchange="handleImportBaseMaquina(this)">
+    <input type="file" id="imp-estoque" accept=".xlsx,.xls" style="display:none" onchange="handleImportEstoque(this)">
+    <input type="file" id="imp-pedidos" accept=".xlsx,.xls" style="display:none" onchange="handleImportPedidos(this)">
+    <input type="file" id="imp-escadinha" accept=".xlsx,.xls" style="display:none" onchange="handleImportEscadinha(this)">
+    <input type="file" id="cfg-import" accept=".json" style="display:none" onchange="importBackup(this)">
+  `;
+}
+
+window.handleImportBaseMaquina = async function(input) {
+  const file = input?.files?.[0];
+  if (!file) return;
+
+  try {
+    toast('Importando base máquina x produto...', 'ok');
+    const mod = await import('./importadores.js');
+    const r = await mod.importarBaseMaquinaProduto(file);
+    toast(`Base importada! ${r.totalLinhas} linhas · ${r.totalMaquinas} máquinas`, 'ok');
+    input.value = '';
+  } catch (e) {
+    console.error(e);
+    toast('Erro ao importar base máquina x produto: ' + e.message, 'err');
+    input.value = '';
+  }
+};
+
+window.handleImportEstoque = async function(input) {
+  const file = input?.files?.[0];
+  if (!file) return;
+
+  try {
+    toast('Importando estoque...', 'ok');
+    const mod = await import('./importadores.js');
+    const r = await mod.importarEstoque(file);
+    toast(`Estoque importado! ${r.totalLinhas} linhas`, 'ok');
+    input.value = '';
+  } catch (e) {
+    console.error(e);
+    toast('Erro ao importar estoque: ' + e.message, 'err');
+    input.value = '';
+  }
+};
+
+window.handleImportPedidos = async function(input) {
+  const file = input?.files?.[0];
+  if (!file) return;
+
+  try {
+    toast('Importando pedidos...', 'ok');
+    const mod = await import('./importadores.js');
+    const r = await mod.importarPedidos(file);
+    toast(`Pedidos importados! ${r.totalLinhas} linhas`, 'ok');
+    input.value = '';
+  } catch (e) {
+    console.error(e);
+    toast('Erro ao importar pedidos: ' + e.message, 'err');
+    input.value = '';
+  }
+};
+
+window.handleImportEscadinha = async function(input) {
+  const file = input?.files?.[0];
+  if (!file) return;
+
+  try {
+    toast('Importando escadinha...', 'ok');
+    const mod = await import('./importadores.js');
+    const r = await mod.importarEscadinha(file);
+    toast(`Escadinha importada! ${r.totalLinhas} linhas`, 'ok');
+    input.value = '';
+  } catch (e) {
+    console.error(e);
+    toast('Erro ao importar escadinha: ' + e.message, 'err');
+    input.value = '';
+  }
+};
+
+window.openModalJornada = async function() {
+  try {
+    const jornada = await db.getJornada();
+
+    const dias = [
+      { k: 'dom', l: 'Dom' },
+      { k: 'seg', l: 'Seg' },
+      { k: 'ter', l: 'Ter' },
+      { k: 'qua', l: 'Qua' },
+      { k: 'qui', l: 'Qui' },
+      { k: 'sex', l: 'Sex' },
+      { k: 'sab', l: 'Sáb' }
+    ];
+
+    showModal('modal-jornada', 'Jornada de Trabalho', `
+      <p style="font-size:12px;color:var(--text2);margin-bottom:16px">
+        Defina as horas disponíveis por dia.
+        <strong style="color:var(--text)">0 = dia desativado.</strong>
+      </p>
+
+      <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:8px">
+        ${dias.map(d => {
+          const hrs = Number(jornada?.[d.k] ?? 0);
+          const active = hrs > 0;
+
+          return `
+            <div style="text-align:center;background:var(--s2);border:1px solid ${active ? 'var(--cyan)' : 'var(--border)'};border-radius:var(--r);padding:12px 6px">
+              <div style="font-size:10px;font-weight:700;color:${active ? 'var(--cyan)' : 'var(--text3)'};font-family:'JetBrains Mono',monospace;margin-bottom:8px">
+                ${d.l}
+              </div>
+              <input
+                id="jr-${d.k}"
+                type="number"
+                min="0"
+                max="24"
+                step=".5"
+                value="${hrs}"
+                class="finp"
+                style="padding:8px 4px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:18px;font-weight:700"
+              >
+            </div>
+          `;
+        }).join('')}
+      </div>
+    `, async () => {
+      const data = {};
+      dias.forEach(d => {
+        data[d.k] = parseFloat($(`jr-${d.k}`)?.value) || 0;
+      });
+
+      await db.saveJornada(data);
+      toast('Jornada salva!', 'ok');
+      return true;
+    });
+
+  } catch (e) {
+    console.error('Erro ao abrir jornada:', e);
+    toast('Erro ao abrir jornada de trabalho.', 'err');
+  }
+};
+
+window.exportBackup = async function() {
+  try {
+    const bkp=await db.exportarBackup();
+    const blob=new Blob([JSON.stringify(bkp,null,2)],{type:'application/json'});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a'); a.href=url; a.download=`backup_progprod_${today()}.json`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+    toast('Backup exportado!','ok');
+  } catch(e) { toast('Erro: '+e.message,'err'); }
+};
+
+window.importBackup = function(input) {
+  if(!input.files.length) return;
+  if(!confirm('Importar este backup? Isso NÃO apagará dados existentes — apenas adicionará os registros do arquivo.')) return;
+  const reader=new FileReader();
+  reader.onload=async function(e){
+    try {
+      const bkp=JSON.parse(e.target.result);
+      let count=0;
+      if(bkp.registros?.length) { for(const r of bkp.registros){ const {id,...data}=r; await db.addRegistro(data); count++; } }
+      toast(`${count} registros importados!`,'ok');
+    } catch(err){ toast('Erro ao importar: '+err.message,'err'); }
+  };
+  reader.readAsText(input.files[0]);
+  input.value='';
+};
+
+// ================================================================
+//  USUÁRIOS
+// ================================================================
+let usersData=[];
+
+function renderUsuarios() {
+  const p=$('panel-usuarios'); if(!p) return;
+  db.onUsuarios(users=>{ usersData=users; drawUsers(); });
+}
+
+function drawUsers() {
+  const p=$('panel-usuarios'); if(!p) return;
+  const canAdmin=currentUser?.nivel==='admin';
+  p.innerHTML=`
+    <div class="pg-hd">
+      <h1 class="pg-title">👤 Usuários e Permissões</h1>
+      <div class="pg-sub">${usersData.length} usuários cadastrados</div>
+    </div>
+    ${canAdmin?`<div class="toolbr">
+      <button class="btn btn-primary" onclick="openModalNovoUsuario()">+ Criar Usuário</button>
+    </div>`:''}
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Usuário</th><th>Email</th><th>Nível</th><th>Status</th>${canAdmin?'<th>Ações</th>':''}</tr></thead>
+        <tbody>
+          ${usersData.map(u=>{
+            const ri=NIVEL_META[u.nivel]||NIVEL_META.visualizacao;
+            return `<tr>
+              <td>
+                <div style="display:flex;align-items:center;gap:10px">
+                  <div style="width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;background:${ri.bg};color:${ri.color};font-family:'JetBrains Mono',monospace;flex-shrink:0">${(u.nome||u.email||'?')[0].toUpperCase()}</div>
+                  <div>
+                    <div style="font-size:12px;font-weight:700">${u.nome||'—'}</div>
+                    <div style="font-size:10px;color:var(--text3);font-family:'JetBrains Mono',monospace">${u.cargo||''}</div>
+                  </div>
+                </div>
+              </td>
+              <td style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text2)">${u.email||'—'}</td>
+              <td><span class="badge" style="background:${ri.bg};color:${ri.color};border:1px solid ${ri.color}33;font-size:9px">${ri.icon} ${ri.label}</span></td>
+              <td><span class="badge ${u.ativo?'b-green':'b-mute'}" style="font-size:9px">${u.ativo?'● Ativo':'○ Inativo'}</span></td>
+              ${canAdmin?`<td>
+                <div class="tbl-actions">
+                  <button class="btn btn-ghost btn-sm" onclick="openModalEditUsuario('${u.uid}')">✏️ Editar</button>
+                  <button class="btn ${u.ativo?'btn-warn':'btn-primary'} btn-sm" onclick="toggleUserAtivo('${u.uid}',${!u.ativo})">${u.ativo?'🔒 Suspender':'🔓 Ativar'}</button>
+                </div>
+              </td>`:''}
+            </tr>`;
+          }).join('')||`<tr><td colspan="5"><div class="empty-st"><div class="ei">👤</div>Nenhum usuário</div></td></tr>`}
+        </tbody>
+      </table>
+    </div>
+    <div style="margin-top:18px;background:var(--s1);border:1px solid var(--border);border-radius:var(--r2);padding:18px">
+      <div style="font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--text3);margin-bottom:14px">PERMISSÕES POR NÍVEL</div>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px">
+        ${Object.entries(PERMS).map(([nivel,perms])=>{
+          const ri=NIVEL_META[nivel]||NIVEL_META.visualizacao;
+          return `<div style="background:var(--s2);border:1px solid var(--border);border-radius:var(--r);padding:12px">
+            <div style="font-size:11px;font-weight:700;color:${ri.color};margin-bottom:8px">${ri.icon} ${ri.label}</div>
+            ${perms.map(m=>`<div style="font-size:10px;color:var(--text3);padding:2px 0;font-family:'JetBrains Mono',monospace">✓ ${m}</div>`).join('')}
+          </div>`;
+        }).join('')}
+      </div>
+    </div>`;
+}
+
+window.openModalNovoUsuario = function() {
+  showModal('modal-user', 'Criar Novo Usuário', `
+    <div class="form-row fr2">
+      <div class="fgrp"><label class="flbl">Nome completo *</label><input id="u-nome" class="finp" placeholder="João Silva"></div>
+      <div class="fgrp"><label class="flbl">Cargo</label><input id="u-cargo" class="finp" placeholder="Operador, Planejador..."></div>
+      <div class="fgrp"><label class="flbl">Email *</label><input id="u-email" class="finp" type="email" placeholder="joao@empresa.com"></div>
+      <div class="fgrp"><label class="flbl">Senha inicial *</label><input id="u-senha" class="finp" type="password" placeholder="Mín. 6 caracteres"></div>
+      <div class="fgrp"><label class="flbl">Nível de acesso *</label>
+        <select id="u-nivel" class="fsel">
+          <option value="visualizacao">Visualização</option>
+          <option value="operador">Operador</option>
+          <option value="planejamento">Planejamento</option>
+          <option value="admin">Administrador</option>
+        </select>
+      </div>
+    </div>
+    <div id="u-err" class="lf-error" style="margin-top:8px"></div>
+    <div style="margin-top:12px;font-size:11px;color:var(--text3);background:var(--s2);border-radius:var(--r);padding:10px 12px">
+      ⚠️ O usuário receberá acesso imediato com as credenciais informadas. Oriente-o a alterar a senha no primeiro acesso.
+    </div>`,
+  async () => {
+    const { criarUsuario } = await import('./auth.js');
+    const nome=$('u-nome').value.trim(), email=$('u-email').value.trim();
+    const senha=$('u-senha').value, nivel=$('u-nivel').value;
+    const err=$('u-err');
+    if(!nome){err.textContent='Nome obrigatório.';err.classList.add('on');return false;}
+    if(!email){err.textContent='Email obrigatório.';err.classList.add('on');return false;}
+    if(senha.length<6){err.textContent='Senha deve ter no mínimo 6 caracteres.';err.classList.add('on');return false;}
+    try {
+      const btn=$('modal-save-btn'); if(btn){btn.disabled=true;btn.textContent='Criando...';}
+      await criarUsuario(email, senha, {
+        nome, email, nivel, cargo:$('u-cargo').value.trim(), ativo:true
+      });
+      toast('Usuário criado com sucesso!','ok');
+      return true;
+    } catch(e){
+      err.textContent = e.code==='auth/email-already-in-use'?'Este email já está em uso.':'Erro: '+e.message;
+      err.classList.add('on');
+      const btn=$('modal-save-btn'); if(btn){btn.disabled=false;btn.textContent='Salvar';}
+      return false;
+    }
+  });
+};
+
+window.openModalEditUsuario = function(uid) {
+  const u=usersData.find(x=>x.uid===uid); if(!u) return;
+  showModal('modal-user-edit','Editar Usuário',`
+    <div class="form-row fr2">
+      <div class="fgrp"><label class="flbl">Nome</label><input id="ue-nome" class="finp" value="${u.nome||''}"></div>
+      <div class="fgrp"><label class="flbl">Cargo</label><input id="ue-cargo" class="finp" value="${u.cargo||''}"></div>
+      <div class="fgrp"><label class="flbl">Nível de acesso</label>
+        <select id="ue-nivel" class="fsel">
+          ${['visualizacao','operador','planejamento','admin'].map(n=>`<option value="${n}" ${u.nivel===n?'selected':''}>${NIVEL_META[n]?.label||n}</option>`).join('')}
+        </select>
+      </div>
+    </div>`,
+  async ()=>{
+    await db.updateUsuario(uid,{nome:$('ue-nome').value.trim(),cargo:$('ue-cargo').value.trim(),nivel:$('ue-nivel').value});
+    toast('Usuário atualizado!','ok'); return true;
+  });
+};
+
+window.toggleUserAtivo = async function(uid, ativo) {
+  await db.updateUsuario(uid,{ativo});
+  toast(ativo?'Usuário ativado.':'Usuário suspenso.','ok');
+};
+
+// ================================================================
+//  MODAL & CONFIRM ENGINE
+// ================================================================
+function showModal(id, title, bodyHtml, onSave) {
+  let el=$('overlay-modal');
+  if(el) el.remove();
+  el=document.createElement('div');
+  el.id='overlay-modal'; el.className='overlay';
+  el.innerHTML=`
+    <div class="modal">
+      <div class="modal-hd">
+        <div class="modal-title">${title}</div>
+        <button class="modal-close" onclick="closeModal()">✕</button>
+      </div>
+      <div class="modal-bd">${bodyHtml}</div>
+      <div class="modal-ft">
+        <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+        <button class="btn btn-primary" id="modal-save-btn" onclick="handleModalSave()">Salvar</button>
+      </div>
+    </div>`;
+  document.body.appendChild(el);
+  el.addEventListener('click', e=>{ if(e.target===el) closeModal(); });
+  window._modalSaveFn = onSave;
+}
+window.closeModal=function(){const el=$('overlay-modal');if(el)el.remove();};
+window.handleModalSave=async function(){
+  if(window._modalSaveFn){
+    const ok=await window._modalSaveFn();
+    if(ok!==false) closeModal();
+  }
+};
+
+function showConfirm(msg, onOk) {
+  let el=$('overlay-confirm');
+  if(el) el.remove();
+  el=document.createElement('div');
+  el.id='overlay-confirm'; el.className='overlay';
+  el.innerHTML=`<div class="modal" style="max-width:400px">
+    <div class="modal-hd"><div class="modal-title">Confirmar</div></div>
+    <div class="modal-bd"><p style="font-size:13px;line-height:1.6">${msg}</p></div>
+    <div class="modal-ft">
+      <button class="btn btn-ghost" onclick="this.closest('.overlay').remove()">Cancelar</button>
+      <button class="btn btn-danger" onclick="handleConfirm()">Confirmar</button>
+    </div>
+  </div>`;
+  document.body.appendChild(el);
+  window._confirmFn=onOk;
+}
+window.handleConfirm=async function(){await window._confirmFn?.();const el=$('overlay-confirm');if(el)el.remove();};
+
+// ================================================================
+//  BOOT
+// ================================================================
+function updateClock() {
+  const now=new Date();
+  const t=$('tb-time'), d=$('tb-date');
+  if(t) t.textContent=now.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
+  if(d) d.textContent=now.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'});
+}
+
+// Wire up globals for HTML onclick handlers
+window.navigate       = navigate;
+window.toggleSidebar  = toggleSidebar;
+window.toast          = toast;
+window.progSearch_set = v=>{ progSearch=v; renderProgramacao(); };
+window.NIVEL_META     = NIVEL_META;
+window.PERMS          = PERMS;
+window.toggleTopbarMenu = function(){ $('topbar-menu')?.classList.toggle('on'); };
+window.openConfiguracoesTop = function(){ $('topbar-menu')?.classList.remove('on'); navigate('configuracoes'); };
+window.renderFichaTecnica = renderFichaTecnica;
+window.renderInsumosMaq = renderInsumosMaq;
+window.renderInsumosGeral = renderInsumosGeral;
+window.renderRealizado = renderRealizado;
+
+// Init auth
+document.addEventListener('DOMContentLoaded', ()=>{
+  updateClock(); setInterval(updateClock, 15000);
+
+  $('lf-btn')?.addEventListener('click', handleLogin);
+  $('lf-pass')?.addEventListener('keydown', e=>{ if(e.key==='Enter') handleLogin(); });
+
+  initAuth(
+    async (user) => { await bootApp(user); },
+    () => { showLogin(); db.cancelAllListeners(); }
+  );
+
+  $('lf-btn')?.removeAttribute('disabled');
+});
