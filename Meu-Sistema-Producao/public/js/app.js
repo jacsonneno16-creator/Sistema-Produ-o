@@ -1164,7 +1164,13 @@ async function confirmClearAll(){
 
 function calcTempoStr(maq,caixas,unid,pcMinRec,unidRec){
   // pcMinRec and unidRec come from the record directly (most reliable)
-  const pcMin=pcMinRec||(PRODUTOS.find(x=>x.maquina===maq)||{pc_min:1}).pc_min;
+  // Also check machine-specific product velocity from ficha da máquina
+  let pcMin = pcMinRec;
+  if (!pcMin && maq && window.MAQUINAS_DATA) {
+    const maqData = window.MAQUINAS_DATA[maq];
+    if (maqData && maqData.pcMin) pcMin = maqData.pcMin;
+  }
+  if (!pcMin) pcMin = (PRODUTOS.find(x=>x.maquina===maq)||{pc_min:1}).pc_min;
   const unidCx=unidRec||(PRODUTOS.find(x=>x.maquina===maq)||{unid:1}).unid;
   if(!caixas) return '—';
   const u=unid||(caixas*unidCx);
@@ -3972,7 +3978,7 @@ function openSettings(){
   const snavUsuarios = document.getElementById('snav-usuarios');
   if(snavFunc) snavFunc.style.display = can('funcionarios','visualizar') ? '' : 'none';
   if(snavUsuarios) snavUsuarios.style.display = can('usuarios','visualizar') ? '' : 'none';
-  settingsNav('maquinas');
+  settingsNav('cadastro-maquinas');
   setTimeout(()=>{ if(typeof renderApiSync==='function') renderApiSync(); }, 50);
 }
 function closeSettings(){
@@ -4014,7 +4020,7 @@ function settingsNav(section){
     navBtn.style.color='var(--cyan)';
   }
   // Se for uma seção do grupo Máquinas, mantém o grupo-btn destacado
-  const maqGroupSections=['maquinas','turnos'];
+  const maqGroupSections=['maquinas','turnos','cadastro-maquinas'];
   const groupBtn=document.getElementById('snav-maquinas-group-btn');
   if(groupBtn){
     if(maqGroupSections.includes(section)){
@@ -4025,6 +4031,25 @@ function settingsNav(section){
       groupBtn.style.background='none';
       groupBtn.style.border='1px solid transparent';
       groupBtn.style.color='var(--text2)';
+    }
+  }
+  // Se for uma seção do grupo Produtos, mantém o grupo-btn destacado
+  const prodGroupSections=['produtos','ficha-tecnica-cfg'];
+  const prodGroupBtn=document.getElementById('snav-produtos-group-btn');
+  if(prodGroupBtn){
+    if(prodGroupSections.includes(section)){
+      prodGroupBtn.style.background='rgba(0,212,255,.07)';
+      prodGroupBtn.style.border='1px solid rgba(0,212,255,.2)';
+      prodGroupBtn.style.color='var(--cyan)';
+      // Abre o submenu de produtos automaticamente
+      const sub=document.getElementById('snav-produtos-submenu');
+      const chev=document.getElementById('snav-produtos-chevron');
+      if(sub) sub.style.display='flex';
+      if(chev) chev.style.transform='rotate(180deg)';
+    } else {
+      prodGroupBtn.style.background='none';
+      prodGroupBtn.style.border='1px solid transparent';
+      prodGroupBtn.style.color='var(--text2)';
     }
   }
   // Se for importação, renderiza
@@ -4044,6 +4069,14 @@ function settingsNav(section){
     setTimeout(()=>{
       if(typeof renderTurnosMaquinas === 'function') renderTurnosMaquinas(MAQUINAS);
     }, 50);
+  }
+  // Se for cadastro de máquinas, renderiza
+  if(section==='cadastro-maquinas'){
+    setTimeout(()=>renderCadastroMaquinas(), 50);
+  }
+  // Se for ficha técnica cfg, renderiza
+  if(section==='ficha-tecnica-cfg'){
+    setTimeout(()=>renderFichaTecnicaCfg(), 50);
   }
 }
 
@@ -4093,22 +4126,75 @@ async function carregarMaquinasFirestore() {
     const snap = await getDocs(query(collection(firestoreDB, 'maquinas'), orderBy('nome')));
     if (!snap.empty) {
       MAQUINAS = snap.docs.map(d => d.data().nome).filter(Boolean).sort();
+      // Guarda ficha completa indexada por nome
+      window.MAQUINAS_DATA = {};
+      snap.docs.forEach(d => {
+        const data = d.data();
+        if (data.nome) window.MAQUINAS_DATA[data.nome] = { ...data, _id: d.id };
+      });
     }
   } catch(e) {
     console.warn('[MAQUINAS] Usando lista padrão:', e.message);
   }
 }
 
-async function salvarMaquinaFirestore(nome) {
-  const nomeUp = nome.trim().toUpperCase();
+// Retorna dados completos de uma máquina pelo nome
+function getMaquinaData(nome) {
+  return (window.MAQUINAS_DATA || {})[nome] || null;
+}
+
+// Calcula capacidade produtiva de uma máquina
+function calcCapacidadeMaquina(pcMin, efic, hTurno, nTurnos) {
+  const ef = parseFloat(efic) || 100;
+  const ht = parseFloat(hTurno) || 8;
+  const nt = parseInt(nTurnos) || 1;
+  const fator = ef / 100;
+  const porHora = Math.round(pcMin * 60 * fator);
+  const porTurno = Math.round(porHora * ht);
+  const porDia = porTurno * nt;
+  return { porHora, porTurno, porDia };
+}
+
+// Retorna pc_min efetivo de uma máquina para um produto específico
+function getPcMinMaquinaProduto(nomeMaq, nomeProduto) {
+  const maq = getMaquinaData(nomeMaq);
+  if (!maq) return null;
+  if (maq.produtosCompativeis && nomeProduto) {
+    const entry = maq.produtosCompativeis.find(p => p.produto === nomeProduto || nomeProduto.startsWith(p.produto));
+    if (entry && entry.velocidade) return parseFloat(entry.velocidade);
+  }
+  return maq.pcMin ? parseFloat(maq.pcMin) : null;
+}
+
+async function salvarMaquinaFirestore(dados) {
+  const nomeUp = (dados.nome || '').trim().toUpperCase();
   if (!nomeUp) return;
   const snap = await getDocs(collection(firestoreDB, 'maquinas'));
-  const existe = snap.docs.find(d => (d.data().nome||'').toUpperCase() === nomeUp);
+  const existe = snap.docs.find(d => (d.data().nome||'').toUpperCase() === nomeUp && d.id !== dados._id);
   if (existe) { toast('Máquina já cadastrada!', 'err'); return; }
-  await addDoc(collection(firestoreDB, 'maquinas'), { nome: nomeUp, ativo: true, criadoEm: new Date().toISOString() });
+  const payload = {
+    nome: nomeUp,
+    codigo: (dados.codigo||'').trim(),
+    tipo: (dados.tipo||'').trim(),
+    setor: (dados.setor||'').trim(),
+    status: dados.status || 'ativa',
+    pcMin: parseFloat(dados.pcMin) || 0,
+    eficiencia: parseFloat(dados.eficiencia) || 100,
+    hTurno: parseFloat(dados.hTurno) || 8,
+    nTurnos: parseInt(dados.nTurnos) || 1,
+    produtosCompativeis: dados.produtosCompativeis || [],
+    atualizadoEm: new Date().toISOString()
+  };
+  if (dados._id) {
+    await setDoc(doc(firestoreDB, 'maquinas', dados._id), { ...payload, criadoEm: dados.criadoEm || new Date().toISOString() });
+    toast('Máquina "' + nomeUp + '" atualizada!', 'ok');
+  } else {
+    payload.criadoEm = new Date().toISOString();
+    await addDoc(collection(firestoreDB, 'maquinas'), payload);
+    toast('Máquina "' + nomeUp + '" cadastrada!', 'ok');
+  }
   await carregarMaquinasFirestore();
   renderCadastroMaquinas();
-  toast('Máquina "' + nomeUp + '" cadastrada!', 'ok');
 }
 
 async function excluirMaquinaFirestore(nome) {
@@ -4125,33 +4211,191 @@ async function excluirMaquinaFirestore(nome) {
 }
 
 function renderCadastroMaquinas() {
-  const el = document.getElementById('cadastro-maquinas-lista');
-  if (!el) return;
+  const tbody = document.getElementById('cadastro-maquinas-lista');
+  const empty = document.getElementById('cadastro-maquinas-empty');
+  if (!tbody) return;
   if (!MAQUINAS.length) {
-    el.innerHTML = '<div style="color:var(--text3);font-size:13px;padding:20px 0">Nenhuma máquina cadastrada.</div>';
+    tbody.innerHTML = '';
+    if (empty) empty.style.display = 'block';
     return;
   }
-  el.innerHTML = MAQUINAS.map(m => `
-    <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:var(--s1);border:1px solid var(--border);border-radius:8px;margin-bottom:6px">
-      <span style="font-family:'JetBrains Mono',monospace;font-size:13px;color:var(--text1)">${m}</span>
-      <button class="btn btn-ghost" onclick="excluirMaquinaFirestore('${m.replace(/'/g,"\\'")}')" style="padding:4px 10px;font-size:11px;color:#ff6b6b">🗑 Remover</button>
-    </div>
-  `).join('');
+  if (empty) empty.style.display = 'none';
+  tbody.innerHTML = MAQUINAS.map(m => {
+    const d = getMaquinaData(m) || {};
+    const cap = d.pcMin ? calcCapacidadeMaquina(d.pcMin, d.eficiencia, d.hTurno, d.nTurnos) : null;
+    const statusBadge = d.status === 'inativa'
+      ? '<span style="background:rgba(255,100,100,.15);color:#ff6b6b;border:1px solid rgba(255,100,100,.3);border-radius:4px;padding:2px 7px;font-size:10px;font-weight:700">INATIVA</span>'
+      : '<span style="background:rgba(0,212,100,.12);color:#00d46a;border:1px solid rgba(0,212,100,.3);border-radius:4px;padding:2px 7px;font-size:10px;font-weight:700">ATIVA</span>';
+    const capHora = cap ? cap.porHora.toLocaleString('pt-BR') + ' saq' : '<span style="color:var(--text3)">—</span>';
+    const capDia = cap ? cap.porDia.toLocaleString('pt-BR') + ' saq' : '<span style="color:var(--text3)">—</span>';
+    const tipoSetor = [d.tipo, d.setor].filter(Boolean).join(' / ') || '<span style="color:var(--text3)">—</span>';
+    return `<tr style="border-bottom:1px solid var(--border)" onmouseover="this.style.background='var(--s2)'" onmouseout="this.style.background=''">
+      <td style="padding:10px 14px;font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--text1);font-weight:600">${m}${d.codigo ? `<span style="font-size:10px;color:var(--text3);font-weight:400;margin-left:6px">${d.codigo}</span>` : ''}</td>
+      <td style="padding:10px 10px;font-size:12px;color:var(--text2)">${tipoSetor}</td>
+      <td style="padding:10px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--cyan)">${capHora}</td>
+      <td style="padding:10px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--cyan)">${capDia}</td>
+      <td style="padding:10px 10px;text-align:center">${statusBadge}</td>
+      <td style="padding:10px 10px;text-align:right">
+        <div style="display:flex;gap:6px;justify-content:flex-end">
+          <button class="btn btn-ghost" onclick="openEditMaquina('${m.replace(/'/g,"\\'")}')" style="padding:4px 10px;font-size:11px;color:var(--cyan)">✏ Editar</button>
+          <button class="btn btn-ghost" onclick="excluirMaquinaFirestore('${m.replace(/'/g,"\\'")}')" style="padding:4px 10px;font-size:11px;color:#ff6b6b">🗑 Remover</button>
+        </div>
+      </td>
+    </tr>`;
+  }).join('');
 }
 
+// Estado do modal de máquina
+let _maqProdsCompat = [];
+
 function openAddMaquina() {
+  _maqProdsCompat = [];
+  document.getElementById('maq-edit-id').value = '';
+  document.getElementById('maq-modal-title').textContent = 'Nova Máquina';
+  document.getElementById('maq-nome-inp').value = '';
+  document.getElementById('maq-cod-inp').value = '';
+  document.getElementById('maq-tipo-inp').value = '';
+  document.getElementById('maq-setor-inp').value = '';
+  document.getElementById('maq-status-inp').value = 'ativa';
+  document.getElementById('maq-pcmin-inp').value = '';
+  document.getElementById('maq-efic-inp').value = '';
+  document.getElementById('maq-hturno-inp').value = '';
+  document.getElementById('maq-nturno-inp').value = '';
+  document.getElementById('maq-pchora-inp').value = '';
+  document.getElementById('maq-pcturno-inp').value = '';
+  document.getElementById('maq-pcdia-inp').value = '';
+  switchMaqTab('dados');
+  populateMaqProdSel();
+  renderMaqProdsLista();
   document.getElementById('maq-modal').style.display = 'flex';
   setTimeout(() => { const el = document.getElementById('maq-nome-inp'); if(el) el.focus(); }, 80);
 }
+
+function openEditMaquina(nome) {
+  const d = getMaquinaData(nome) || {};
+  _maqProdsCompat = Array.isArray(d.produtosCompativeis) ? JSON.parse(JSON.stringify(d.produtosCompativeis)) : [];
+  document.getElementById('maq-edit-id').value = d._id || '';
+  document.getElementById('maq-modal-title').textContent = 'Editar: ' + nome;
+  document.getElementById('maq-nome-inp').value = d.nome || nome;
+  document.getElementById('maq-cod-inp').value = d.codigo || '';
+  document.getElementById('maq-tipo-inp').value = d.tipo || '';
+  document.getElementById('maq-setor-inp').value = d.setor || '';
+  document.getElementById('maq-status-inp').value = d.status || 'ativa';
+  document.getElementById('maq-pcmin-inp').value = d.pcMin || '';
+  document.getElementById('maq-efic-inp').value = d.eficiencia || '';
+  document.getElementById('maq-hturno-inp').value = d.hTurno || '';
+  document.getElementById('maq-nturno-inp').value = d.nTurnos || '';
+  calcMaqCapacidade();
+  switchMaqTab('dados');
+  populateMaqProdSel();
+  renderMaqProdsLista();
+  document.getElementById('maq-modal').style.display = 'flex';
+}
+
 function closeMaqModal() {
   document.getElementById('maq-modal').style.display = 'none';
-  const el = document.getElementById('maq-nome-inp'); if(el) el.value = '';
 }
-function saveMaquinaModal() {
-  const el = document.getElementById('maq-nome-inp');
-  const nome = (el ? el.value : '').trim().toUpperCase();
+
+function switchMaqTab(tab) {
+  ['dados','cap','prods'].forEach(t => {
+    const pane = document.getElementById('maq-pane-' + t);
+    const btn = document.getElementById('maq-tab-' + t);
+    if (pane) pane.style.display = t === tab ? (t === 'dados' ? 'grid' : 'flex') : 'none';
+    if (btn) {
+      btn.style.borderBottomColor = t === tab ? 'var(--cyan)' : 'transparent';
+      btn.style.color = t === tab ? 'var(--cyan)' : 'var(--text3)';
+    }
+  });
+}
+
+function calcMaqCapacidade() {
+  const pcMin = parseFloat(document.getElementById('maq-pcmin-inp').value) || 0;
+  const efic = parseFloat(document.getElementById('maq-efic-inp').value) || 100;
+  const hTurno = parseFloat(document.getElementById('maq-hturno-inp').value) || 8;
+  const nTurnos = parseInt(document.getElementById('maq-nturno-inp').value) || 1;
+  if (!pcMin) {
+    ['maq-pchora-inp','maq-pcturno-inp','maq-pcdia-inp'].forEach(id => { const el = document.getElementById(id); if(el) el.value = ''; });
+    return;
+  }
+  const cap = calcCapacidadeMaquina(pcMin, efic, hTurno, nTurnos);
+  const el1 = document.getElementById('maq-pchora-inp');
+  const el2 = document.getElementById('maq-pcturno-inp');
+  const el3 = document.getElementById('maq-pcdia-inp');
+  if(el1) el1.value = cap.porHora.toLocaleString('pt-BR') + ' saq/h';
+  if(el2) el2.value = cap.porTurno.toLocaleString('pt-BR') + ' saq/turno';
+  if(el3) el3.value = cap.porDia.toLocaleString('pt-BR') + ' saq/dia';
+}
+
+function populateMaqProdSel() {
+  const sel = document.getElementById('maq-prod-sel');
+  if (!sel) return;
+  const all = getAllProdutos ? getAllProdutos() : PRODUTOS;
+  const unique = [...new Map(all.map(p => [p.descricao, p])).values()];
+  sel.innerHTML = '<option value="">— Selecione um produto —</option>' +
+    unique.slice(0, 300).map(p => `<option value="${p.descricao}">${p.cod ? p.cod + ' · ' : ''}${p.descricao}</option>`).join('');
+}
+
+function addMaqProdCompat() {
+  const sel = document.getElementById('maq-prod-sel');
+  const vel = document.getElementById('maq-prod-vel');
+  const prod = sel ? sel.value : '';
+  const velocidade = vel ? parseFloat(vel.value) : 0;
+  if (!prod) { toast('Selecione um produto', 'err'); return; }
+  const exists = _maqProdsCompat.findIndex(x => x.produto === prod);
+  if (exists >= 0) {
+    _maqProdsCompat[exists].velocidade = velocidade || null;
+  } else {
+    _maqProdsCompat.push({ produto: prod, velocidade: velocidade || null });
+  }
+  if (vel) vel.value = '';
+  renderMaqProdsLista();
+}
+
+function removeMaqProdCompat(idx) {
+  _maqProdsCompat.splice(idx, 1);
+  renderMaqProdsLista();
+}
+
+function renderMaqProdsLista() {
+  const el = document.getElementById('maq-prods-lista');
+  if (!el) return;
+  if (!_maqProdsCompat.length) {
+    el.innerHTML = '<div style="color:var(--text3);font-size:12px;padding:10px 0">Nenhum produto configurado. Usará velocidade padrão para todos.</div>';
+    return;
+  }
+  const pcPadrao = parseFloat((document.getElementById('maq-pcmin-inp')||{}).value) || null;
+  el.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:11px">
+    <thead><tr style="background:var(--s2)">
+      <th style="padding:6px 10px;text-align:left;color:var(--text3)">Produto</th>
+      <th style="padding:6px 10px;text-align:right;color:var(--text3)">Velocidade (saq/min)</th>
+      <th style="padding:6px 4px;text-align:right;color:var(--text3)"></th>
+    </tr></thead>
+    <tbody>` +
+    _maqProdsCompat.map((p, i) => `<tr style="border-bottom:1px solid var(--border)">
+      <td style="padding:6px 10px;color:var(--text1)">${p.produto}</td>
+      <td style="padding:6px 10px;text-align:right;font-family:'JetBrains Mono',monospace;color:var(--cyan)">${p.velocidade != null ? p.velocidade : `<span style="color:var(--text3)">padrão${pcPadrao ? ' (' + pcPadrao + ')' : ''}</span>`}</td>
+      <td style="padding:6px 4px;text-align:right"><button onclick="removeMaqProdCompat(${i})" style="background:none;border:none;color:#ff6b6b;cursor:pointer;font-size:12px">✕</button></td>
+    </tr>`).join('') +
+    '</tbody></table>';
+}
+
+async function saveMaquinaModal() {
+  const nome = (document.getElementById('maq-nome-inp').value || '').trim();
   if (!nome) { toast('Informe o nome da máquina', 'err'); return; }
-  salvarMaquinaFirestore(nome);
+  const dados = {
+    _id: document.getElementById('maq-edit-id').value || null,
+    nome,
+    codigo: document.getElementById('maq-cod-inp').value || '',
+    tipo: document.getElementById('maq-tipo-inp').value || '',
+    setor: document.getElementById('maq-setor-inp').value || '',
+    status: document.getElementById('maq-status-inp').value || 'ativa',
+    pcMin: document.getElementById('maq-pcmin-inp').value || 0,
+    eficiencia: document.getElementById('maq-efic-inp').value || 100,
+    hTurno: document.getElementById('maq-hturno-inp').value || 8,
+    nTurnos: document.getElementById('maq-nturno-inp').value || 1,
+    produtosCompativeis: _maqProdsCompat,
+  };
+  await salvarMaquinaFirestore(dados);
   closeMaqModal();
 }
 
@@ -4168,7 +4412,7 @@ async function importarMaquinasExcel(file) {
     let adicionadas = 0;
     for (const nome of nomes) {
       if (!existentes.includes(nome)) {
-        await addDoc(collection(firestoreDB, 'maquinas'), { nome, ativo: true, criadoEm: new Date().toISOString() });
+        await addDoc(collection(firestoreDB, 'maquinas'), { nome, status: 'ativa', pcMin: 0, eficiencia: 100, hTurno: 8, nTurnos: 1, produtosCompativeis: [], criadoEm: new Date().toISOString() });
         adicionadas++;
       }
     }
@@ -4177,6 +4421,36 @@ async function importarMaquinasExcel(file) {
     toast(adicionadas + ' máquina(s) importada(s)!', 'ok');
   } catch(e) { toast('Erro ao importar: ' + e.message, 'err'); }
 }
+
+// Ficha Técnica no menu Configurações → Produtos
+function renderFichaTecnicaCfg() {
+  const search = (document.getElementById('ft-cfg-search') || {}).value || '';
+  const el = document.getElementById('ft-cfg-list');
+  const cnt = document.getElementById('ft-cfg-count');
+  if (cnt) cnt.textContent = FICHA_TECNICA.length;
+  if (!el) return;
+  const filtered = search
+    ? FICHA_TECNICA.filter(p => p.desc.toLowerCase().includes(search.toLowerCase()) || String(p.cod).includes(search))
+    : FICHA_TECNICA;
+  if (!filtered.length) {
+    el.innerHTML = '<div style="padding:20px;color:var(--text3);font-size:13px">Nenhum produto encontrado.</div>';
+    return;
+  }
+  el.innerHTML = filtered.slice(0, 150).map(p => `
+    <div style="padding:9px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between">
+      <div>
+        <span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--cyan)">${p.cod}</span>
+        <span style="font-size:12px;color:var(--text1);margin-left:8px">${p.desc}</span>
+      </div>
+      <div style="display:flex;gap:14px;align-items:center">
+        <span style="font-size:11px;color:var(--text3)">Máq: <b style="color:var(--text2)">${p.maquina||'—'}</b></span>
+        <span style="font-size:11px;color:var(--text3)">${p.pc_min} pc/min</span>
+        <span style="font-size:11px;color:var(--text3)">${(p.insumos||[]).length} insumos</span>
+      </div>
+    </div>
+  `).join('');
+}
+
 
 // ── Cadastro: Produtos (localStorage) ──
 let PRODUTOS_EXTRA = JSON.parse(localStorage.getItem('cfg_produtos') || '[]');
@@ -5837,6 +6111,20 @@ window.renderUsuariosSistema = renderUsuariosSistema;
 window.openReorderModal = openReorderModal;
 window.openSettings = openSettings;
 window.carregarMaquinasFirestore = carregarMaquinasFirestore;
+window.getMaquinaData = getMaquinaData;
+window.calcCapacidadeMaquina = calcCapacidadeMaquina;
+window.getPcMinMaquinaProduto = getPcMinMaquinaProduto;
+window.renderCadastroMaquinas = renderCadastroMaquinas;
+window.openAddMaquina = openAddMaquina;
+window.openEditMaquina = openEditMaquina;
+window.closeMaqModal = closeMaqModal;
+window.switchMaqTab = switchMaqTab;
+window.calcMaqCapacidade = calcMaqCapacidade;
+window.addMaqProdCompat = addMaqProdCompat;
+window.removeMaqProdCompat = removeMaqProdCompat;
+window.saveMaquinaModal = saveMaquinaModal;
+window.excluirMaquinaFirestore = excluirMaquinaFirestore;
+window.renderFichaTecnicaCfg = renderFichaTecnicaCfg;
 window.excluirMaquinaFirestore = excluirMaquinaFirestore;
 window.renderCadastroMaquinas = renderCadastroMaquinas;
 window.openAddMaquina = openAddMaquina;
