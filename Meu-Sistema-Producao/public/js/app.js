@@ -3980,6 +3980,15 @@ function closeSettings(){
   sp.style.display='none';
 }
 
+function toggleSnavGroup(group){
+  const submenu=document.getElementById('snav-'+group+'-submenu');
+  const chevron=document.getElementById('snav-'+group+'-chevron');
+  if(!submenu) return;
+  const isOpen=submenu.style.display!=='none';
+  submenu.style.display=isOpen?'none':'flex';
+  if(chevron) chevron.style.transform=isOpen?'rotate(0deg)':'rotate(180deg)';
+}
+
 function settingsNav(section){
   // Esconde todos os conteúdos
   document.querySelectorAll('.scontent').forEach(el=>{
@@ -3991,6 +4000,7 @@ function settingsNav(section){
     btn.style.background='none';
     btn.style.border='1px solid transparent';
     btn.style.color='var(--text2)';
+    btn.style.fontSize='';
   });
   // Mostra a seção correta
   const content=document.getElementById('scontent-'+section);
@@ -4002,6 +4012,20 @@ function settingsNav(section){
     navBtn.style.background='rgba(0,212,255,.1)';
     navBtn.style.border='1px solid rgba(0,212,255,.25)';
     navBtn.style.color='var(--cyan)';
+  }
+  // Se for uma seção do grupo Máquinas, mantém o grupo-btn destacado
+  const maqGroupSections=['maquinas','turnos'];
+  const groupBtn=document.getElementById('snav-maquinas-group-btn');
+  if(groupBtn){
+    if(maqGroupSections.includes(section)){
+      groupBtn.style.background='rgba(0,212,255,.07)';
+      groupBtn.style.border='1px solid rgba(0,212,255,.2)';
+      groupBtn.style.color='var(--cyan)';
+    } else {
+      groupBtn.style.background='none';
+      groupBtn.style.border='1px solid transparent';
+      groupBtn.style.color='var(--text2)';
+    }
   }
   // Se for importação, renderiza
   if(section==='importacao'){

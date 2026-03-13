@@ -218,56 +218,56 @@ function renderTurnosMaquinas(maquinas, horasPorTurno) {
   const cfg = _loadCfg();
   const hpt = cfg.horasPorTurno || 8;
 
+  // Target: scontent-turnos (the bare container)
   const container = document.getElementById('scontent-turnos');
   if (!container) return;
 
   let html = `
-  <div style="width:100%;max-width:1100px;margin:0 auto;padding:20px 0">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;flex-wrap:wrap;gap:10px">
-      <div>
-        <div style="font-size:16px;font-weight:700;color:var(--text);margin-bottom:4px">⏱ Turnos por Máquina</div>
-        <div style="font-size:11px;color:var(--text3)">T1: 06:00–14:00 &nbsp;·&nbsp; T2: 14:00–22:00 &nbsp;·&nbsp; T3: 22:00–06:00</div>
-      </div>
-      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-        <label style="font-size:11px;color:var(--text2);display:flex;align-items:center;gap:6px">
-          Horas/turno:
-          <input id="tm-hpt" type="number" min="1" max="12" value="${hpt}"
-            style="width:56px;padding:4px 6px;border:1px solid var(--border2);border-radius:6px;background:var(--s2);color:var(--text);font-size:13px;font-family:'JetBrains Mono',monospace"
-            onchange="(function(){
-              const cfg=JSON.parse(localStorage.getItem('cfg_turnos_maquinas')||'{}');
-              cfg.horasPorTurno=parseInt(this.value)||8;
-              localStorage.setItem('cfg_turnos_maquinas',JSON.stringify(cfg));
-              saveTurnosMaquinas();
-            }).call(this)">
-        </label>
-        <button onclick="resetTurnosMaquinas(${JSON.stringify(maquinas)},${horasPorTurno})"
-          style="padding:6px 12px;border:1px solid var(--border2);border-radius:6px;background:var(--s2);color:var(--text3);font-size:11px;cursor:pointer">
-          ↺ Resetar
-        </button>
-      </div>
-    </div>
+  <div style="width:100%;max-width:1100px;padding:20px 0">
 
-    <div style="overflow-x:auto">
-    <table style="width:100%;border-collapse:collapse;font-size:11px">
-      <thead>
-        <tr style="background:var(--s2)">
-          <th style="padding:8px 12px;text-align:left;color:var(--text3);font-weight:600;white-space:nowrap;border-bottom:1px solid var(--border)">Máquina</th>
-          ${DAY_LABELS_TM.map(d=>`<th colspan="3" style="padding:8px 6px;text-align:center;color:var(--text2);font-weight:600;border-bottom:1px solid var(--border);border-left:1px solid var(--border2)">${d}</th>`).join('')}
-          <th style="padding:8px 6px;text-align:center;color:var(--text3);font-weight:600;border-bottom:1px solid var(--border);border-left:2px solid var(--border2);white-space:nowrap">H/sem</th>
-          <th style="padding:8px 6px;text-align:center;color:var(--text3);border-bottom:1px solid var(--border);border-left:1px solid var(--border2)">Copiar</th>
-        </tr>
-        <tr style="background:var(--s1)">
-          <th style="border-bottom:2px solid var(--border2)"></th>
-          ${[0,1,2,3,4,5,6].map(()=>`
-            <th style="padding:3px 2px;text-align:center;color:var(--cyan);font-size:9px;border-left:1px solid var(--border2)">T1</th>
-            <th style="padding:3px 2px;text-align:center;color:var(--purple);font-size:9px">T2</th>
-            <th style="padding:3px 2px;text-align:center;color:var(--orange);font-size:9px;border-right:1px solid transparent">T3</th>
-          `).join('')}
-          <th style="border-bottom:2px solid var(--border2);border-left:2px solid var(--border2)"></th>
-          <th style="border-bottom:2px solid var(--border2)"></th>
-        </tr>
-      </thead>
-      <tbody>`;
+    <div style="background:var(--s1);border:1px solid var(--border);border-radius:10px;overflow:hidden">
+      <!-- Header -->
+      <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--cyan)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          <span style="font-size:13px;font-weight:700;color:var(--text)">Turnos por Máquina</span>
+          <span style="font-size:11px;color:var(--text3)">— T1: 06:00–14:00 · T2: 14:00–22:00 · T3: 22:00–06:00</span>
+        </div>
+        <div style="display:flex;gap:10px;align-items:center">
+          <label style="font-size:11px;color:var(--text2);display:flex;align-items:center;gap:6px">
+            Horas/turno:
+            <input id="tm-hpt" type="number" min="1" max="12" value="${hpt}"
+              style="width:56px;padding:4px 6px;border:1px solid var(--border2);border-radius:6px;background:var(--s2);color:var(--text);font-size:13px;font-family:'JetBrains Mono',monospace">
+          </label>
+          <button id="tm-reset-btn"
+            style="padding:6px 12px;border:1px solid var(--border2);border-radius:6px;background:var(--s2);color:var(--text3);font-size:11px;cursor:pointer">
+            ↺ Resetar
+          </button>
+        </div>
+      </div>
+
+      <!-- Table -->
+      <div style="overflow-x:auto;padding:14px 16px">
+      <table style="width:100%;border-collapse:collapse;font-size:11px">
+        <thead>
+          <tr style="background:var(--s2)">
+            <th style="padding:8px 12px;text-align:left;color:var(--text3);font-weight:600;white-space:nowrap;border-bottom:1px solid var(--border)">Máquina</th>
+            ${DAY_LABELS_TM.map(d=>`<th colspan="3" style="padding:8px 6px;text-align:center;color:var(--text2);font-weight:600;border-bottom:1px solid var(--border);border-left:1px solid var(--border2)">${d}</th>`).join('')}
+            <th style="padding:8px 6px;text-align:center;color:var(--text3);font-weight:600;border-bottom:1px solid var(--border);border-left:2px solid var(--border2);white-space:nowrap">H/sem</th>
+            <th style="padding:8px 6px;text-align:center;color:var(--text3);border-bottom:1px solid var(--border);border-left:1px solid var(--border2)">Copiar</th>
+          </tr>
+          <tr style="background:var(--s1)">
+            <th style="border-bottom:2px solid var(--border2)"></th>
+            ${[0,1,2,3,4,5,6].map(()=>`
+              <th style="padding:3px 4px;text-align:center;color:var(--cyan);font-size:9px;border-left:1px solid var(--border2)">T1</th>
+              <th style="padding:3px 4px;text-align:center;color:var(--purple);font-size:9px">T2</th>
+              <th style="padding:3px 4px;text-align:center;color:var(--orange);font-size:9px">T3</th>
+            `).join('')}
+            <th style="border-bottom:2px solid var(--border2);border-left:2px solid var(--border2)"></th>
+            <th style="border-bottom:2px solid var(--border2)"></th>
+          </tr>
+        </thead>
+        <tbody>`;
 
   (maquinas || []).forEach((maq, mi) => {
     const maqCfg = cfg.maquinas[maq] || { turnos: {} };
@@ -276,8 +276,9 @@ function renderTurnosMaquinas(maquinas, horasPorTurno) {
       const t = maqCfg.turnos[d] || [false, false, false];
       weekHrs += t.filter(Boolean).length * hpt;
     }
+    const maqEncoded = encodeURIComponent(maq);
 
-    html += `<tr style="background:${mi%2===0?'var(--s1)':'var(--s0)'};border-bottom:1px solid var(--border)">
+    html += `<tr style="background:${mi%2===0?'var(--s1)':'var(--s0)'};border-bottom:1px solid var(--border)" data-maq="${maqEncoded}">
       <td style="padding:7px 12px;color:var(--purple);font-weight:600;font-family:'JetBrains Mono',monospace;font-size:11px;white-space:nowrap">${maq}</td>`;
 
     for (let d = 0; d < 7; d++) {
@@ -286,11 +287,10 @@ function renderTurnosMaquinas(maquinas, horasPorTurno) {
       [0, 1, 2].forEach(ti => {
         const on = !!t[ti];
         const colors = ['var(--cyan)', 'var(--purple)', 'var(--orange)'];
-        const col = colors[ti];
-        html += `<label style="display:flex;justify-content:center;align-items:center;padding:5px 2px;cursor:pointer" title="T${ti+1} ${DAY_LABELS_TM[d]}">
-          <input type="checkbox" ${on ? 'checked' : ''}
-            onchange="toggleTurnoMaq(${JSON.stringify(maq)},${d},${ti});saveTurnosMaquinas();renderTurnosMaquinas(${JSON.stringify(maquinas)},${horasPorTurno})"
-            style="width:14px;height:14px;accent-color:${col};cursor:pointer">
+        html += `<label style="display:flex;justify-content:center;align-items:center;padding:5px 4px;cursor:pointer" title="T${ti+1} ${DAY_LABELS_TM[d]}">
+          <input type="checkbox" class="tm-check" ${on ? 'checked' : ''}
+            data-maq="${maqEncoded}" data-dia="${d}" data-turno="${ti}"
+            style="width:14px;height:14px;accent-color:${colors[ti]};cursor:pointer">
         </label>`;
       });
       html += `</td>`;
@@ -298,16 +298,11 @@ function renderTurnosMaquinas(maquinas, horasPorTurno) {
 
     // H/sem
     const weekColor = weekHrs === 0 ? 'var(--text4)' : weekHrs >= 100 ? 'var(--cyan)' : 'var(--text2)';
-    html += `<td style="text-align:center;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:${weekColor};border-left:2px solid var(--border2);padding:0 8px">${weekHrs}h</td>`;
+    html += `<td class="tm-hrsem" data-maq="${maqEncoded}" style="text-align:center;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:${weekColor};border-left:2px solid var(--border2);padding:0 8px">${weekHrs}h</td>`;
 
-    // Copiar para todas
+    // Copiar
     html += `<td style="text-align:center;border-left:1px solid var(--border2);padding:0 8px">
-      <button onclick="(function(){
-        const outros=${JSON.stringify(maquinas)}.filter(x=>x!==${JSON.stringify(maq)});
-        copiarTurnosMaquinas(${JSON.stringify(maq)},outros);
-        renderTurnosMaquinas(${JSON.stringify(maquinas)},${horasPorTurno});
-        saveTurnosMaquinas();
-      })()"
+      <button class="tm-copy-btn" data-maq="${maqEncoded}"
         style="font-size:9px;padding:3px 7px;border:1px solid var(--border2);border-radius:4px;background:var(--s2);color:var(--text3);cursor:pointer;white-space:nowrap"
         title="Copiar turnos desta máquina para todas as outras">→ Todas</button>
     </td>`;
@@ -315,17 +310,81 @@ function renderTurnosMaquinas(maquinas, horasPorTurno) {
     html += `</tr>`;
   });
 
-  html += `</tbody></table></div>
+  html += `</tbody></table>
+      </div><!-- /overflow-x:auto -->
 
-    <div style="margin-top:16px;padding:12px 16px;background:var(--s2);border-radius:8px;font-size:10px;color:var(--text3);line-height:1.7">
-      <strong style="color:var(--text2)">💡 Como funciona:</strong><br>
-      Cada checkbox ativa um turno de ${hpt}h para a máquina naquele dia da semana.<br>
-      T1 = 06:00–14:00 &nbsp;·&nbsp; T2 = 14:00–22:00 &nbsp;·&nbsp; T3 = 22:00–06:00<br>
-      O algoritmo de programação distribui a produção respeitando exatamente esses blocos.
+      <div style="margin:0 16px 16px;padding:10px 14px;background:var(--s2);border-radius:7px;font-size:10px;color:var(--text3);line-height:1.7">
+        <strong style="color:var(--text2)">💡 Como funciona:</strong>
+        Cada checkbox ativa um turno de ${hpt}h para a máquina naquele dia da semana.
+        T1 = 06:00–14:00 · T2 = 14:00–22:00 · T3 = 22:00–06:00.
+        O algoritmo distribui a produção respeitando exatamente esses blocos.
+      </div>
     </div>
   </div>`;
 
   container.innerHTML = html;
   container.style.display = 'flex';
   container.style.flexDirection = 'column';
+
+  // ── Event listeners (evita problemas de escape em onclick inline) ──
+
+  // Checkbox toggle
+  container.querySelectorAll('.tm-check').forEach(cb => {
+    cb.addEventListener('change', function() {
+      const maq = decodeURIComponent(this.dataset.maq);
+      const dia = parseInt(this.dataset.dia);
+      const turno = parseInt(this.dataset.turno);
+      toggleTurnoMaq(maq, dia, turno);
+      _recalcHsemCell(container, this.dataset.maq, maquinas, hpt);
+      if (typeof saveTurnosMaquinas === 'function') saveTurnosMaquinas();
+    });
+  });
+
+  // Horas/turno input
+  const hptInput = container.querySelector('#tm-hpt');
+  if (hptInput) {
+    hptInput.addEventListener('change', function() {
+      const newHpt = parseInt(this.value) || 8;
+      const c = _loadCfg();
+      c.horasPorTurno = newHpt;
+      _saveCfg(c);
+      if (typeof saveTurnosMaquinas === 'function') saveTurnosMaquinas();
+      renderTurnosMaquinas(maquinas, horasPorTurno);
+    });
+  }
+
+  // Resetar
+  const resetBtn = container.querySelector('#tm-reset-btn');
+  if (resetBtn) {
+    resetBtn.addEventListener('click', function() {
+      if (typeof resetTurnosMaquinas === 'function') resetTurnosMaquinas(maquinas, horasPorTurno);
+    });
+  }
+
+  // Copiar para todas
+  container.querySelectorAll('.tm-copy-btn').forEach(btn => {
+    btn.addEventListener('click', function() {
+      const maq = decodeURIComponent(this.dataset.maq);
+      const outros = (maquinas || []).filter(m => m !== maq);
+      copiarTurnosMaquinas(maq, outros);
+      renderTurnosMaquinas(maquinas, horasPorTurno);
+      if (typeof saveTurnosMaquinas === 'function') saveTurnosMaquinas();
+    });
+  });
+}
+
+// Recalculate H/sem cell for one machine without full re-render
+function _recalcHsemCell(container, maqEncoded, maquinas, hpt) {
+  const cfg = _loadCfg();
+  const maq = decodeURIComponent(maqEncoded);
+  if (!cfg || !cfg.maquinas || !cfg.maquinas[maq]) return;
+  let weekHrs = 0;
+  for (let d = 0; d < 7; d++) {
+    const t = cfg.maquinas[maq].turnos[d] || [false, false, false];
+    weekHrs += t.filter(Boolean).length * hpt;
+  }
+  const cell = container.querySelector(`.tm-hrsem[data-maq="${maqEncoded}"]`);
+  if (!cell) return;
+  cell.textContent = weekHrs + 'h';
+  cell.style.color = weekHrs === 0 ? 'var(--text4)' : weekHrs >= 100 ? 'var(--cyan)' : 'var(--text2)';
 }

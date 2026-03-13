@@ -767,10 +767,26 @@
   <div style="flex:1;display:flex;overflow:hidden">
     <!-- SIDEBAR NAV -->
     <div style="width:190px;flex-shrink:0;border-right:1px solid var(--border);background:var(--s1);padding:12px 8px;display:flex;flex-direction:column;gap:2px;overflow-y:auto">
-      <button onclick="settingsNav('maquinas')" id="snav-maquinas" class="snav-btn snav-active" style="width:100%;text-align:left;background:rgba(0,212,255,.1);border:1px solid rgba(0,212,255,.25);border-radius:7px;padding:8px 10px;color:var(--cyan);font-family:'Space Grotesk',sans-serif;font-size:12px;cursor:pointer;display:flex;align-items:center;gap:8px;transition:all .15s">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/></svg>
-        Máquinas
-      </button>
+      <!-- Grupo Máquinas (expansível) -->
+      <div id="snav-group-maquinas">
+        <button onclick="toggleSnavGroup('maquinas')" id="snav-maquinas-group-btn" class="snav-btn" style="width:100%;text-align:left;background:rgba(0,212,255,.1);border:1px solid rgba(0,212,255,.25);border-radius:7px;padding:8px 10px;color:var(--cyan);font-family:'Space Grotesk',sans-serif;font-size:12px;cursor:pointer;display:flex;align-items:center;gap:8px;transition:all .15s;justify-content:space-between">
+          <span style="display:flex;align-items:center;gap:8px">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/></svg>
+            Máquinas
+          </span>
+          <svg id="snav-maquinas-chevron" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="transition:transform .2s;transform:rotate(180deg)"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <div id="snav-maquinas-submenu" style="display:flex;flex-direction:column;gap:1px;margin-top:2px;padding-left:14px">
+          <button onclick="settingsNav('maquinas')" id="snav-maquinas" class="snav-btn snav-active" style="width:100%;text-align:left;background:rgba(0,212,255,.1);border:1px solid rgba(0,212,255,.25);border-radius:6px;padding:6px 10px;color:var(--cyan);font-family:'Space Grotesk',sans-serif;font-size:11px;cursor:pointer;display:flex;align-items:center;gap:7px;transition:all .15s" onmouseover="if(!this.classList.contains('snav-active'))this.style.background='var(--s2)'" onmouseout="if(!this.classList.contains('snav-active'))this.style.background='none'">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/></svg>
+            Desempenho Máquinas
+          </button>
+          <button onclick="settingsNav('turnos')" id="snav-turnos" class="snav-btn" style="width:100%;text-align:left;background:none;border:1px solid transparent;border-radius:6px;padding:6px 10px;color:var(--text2);font-family:'Space Grotesk',sans-serif;font-size:11px;cursor:pointer;display:flex;align-items:center;gap:7px;transition:all .15s" onmouseover="if(!this.classList.contains('snav-active'))this.style.background='var(--s2)'" onmouseout="if(!this.classList.contains('snav-active'))this.style.background='none'">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            Turnos por Máquina
+          </button>
+        </div>
+      </div>
       <button onclick="settingsNav('produtos')" id="snav-produtos" class="snav-btn" style="width:100%;text-align:left;background:none;border:1px solid transparent;border-radius:7px;padding:8px 10px;color:var(--text2);font-family:'Space Grotesk',sans-serif;font-size:12px;cursor:pointer;display:flex;align-items:center;gap:8px;transition:all .15s" onmouseover="if(!this.classList.contains('snav-active'))this.style.background='var(--s2)'" onmouseout="if(!this.classList.contains('snav-active'))this.style.background='none'">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>
         Produtos
@@ -782,10 +798,6 @@
       <button onclick="settingsNav('jornada')" id="snav-jornada" class="snav-btn" style="width:100%;text-align:left;background:none;border:1px solid transparent;border-radius:7px;padding:8px 10px;color:var(--text2);font-family:'Space Grotesk',sans-serif;font-size:12px;cursor:pointer;display:flex;align-items:center;gap:8px;transition:all .15s" onmouseover="if(!this.classList.contains('snav-active'))this.style.background='var(--s2)'" onmouseout="if(!this.classList.contains('snav-active'))this.style.background='none'">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
         Jornada
-      </button>
-      <button onclick="settingsNav('turnos')" id="snav-turnos" class="snav-btn" style="width:100%;text-align:left;background:none;border:1px solid transparent;border-radius:7px;padding:8px 10px;color:var(--text2);font-family:'Space Grotesk',sans-serif;font-size:12px;cursor:pointer;display:flex;align-items:center;gap:8px;transition:all .15s" onmouseover="if(!this.classList.contains('snav-active'))this.style.background='var(--s2)'" onmouseout="if(!this.classList.contains('snav-active'))this.style.background='none'">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
-        Turnos por Máquina
       </button>
       <button onclick="settingsNav('importacao')" id="snav-importacao" class="snav-btn" style="width:100%;text-align:left;background:none;border:1px solid transparent;border-radius:7px;padding:8px 10px;color:var(--text2);font-family:'Space Grotesk',sans-serif;font-size:12px;cursor:pointer;display:flex;align-items:center;gap:8px;transition:all .15s" onmouseover="if(!this.classList.contains('snav-active'))this.style.background='var(--s2)'" onmouseout="if(!this.classList.contains('snav-active'))this.style.background='none'">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
@@ -937,18 +949,7 @@
       </div>
 
       <!-- SEÇÃO TURNOS POR MÁQUINA -->
-      <div id="scontent-turnos" class="scontent" style="display:none;flex-direction:column;gap:0">
-        <div style="background:var(--s1);border:1px solid var(--border);border-radius:10px;overflow:hidden">
-          <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--cyan)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
-            <span style="font-size:13px;font-weight:700;color:var(--text)">Turnos por Máquina</span>
-            <span style="font-size:11px;color:var(--text3)">— Configure quais turnos cada máquina opera por dia</span>
-          </div>
-          <div style="padding:14px 16px">
-            <div id="turnos-maquinas-container"></div>
-          </div>
-        </div>
-      </div>
+      <div id="scontent-turnos" class="scontent" style="display:none;flex-direction:column;gap:0"></div>
 
       <!-- SEÇÃO IMPORTAÇÃO / API -->
       <div id="scontent-importacao" class="scontent" style="display:none;flex-direction:column;gap:0">
