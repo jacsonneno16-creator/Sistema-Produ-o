@@ -9,10 +9,6 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
 
-    defaults:
-      run:
-        working-directory: Meu-Sistema-Producao
-
     steps:
       - uses: actions/checkout@v4
 
@@ -22,3 +18,4 @@ jobs:
           firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_PROGRAMACAO_PRODUCAO }}
           channelId: live
           projectId: programacao-producao
+          entryPoint: ./Meu-Sistema-Producao
