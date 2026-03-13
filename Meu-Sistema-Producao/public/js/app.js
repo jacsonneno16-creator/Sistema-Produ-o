@@ -3987,12 +3987,20 @@ function closeSettings(){
 }
 
 function toggleSnavGroup(group){
-  const submenu=document.getElementById('snav-'+group+'-submenu');
-  const chevron=document.getElementById('snav-'+group+'-chevron');
-  if(!submenu) return;
-  const isOpen=submenu.style.display!=='none'&&submenu.style.display!=='';
-  submenu.style.display=isOpen?'none':'flex';
-  if(chevron) chevron.style.transform=isOpen?'rotate(0deg)':'rotate(180deg)';
+  const submenu = document.getElementById('snav-'+group+'-submenu');
+  const chevron = document.getElementById('snav-'+group+'-chevron');
+  if (!submenu) return;
+  // Usa data-open como fonte da verdade para evitar conflito com display:flex vs display:none
+  const isOpen = submenu.dataset.open !== 'false';
+  if (isOpen) {
+    submenu.style.display = 'none';
+    submenu.dataset.open = 'false';
+    if (chevron) chevron.style.transform = 'rotate(0deg)';
+  } else {
+    submenu.style.display = 'flex';
+    submenu.dataset.open = 'true';
+    if (chevron) chevron.style.transform = 'rotate(180deg)';
+  }
 }
 
 function settingsNav(section){
@@ -4000,7 +4008,7 @@ function settingsNav(section){
   document.querySelectorAll('.scontent').forEach(el=>{
     el.style.display='none';
   });
-  // Remove active de todos os botões nav
+  // Remove active de todos os botões nav (mas NÃO os group-btns de container)
   document.querySelectorAll('.snav-btn').forEach(btn=>{
     btn.classList.remove('snav-active');
     btn.style.background='none';
@@ -4019,65 +4027,55 @@ function settingsNav(section){
     navBtn.style.border='1px solid rgba(0,212,255,.25)';
     navBtn.style.color='var(--cyan)';
   }
-  // Se for uma seção do grupo Máquinas, mantém o grupo-btn destacado
-  const maqGroupSections=['maquinas','turnos','cadastro-maquinas'];
-  const groupBtn=document.getElementById('snav-maquinas-group-btn');
-  if(groupBtn){
+
+  // ── Grupo Máquinas ──
+  const maqGroupSections=['cadastro-maquinas','turnos'];
+  const maqGroupBtn=document.getElementById('snav-maquinas-group-btn');
+  const maqSubmenu=document.getElementById('snav-maquinas-submenu');
+  const maqChevron=document.getElementById('snav-maquinas-chevron');
+  if(maqGroupBtn){
     if(maqGroupSections.includes(section)){
-      groupBtn.style.background='rgba(0,212,255,.07)';
-      groupBtn.style.border='1px solid rgba(0,212,255,.2)';
-      groupBtn.style.color='var(--cyan)';
+      maqGroupBtn.style.background='rgba(0,212,255,.1)';
+      maqGroupBtn.style.border='1px solid rgba(0,212,255,.25)';
+      maqGroupBtn.style.color='var(--cyan)';
+      // Garante submenu aberto
+      if(maqSubmenu){ maqSubmenu.style.display='flex'; maqSubmenu.dataset.open='true'; }
+      if(maqChevron) maqChevron.style.transform='rotate(180deg)';
     } else {
-      groupBtn.style.background='none';
-      groupBtn.style.border='1px solid transparent';
-      groupBtn.style.color='var(--text2)';
+      maqGroupBtn.style.background='none';
+      maqGroupBtn.style.border='1px solid transparent';
+      maqGroupBtn.style.color='var(--text2)';
     }
   }
-  // Se for uma seção do grupo Produtos, mantém o grupo-btn destacado
+
+  // ── Grupo Produtos ──
   const prodGroupSections=['produtos','ficha-tecnica-cfg'];
   const prodGroupBtn=document.getElementById('snav-produtos-group-btn');
+  const prodSubmenu=document.getElementById('snav-produtos-submenu');
+  const prodChevron=document.getElementById('snav-produtos-chevron');
   if(prodGroupBtn){
     if(prodGroupSections.includes(section)){
-      prodGroupBtn.style.background='rgba(0,212,255,.07)';
-      prodGroupBtn.style.border='1px solid rgba(0,212,255,.2)';
+      prodGroupBtn.style.background='rgba(0,212,255,.1)';
+      prodGroupBtn.style.border='1px solid rgba(0,212,255,.25)';
       prodGroupBtn.style.color='var(--cyan)';
-      // Abre o submenu de produtos automaticamente
-      const sub=document.getElementById('snav-produtos-submenu');
-      const chev=document.getElementById('snav-produtos-chevron');
-      if(sub) sub.style.display='flex';
-      if(chev) chev.style.transform='rotate(180deg)';
+      // Abre submenu de produtos automaticamente
+      if(prodSubmenu){ prodSubmenu.style.display='flex'; prodSubmenu.dataset.open='true'; }
+      if(prodChevron) prodChevron.style.transform='rotate(180deg)';
     } else {
       prodGroupBtn.style.background='none';
       prodGroupBtn.style.border='1px solid transparent';
       prodGroupBtn.style.color='var(--text2)';
     }
   }
-  // Se for importação, renderiza
-  if(section==='importacao'){
-    setTimeout(()=>{ if(typeof renderApiSync==='function') renderApiSync(); }, 50);
-  }
-  // Se for usuários do sistema, renderiza
-  if(section==='usuarios'){
-    setTimeout(()=>renderUsuariosSistema(), 50);
-  }
-  // Se for funcionários da produção, renderiza
-  if(section==='funcionarios'){
-    setTimeout(()=>renderFuncionariosProducao(), 50);
-  }
-  // Se for turnos por máquina, renderiza
-  if(section==='turnos'){
-    setTimeout(()=>{
-      if(typeof renderTurnosMaquinas === 'function') renderTurnosMaquinas(MAQUINAS);
-    }, 50);
-  }
-  // Se for cadastro de máquinas, renderiza
-  if(section==='cadastro-maquinas'){
-    setTimeout(()=>renderCadastroMaquinas(), 50);
-  }
-  // Se for ficha técnica cfg, renderiza
-  if(section==='ficha-tecnica-cfg'){
-    setTimeout(()=>renderFichaTecnicaCfg(), 50);
-  }
+
+  // ── Renders por seção ──
+  if(section==='importacao') setTimeout(()=>{ if(typeof renderApiSync==='function') renderApiSync(); }, 50);
+  if(section==='usuarios') setTimeout(()=>renderUsuariosSistema(), 50);
+  if(section==='funcionarios') setTimeout(()=>renderFuncionariosProducao(), 50);
+  if(section==='turnos') setTimeout(()=>{ if(typeof renderTurnosMaquinas==='function') renderTurnosMaquinas(MAQUINAS); }, 50);
+  if(section==='cadastro-maquinas') setTimeout(()=>renderCadastroMaquinas(), 50);
+  if(section==='ficha-tecnica-cfg') setTimeout(()=>renderFichaTecnicaCfg(), 50);
+  if(section==='produtos') setTimeout(()=>renderProdutosCfg(), 50);
 }
 
 function handleImportZip(file){

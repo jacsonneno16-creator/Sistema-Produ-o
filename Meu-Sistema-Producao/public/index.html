@@ -129,9 +129,6 @@
         <span style="display:block;width:4px;height:4px;border-radius:50%;background:currentColor"></span>
       </button>
       <div id="hd-menu-dropdown" style="display:none;position:absolute;right:0;top:44px;background:var(--s2);border:1px solid var(--border);border-radius:10px;min-width:200px;box-shadow:0 8px 32px rgba(0,0,0,.5);z-index:200;overflow:hidden">
-        <button onclick="switchTab('ficha-tecnica',null);toggleHdMenu()" style="width:100%;text-align:left;background:none;border:none;padding:12px 16px;color:var(--text);font-family:'Space Grotesk',sans-serif;font-size:13px;cursor:pointer;display:flex;align-items:center;gap:10px;transition:background .15s" onmouseover="this.style.background='var(--s3,rgba(255,255,255,.05))'" onmouseout="this.style.background='none'">
-          <span>📄</span> Ficha Técnica
-        </button>
         <button onclick="switchTab('projecao',null);toggleHdMenu()" style="width:100%;text-align:left;background:none;border:none;padding:12px 16px;color:var(--text);font-family:'Space Grotesk',sans-serif;font-size:13px;cursor:pointer;display:flex;align-items:center;gap:10px;transition:background .15s" onmouseover="this.style.background='var(--s3,rgba(255,255,255,.05))'" onmouseout="this.style.background='none'">
           <span>📈</span> Projeção de Vendas
         </button>
@@ -776,14 +773,10 @@
           </span>
           <svg id="snav-maquinas-chevron" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="transition:transform .2s;transform:rotate(180deg)"><polyline points="6 9 12 15 18 9"/></svg>
         </button>
-        <div id="snav-maquinas-submenu" style="display:flex;flex-direction:column;gap:1px;margin-top:2px;padding-left:14px">
+        <div id="snav-maquinas-submenu" data-open="true" style="display:flex;flex-direction:column;gap:1px;margin-top:2px;padding-left:14px">
           <button onclick="settingsNav('cadastro-maquinas')" id="snav-cadastro-maquinas" class="snav-btn snav-active" style="width:100%;text-align:left;background:rgba(0,212,255,.1);border:1px solid rgba(0,212,255,.25);border-radius:6px;padding:6px 10px;color:var(--cyan);font-family:'Space Grotesk',sans-serif;font-size:11px;cursor:pointer;display:flex;align-items:center;gap:7px;transition:all .15s" onmouseover="if(!this.classList.contains('snav-active'))this.style.background='var(--s2)'" onmouseout="if(!this.classList.contains('snav-active'))this.style.background='none'">
             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/></svg>
-            Cadastro de Máquinas
-          </button>
-          <button onclick="settingsNav('maquinas')" id="snav-maquinas" class="snav-btn" style="width:100%;text-align:left;background:none;border:1px solid transparent;border-radius:6px;padding:6px 10px;color:var(--text2);font-family:'Space Grotesk',sans-serif;font-size:11px;cursor:pointer;display:flex;align-items:center;gap:7px;transition:all .15s" onmouseover="if(!this.classList.contains('snav-active'))this.style.background='var(--s2)'" onmouseout="if(!this.classList.contains('snav-active'))this.style.background='none'">
-            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-            Desempenho Máquinas
+            Máquinas
           </button>
           <button onclick="settingsNav('turnos')" id="snav-turnos" class="snav-btn" style="width:100%;text-align:left;background:none;border:1px solid transparent;border-radius:6px;padding:6px 10px;color:var(--text2);font-family:'Space Grotesk',sans-serif;font-size:11px;cursor:pointer;display:flex;align-items:center;gap:7px;transition:all .15s" onmouseover="if(!this.classList.contains('snav-active'))this.style.background='var(--s2)'" onmouseout="if(!this.classList.contains('snav-active'))this.style.background='none'">
             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
@@ -800,7 +793,7 @@
           </span>
           <svg id="snav-produtos-chevron" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="transition:transform .2s;transform:rotate(0deg)"><polyline points="6 9 12 15 18 9"/></svg>
         </button>
-        <div id="snav-produtos-submenu" style="display:none;flex-direction:column;gap:1px;margin-top:2px;padding-left:14px">
+        <div id="snav-produtos-submenu" data-open="false" style="display:none;flex-direction:column;gap:1px;margin-top:2px;padding-left:14px">
           <button onclick="settingsNav('produtos')" id="snav-produtos" class="snav-btn" style="width:100%;text-align:left;background:none;border:1px solid transparent;border-radius:6px;padding:6px 10px;color:var(--text2);font-family:'Space Grotesk',sans-serif;font-size:11px;cursor:pointer;display:flex;align-items:center;gap:7px;transition:all .15s" onmouseover="if(!this.classList.contains('snav-active'))this.style.background='var(--s2)'" onmouseout="if(!this.classList.contains('snav-active'))this.style.background='none'">
             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/></svg>
             Cadastro de Produtos
@@ -874,9 +867,6 @@
           <div id="cadastro-maquinas-empty" style="display:none;color:var(--text3);font-size:13px;padding:20px;text-align:center">Nenhuma máquina cadastrada.</div>
         </div>
       </div>
-
-      <!-- SEÇÃO DESEMPENHO MÁQUINAS (antiga seção maquinas) -->
-      <div id="scontent-maquinas" class="scontent" style="display:none;flex-direction:column;gap:0">
 
       <!-- SEÇÃO FICHA TÉCNICA (dentro de Produtos) -->
       <div id="scontent-ficha-tecnica-cfg" class="scontent" style="display:none;flex-direction:column;gap:0">
