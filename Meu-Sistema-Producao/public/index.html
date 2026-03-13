@@ -787,7 +787,7 @@
       </div>
       <!-- Grupo Produtos (expansível) -->
       <div id="snav-group-produtos">
-        <button onclick="toggleSnavGroup('produtos')" id="snav-produtos-group-btn" class="snav-btn" style="width:100%;text-align:left;background:none;border:1px solid transparent;border-radius:7px;padding:8px 10px;color:var(--text2);font-family:'Space Grotesk',sans-serif;font-size:12px;cursor:pointer;display:flex;align-items:center;gap:8px;transition:all .15s;justify-content:space-between" onmouseover="if(!this.classList.contains('snav-active'))this.style.background='var(--s2)'" onmouseout="if(!this.classList.contains('snav-active'))this.style.background='none'">
+        <button onclick="toggleSnavGroup('produtos')" id="snav-produtos-group-btn" class="snav-btn" style="width:100%;text-align:left;background:none;border:1px solid transparent;border-radius:7px;padding:8px 10px;color:var(--text2);font-family:'Space Grotesk',sans-serif;font-size:12px;cursor:pointer;display:flex;align-items:center;gap:8px;transition:all .15s;justify-content:space-between" onmouseover="if(document.getElementById('snav-produtos-submenu').dataset.open!=='true')this.style.background='var(--s2)'" onmouseout="if(document.getElementById('snav-produtos-submenu').dataset.open!=='true')this.style.background='none'">
           <span style="display:flex;align-items:center;gap:8px">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>
             Produtos
