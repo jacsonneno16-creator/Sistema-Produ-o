@@ -4044,7 +4044,7 @@ function toggleSnavGroup(group){
   const chevron = document.getElementById('snav-'+group+'-chevron');
   if (!submenu) return;
   // Usa data-open como fonte da verdade para evitar conflito com display:flex vs display:none
-  const isOpen = submenu.dataset.open !== 'false';
+  const isOpen = submenu.dataset.open === 'true';
   if (isOpen) {
     submenu.style.display = 'none';
     submenu.dataset.open = 'false';
@@ -4064,10 +4064,12 @@ function settingsNav(section){
   // Remove active de todos os botões nav (mas NÃO os group-btns de container)
   document.querySelectorAll('.snav-btn').forEach(btn=>{
     btn.classList.remove('snav-active');
-    btn.style.background='none';
-    btn.style.border='1px solid transparent';
-    btn.style.color='var(--text2)';
-    btn.style.fontSize='';
+    if (!btn.id || !btn.id.endsWith('-group-btn')) {
+      btn.style.background='none';
+      btn.style.border='1px solid transparent';
+      btn.style.color='var(--text2)';
+      btn.style.fontSize='';
+    }
   });
   // Mostra a seção correta
   const content=document.getElementById('scontent-'+section);
