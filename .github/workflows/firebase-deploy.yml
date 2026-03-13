@@ -9,6 +9,10 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
 
+    defaults:
+      run:
+        working-directory: Meu-Sistema-Producao
+
     steps:
       - uses: actions/checkout@v4
 
