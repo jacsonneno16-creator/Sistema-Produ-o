@@ -783,6 +783,10 @@
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
         Jornada
       </button>
+      <button onclick="settingsNav('turnos')" id="snav-turnos" class="snav-btn" style="width:100%;text-align:left;background:none;border:1px solid transparent;border-radius:7px;padding:8px 10px;color:var(--text2);font-family:'Space Grotesk',sans-serif;font-size:12px;cursor:pointer;display:flex;align-items:center;gap:8px;transition:all .15s" onmouseover="if(!this.classList.contains('snav-active'))this.style.background='var(--s2)'" onmouseout="if(!this.classList.contains('snav-active'))this.style.background='none'">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+        Turnos por Máquina
+      </button>
       <button onclick="settingsNav('importacao')" id="snav-importacao" class="snav-btn" style="width:100%;text-align:left;background:none;border:1px solid transparent;border-radius:7px;padding:8px 10px;color:var(--text2);font-family:'Space Grotesk',sans-serif;font-size:12px;cursor:pointer;display:flex;align-items:center;gap:8px;transition:all .15s" onmouseover="if(!this.classList.contains('snav-active'))this.style.background='var(--s2)'" onmouseout="if(!this.classList.contains('snav-active'))this.style.background='none'">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
         Importação / API
@@ -928,6 +932,20 @@
               <button onclick="resetJornada()" style="background:none;border:1px solid var(--border);border-radius:6px;padding:6px 14px;color:var(--text2);font-family:'Space Grotesk',sans-serif;font-size:12px;cursor:pointer">Restaurar padrão</button>
               <button onclick="saveJornada()" style="background:var(--purple);color:#fff;border:none;border-radius:6px;padding:6px 14px;font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:12px;cursor:pointer">Salvar Jornada</button>
             </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- SEÇÃO TURNOS POR MÁQUINA -->
+      <div id="scontent-turnos" class="scontent" style="display:none;flex-direction:column;gap:0">
+        <div style="background:var(--s1);border:1px solid var(--border);border-radius:10px;overflow:hidden">
+          <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--cyan)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+            <span style="font-size:13px;font-weight:700;color:var(--text)">Turnos por Máquina</span>
+            <span style="font-size:11px;color:var(--text3)">— Configure quais turnos cada máquina opera por dia</span>
+          </div>
+          <div style="padding:14px 16px">
+            <div id="turnos-maquinas-container"></div>
           </div>
         </div>
       </div>
@@ -1078,6 +1096,7 @@
 
 <div class="toasts" id="toasts"></div>
 
+<script src="js/turnosMaquinas.js"></script>
 <script type="module" src="js/app.js"></script>
 
 <!-- PWA Install Bar -->

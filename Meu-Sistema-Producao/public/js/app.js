@@ -11,6 +11,9 @@ import {
   collection, getDocs, addDoc, setDoc, doc, deleteDoc, query, orderBy
 } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
+// ===== TURNOS POR MÁQUINA (módulo de disponibilidade real) =====
+// Nota: turnosMaquinas.js é carregado como script separado no index.html
+
 // ===== FIREBASE DB REPLACEMENTS (IndexedDB → Firestore) =====
 let records = [], pg = 1;
 const PER = 15;
@@ -1248,22 +1251,33 @@ function renderMaquinas(){
     if(prevSameMaq) map[r.maquina].min+=getSetupMin(r.maquina, prevSameMaq.produto, r.produto);
   });
 
-  function maqPct(usedHrs){return Math.min(100,parseFloat((usedHrs/WEEK_AVAIL_HRS*100).toFixed(1)));}
+  // Per-machine capacity: use real machine hours from turnosMaquinas config
+  function maqWeekHrs(maq){
+    if(mon) return weekHoursMaq(mon, maq);
+    return WEEK_AVAIL_HRS;
+  }
+  function maqPct(usedHrs, maq){
+    const cap=maqWeekHrs(maq);
+    if(!cap) return 0;
+    return Math.min(100,parseFloat((usedHrs/cap*100).toFixed(1)));
+  }
   function maqColor(pct){return pct>100?'var(--red)':pct>=80?'var(--warn)':'var(--cyan)';}
   function barColor(pct){return pct>100?'var(--red)':pct>=80?'var(--warn)':'var(--cyan)';}
 
   if(maqViewMode==='list'){
     let html=`<div class="maq-list-view">
       <div class="maq-list-row" style="background:var(--s2);font-family:'JetBrains Mono',monospace;font-size:10px;text-transform:uppercase;letter-spacing:.8px;color:var(--text3)">
-        <span>Máquina</span><span>Progresso de Ocupação</span><span>Caixas</span><span>Tempo</span><span>Ocupação</span>
+        <span>Máquina</span><span>Ocupação da Semana</span><span>Caixas</span><span>Prog. / Disp.</span><span>%</span>
       </div>`;
     MAQUINAS.forEach(m=>{
       const d=map[m];
       const usedHrs=d.min/60;
-      const pct=maqPct(usedHrs);
-      const displayPct=Math.min(100,pct); // bar visual capped at 100%
+      const capHrs=maqWeekHrs(m);
+      const pct=maqPct(usedHrs,m);
+      const displayPct=Math.min(100,pct);
       const hrs=fmtHrs(usedHrs);
       const col=maqColor(pct);
+      const overPct=pct>100?`<span style="color:var(--red);font-size:9px;margin-left:4px">+${(pct-100).toFixed(0)}% over</span>`:'';
       html+=`<div class="maq-list-row">
         <div style="font-family:'JetBrains Mono',monospace;font-weight:500;font-size:13px;color:var(--purple)">${m}</div>
         <div>
@@ -1271,8 +1285,11 @@ function renderMaquinas(){
           <div style="font-size:10px;color:var(--text3);margin-top:3px;font-family:'JetBrains Mono',monospace">${d.items.length} solicit.</div>
         </div>
         <div style="color:${col};font-family:'JetBrains Mono',monospace;font-weight:600">${d.caixas} cx</div>
-        <div style="color:var(--text2);font-family:'JetBrains Mono',monospace;font-size:12px">${hrs}</div>
-        <div style="color:${col};font-family:'JetBrains Mono',monospace;font-weight:700">${pct}%</div>
+        <div style="color:var(--text2);font-family:'JetBrains Mono',monospace;font-size:11px">
+          <span style="color:${col};font-weight:700">${hrs}</span>
+          <span style="color:var(--text3)"> / ${capHrs}h</span>
+        </div>
+        <div style="color:${col};font-family:'JetBrains Mono',monospace;font-weight:700">${pct}%${overPct}</div>
       </div>`;
     });
     html+=`</div>`;
@@ -1283,20 +1300,36 @@ function renderMaquinas(){
     document.getElementById('maq-grid').innerHTML=MAQUINAS.map(m=>{
       const d=map[m];
       const usedHrs=d.min/60;
-      const pct=maqPct(usedHrs);
+      const capHrs=maqWeekHrs(m);
+      const pct=maqPct(usedHrs,m);
       const displayPct=Math.min(100,pct);
       const hrs=fmtHrs(usedHrs);
       const col=maqColor(pct);
       const items=d.items.slice(0,4).map(r=>`<div class="maq-li">· ${r.produto.substring(0,38)}${r.produto.length>38?'...':''} <strong style="color:var(--text)">${r.qntCaixas}cx</strong></div>`).join('');
       const more=d.items.length>4?`<div class="maq-li" style="color:var(--text3)">+${d.items.length-4} mais...</div>`:'';
+      const overFlag=pct>100?`<div style="font-size:9px;color:var(--red);margin-top:2px;font-family:'JetBrains Mono',monospace">⚠ Excede em ${(pct-100).toFixed(0)}%</div>`:'';
+      // Active shifts summary
+      let turnosSumario='';
+      if(typeof getTurnosMaquinaDia==='function'){
+        const t=getTurnosMaquinaDia(m,1);
+        const ativos=['T1','T2','T3'].filter((_,i)=>t[i]);
+        turnosSumario=ativos.length?`<div style="font-size:9px;color:var(--text3);font-family:'JetBrains Mono',monospace;margin-top:2px">Turnos Seg: ${ativos.join(' + ')}</div>`:'';
+      }
       return `<div class="maq-card">
         <div class="maq-title">${m}</div>
-        <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text2);font-family:'JetBrains Mono',monospace">
+        ${turnosSumario}
+        <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text2);font-family:'JetBrains Mono',monospace;margin-top:4px">
           <span>${d.items.length} solicit.</span>
           <span><strong style="color:${col}">${d.caixas}</strong> caixas</span>
         </div>
         <div class="maq-bar-bg"><div class="maq-bar" style="width:${displayPct}%;background:${col}"></div></div>
-        <div class="maq-stats"><span style="color:${col}">${hrs}</span><span style="color:var(--text3)"> / ${WEEK_AVAIL_HRS}h sem.</span><span style="color:${col};font-weight:700;margin-left:8px">${pct}%</span></div>
+        <div style="display:flex;justify-content:space-between;align-items:center;font-family:'JetBrains Mono',monospace;font-size:11px;margin-top:4px">
+          <span style="color:var(--text3)">Prog:</span>
+          <span style="color:${col};font-weight:700">${hrs}</span>
+          <span style="color:var(--text3)">/ ${capHrs}h disp.</span>
+          <span style="color:${col};font-weight:700;font-size:12px">${pct}%</span>
+        </div>
+        ${overFlag}
         ${d.items.length?`<div class="maq-list">${items}${more}</div>`:''}
       </div>`;
     }).join('');
@@ -1567,7 +1600,7 @@ function getWeekDays(monday){
   });
 }
 
-// Returns hours available on a given Date
+// Returns hours available on a given Date (jornada geral da fábrica)
 // DAY_HRS (user jornada config) takes priority over DIA_SEMANA_HRS.
 function hoursOnDay(d){
   const userHrs = DAY_HRS[d.getDay()];
@@ -1578,19 +1611,49 @@ function hoursOnDay(d){
   return 0;
 }
 
-// Core scheduler: given list of active records, compute a timeline
-// Returns: { [maquina]: [ {rec, segments:[{date,caixasNoDia,hrsNoDia,pctBar,startPct,endPct}] } ] }
+// Returns hours available on a given Date FOR A SPECIFIC MACHINE
+// Uses turnosMaquinas config when available; falls back to hoursOnDay (jornada geral)
+function hoursOnDayMaq(d, maq){
+  if(maq && typeof hoursOnDayForMaq === 'function'){
+    const maqHrs = hoursOnDayForMaq(d, maq);
+    return maqHrs;
+  }
+  return hoursOnDay(d);
+}
+
+// Returns total week hours for a specific machine
+function weekHoursMaq(monday, maq){
+  if(maq && typeof weekHoursForMaq === 'function'){
+    return weekHoursForMaq(monday, maq);
+  }
+  const days = getWeekDays(monday);
+  return days.reduce((a,d) => a + hoursOnDay(d), 0);
+}
+
+// Core scheduler: given list of active records, compute a timeline per shift block.
+// Returns: { schedule:{ [maquina]: [{rec, segments, setupMin, setupSegments}] }, days }
+//
+// segments[]: { date, dayIdx, turnoIdx, turnoLabel, caixasNoDia, hrsNoDia,
+//               startPct, endPct, dayAvailHrs,
+//               turnoStartMin, turnoFimMin, usedInTurnoMin, useMin }
+//
+// The algorithm fills shift blocks (T1/T2/T3) sequentially per machine.
+// Cursor state: (dayIdx, turnoBlkIdx, usedInBlkMin)
+//   dayIdx       = index in days[] (0..6)
+//   turnoBlkIdx  = index in activeBlocks[] for that day
+//   usedInBlkMin = minutes already consumed in the current block
 function buildSchedule(monday){
   const days=getWeekDays(monday);
   const mondayStr=dateStr(days[0]);
   const sundayStr=dateStr(days[6]);
 
-  // Only show records whose dtDesejada (Data Início) falls within this week or earlier
+  // Include records whose dtDesejada falls within this week OR started before (overflowing)
   const ativos=records.filter(r=>{
     if(r.status==='Concluído') return false;
     const startDate=r.dtDesejada||r.dtSolicitacao;
     if(!startDate) return false;
-    return startDate>=mondayStr && startDate<=sundayStr;
+    // Show record if it starts on or before end of this week
+    return startDate<=sundayStr;
   });
 
   // Group by machine, respect sortOrder field
@@ -1600,7 +1663,6 @@ function buildSchedule(monday){
     if(!byMaq[r.maquina]) byMaq[r.maquina]=[];
     byMaq[r.maquina].push(r);
   });
-  // Sort by sortOrder (if set), then by id
   for(const m of MAQUINAS){
     byMaq[m].sort((a,b)=>{
       const sa=a.sortOrder!=null?a.sortOrder:a.id;
@@ -1609,18 +1671,37 @@ function buildSchedule(monday){
     });
   }
 
+  // Helper: get active shift blocks for a machine on a given day
+  function getBlocks(dayDate, maq){
+    if(typeof getActiveShiftBlocks==='function'){
+      return getActiveShiftBlocks(dayDate, maq);
+    }
+    // Fallback: treat whole jornada as single block
+    const hrs=hoursOnDayMaq(dayDate, maq);
+    if(hrs<=0) return [];
+    return [{turnoIdx:0, label:'T1', inicioMin:0, fimMin:hrs*60}];
+  }
+
+  // Advance cursor to next valid block (skipping days/blocks with no availability)
+  function advanceCursor(cursor, days, maq){
+    while(cursor.dayIdx<7){
+      const blocks=getBlocks(days[cursor.dayIdx], maq);
+      if(cursor.blkIdx<blocks.length) return blocks; // valid
+      cursor.dayIdx++;
+      cursor.blkIdx=0;
+      cursor.usedMin=0;
+    }
+    return null;
+  }
+
   const result={};
 
   for(const maq of MAQUINAS){
     const recs=byMaq[maq];
     if(!recs.length){result[maq]=[];continue;}
 
-    // For each machine, simulate time slot filling day by day
-    // We'll distribute hours across the week for each record sequentially
-    // machineOffset: remaining hours already consumed on current day before this record starts
-    let dayIdx=0; // which day we're currently filling (0..6 = Mon..Sun)
-    let usedHrsToday=0; // hours already used today by previous records
-
+    // Cursor: position within the week
+    const cursor={dayIdx:0, blkIdx:0, usedMin:0};
     const scheduled=[];
 
     for(let ri=0;ri<recs.length;ri++){
@@ -1630,92 +1711,109 @@ function buildSchedule(monday){
       const unidPorCx=p.unid;
       if(!pcMin){scheduled.push({rec,segments:[],setupMin:0,setupSegments:[]});continue;}
 
-      // Setup time between previous product and this one
       let setupMin=0;
       if(ri>0) setupMin=getSetupMin(maq, recs[ri-1].produto, rec.produto);
 
-      // Total minutes needed
       const totalUnid=rec.qntUnid||(rec.qntCaixas*unidPorCx);
-      let remainProdMin=(totalUnid/pcMin);
+      let remainProdMin=totalUnid/pcMin;
       let remainSetupMin=setupMin;
       const cxPerMin=rec.qntCaixas/remainProdMin;
 
       const segments=[];
       const setupSegments=[];
 
-      // Respect dtDesejada: if set, try to start on that day — but never BEFORE the machine is free.
-      // A machine can only do one product at a time, so if the previous product finishes later,
-      // this one must wait until the machine is free (even if dtDesejada says earlier).
+      // Respect dtDesejada: advance cursor to that day if machine is free earlier
       if(rec.dtDesejada){
-        const desejadaStr=rec.dtDesejada;
-        const desejadaIdx=days.findIndex(d=>dateStr(d)===desejadaStr);
+        const desejadaIdx=days.findIndex(d=>dateStr(d)===rec.dtDesejada);
         if(desejadaIdx>=0){
-          // Only move the cursor to the desired date if the machine will be free by then
-          // (i.e. cursor is before the desired date, or exactly on it with no hours used)
-          const cursorIsEarlier=(dayIdx<desejadaIdx)||(dayIdx===desejadaIdx&&usedHrsToday===0);
-          if(cursorIsEarlier){
-            dayIdx=desejadaIdx;
-            usedHrsToday=0;
+          const cursorFree=(cursor.dayIdx<desejadaIdx)||
+                           (cursor.dayIdx===desejadaIdx&&cursor.blkIdx===0&&cursor.usedMin===0);
+          if(cursorFree){
+            cursor.dayIdx=desejadaIdx;
+            cursor.blkIdx=0;
+            cursor.usedMin=0;
           }
-          // If cursor is already ahead (dayIdx > desejadaIdx) or busy on same day,
-          // keep cursor where it is — machine must finish previous job first
         }
       }
 
-      // Find start day (skip days with 0 hours)
-      while(dayIdx<7 && hoursOnDay(days[dayIdx])===0) dayIdx++;
-
-      let tempDayIdx=dayIdx;
-      let tempUsed=usedHrsToday;
-
-      // First: consume setup time (no boxes produced)
-      while(remainSetupMin>0 && tempDayIdx<7){
-        const day=days[tempDayIdx];
-        const availHrs=hoursOnDay(day);
-        if(availHrs===0){tempDayIdx++;tempUsed=0;continue;}
-        const availMin=(availHrs*60)-tempUsed*60;
-        if(availMin<=0){tempDayIdx++;tempUsed=0;continue;}
-        const useMin=Math.min(remainSetupMin,availMin);
-        setupSegments.push({date:dateStr(day),dayIdx:tempDayIdx,setupMin:useMin});
-        remainSetupMin-=useMin;
-        tempUsed+=useMin/60;
-        if(tempUsed>=availHrs-0.001){tempDayIdx++;tempUsed=0;}
+      // Skip to first day with availability
+      while(cursor.dayIdx<7 && hoursOnDayMaq(days[cursor.dayIdx],maq)===0){
+        cursor.dayIdx++;cursor.blkIdx=0;cursor.usedMin=0;
       }
 
-      // Then: production
-      while(remainProdMin>0 && tempDayIdx<7){
-        const day=days[tempDayIdx];
-        const availHrs=hoursOnDay(day);
-        if(availHrs===0){tempDayIdx++;tempUsed=0;continue;}
+      // Save cursor snapshot for this record (so we fill from here)
+      const snap={dayIdx:cursor.dayIdx, blkIdx:cursor.blkIdx, usedMin:cursor.usedMin};
 
-        const availMin=(availHrs*60)-tempUsed*60;
-        if(availMin<=0){tempDayIdx++;tempUsed=0;continue;}
+      // ── Consume setup time ──
+      while(remainSetupMin>0.001 && snap.dayIdx<7){
+        const blocks=advanceCursor(snap, days, maq);
+        if(!blocks) break;
+        const blk=blocks[snap.blkIdx];
+        const blkTotalMin=blk.fimMin-blk.inicioMin;
+        const blkAvailMin=blkTotalMin-snap.usedMin;
+        if(blkAvailMin<=0.001){snap.blkIdx++;snap.usedMin=0;continue;}
+        const useMin=Math.min(remainSetupMin,blkAvailMin);
+        setupSegments.push({date:dateStr(days[snap.dayIdx]),dayIdx:snap.dayIdx,
+          turnoIdx:blk.turnoIdx,turnoLabel:blk.label,setupMin:useMin});
+        remainSetupMin-=useMin;
+        snap.usedMin+=useMin;
+        if(snap.usedMin>=blkTotalMin-0.001){snap.blkIdx++;snap.usedMin=0;}
+      }
 
-        const useMin=Math.min(remainProdMin,availMin);
-        const startPct=(tempUsed/availHrs)*100;
-        const usePct=(useMin/(availHrs*60))*100;
-        const endPct=startPct+usePct;
+      // ── Consume production time ──
+      while(remainProdMin>0.001 && snap.dayIdx<7){
+        const blocks=advanceCursor(snap, days, maq);
+        if(!blocks) break;
+        const blk=blocks[snap.blkIdx];
+        const blkTotalMin=blk.fimMin-blk.inicioMin;
+        const blkAvailMin=blkTotalMin-snap.usedMin;
+        if(blkAvailMin<=0.001){snap.blkIdx++;snap.usedMin=0;continue;}
+
+        const useMin=Math.min(remainProdMin,blkAvailMin);
+        const dayAvailHrs=hoursOnDayMaq(days[snap.dayIdx],maq);
+
+        // startPct / endPct: fraction within the day's total available hours
+        // We map the block's start within the day using turnoStartMin relative to day capacity
+        const dayCapMin=dayAvailHrs*60;
+        // position of block start within day capacity (blocks are ordered T1<T2<T3)
+        const allBlocks=getBlocks(days[snap.dayIdx],maq);
+        let blkOffsetMin=0;
+        for(let bi=0;bi<snap.blkIdx;bi++) blkOffsetMin+=(allBlocks[bi].fimMin-allBlocks[bi].inicioMin);
+        const absStartMin=blkOffsetMin+snap.usedMin;
+        const startPct=dayCapMin>0?(absStartMin/dayCapMin)*100:0;
+        const endPct=dayCapMin>0?((absStartMin+useMin)/dayCapMin)*100:0;
+
         const caixasHoje=Math.round(cxPerMin*useMin);
-
         segments.push({
-          date:dateStr(day),
-          dayIdx:tempDayIdx,
+          date:dateStr(days[snap.dayIdx]),
+          dayIdx:snap.dayIdx,
+          turnoIdx:blk.turnoIdx,
+          turnoLabel:blk.label,
           caixasNoDia:caixasHoje,
           hrsNoDia:useMin/60,
           startPct,
           endPct,
-          dayAvailHrs:availHrs
+          dayAvailHrs,
+          turnoInicioMin:blk.inicioMin,
+          turnoFimMin:blk.fimMin,
+          usedInTurnoMin:snap.usedMin,
+          useMin,
         });
 
         remainProdMin-=useMin;
-        tempUsed+=useMin/60;
-        if(tempUsed>=availHrs-0.001){tempDayIdx++;tempUsed=0;}
+        snap.usedMin+=useMin;
+        if(snap.usedMin>=blkTotalMin-0.001){snap.blkIdx++;snap.usedMin=0;}
       }
 
-      // Advance global cursor
-      dayIdx=tempDayIdx;
-      usedHrsToday=tempUsed;
-      if(dayIdx<7 && hoursOnDay(days[dayIdx])===0){dayIdx++;usedHrsToday=0;}
+      // Advance global cursor to where this record ended
+      cursor.dayIdx=snap.dayIdx;
+      cursor.blkIdx=snap.blkIdx;
+      cursor.usedMin=snap.usedMin;
+      // Skip fully-used days
+      if(cursor.dayIdx<7){
+        const curBlks=getBlocks(days[cursor.dayIdx],maq);
+        if(cursor.blkIdx>=curBlks.length){cursor.dayIdx++;cursor.blkIdx=0;cursor.usedMin=0;}
+      }
 
       scheduled.push({rec,segments,setupMin,setupSegments});
     }
@@ -1728,7 +1826,6 @@ function buildSchedule(monday){
 
 function renderGantt(){
   if(!ganttBaseMonday){
-    // Default to week of most recent dtSolicitacao
     const sorted=[...records].filter(r=>r.dtDesejada||r.dtSolicitacao).sort((a,b)=>{
       const da=b.dtDesejada||b.dtSolicitacao||'';
       const db=a.dtDesejada||a.dtSolicitacao||'';
@@ -1746,17 +1843,17 @@ function renderGantt(){
   document.getElementById('gantt-week-label').textContent=
     `${fmtDate(mon)} – ${fmtDate(sun)} / ${mon.getFullYear()}`;
 
-  // Dynamic hours label for this week
-  const weekTotalHrs=days.reduce((a,d)=>a+hoursOnDay(d),0);
+  // Dynamic hours label: show per-day using general jornada for overview
   const hrsLabelEl=document.getElementById('gantt-hrs-label');
   if(hrsLabelEl){
     const dayHrsDetail=days.filter(d=>hoursOnDay(d)>0)
       .map(d=>`${['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'][d.getDay()]}: ${hoursOnDay(d)}h`)
       .join(' · ');
+    const weekTotalHrs=days.reduce((a,d)=>a+hoursOnDay(d),0);
     hrsLabelEl.textContent=`${dayHrsDetail} · Total: ${weekTotalHrs}h`;
   }
 
-  // Build color map per record id
+  // Color map per record id
   const colorMap={};
   let ci=0;
   records.forEach(r=>{colorMap[r.id]=BAR_COLORS[ci++%BAR_COLORS.length]});
@@ -1770,11 +1867,11 @@ function renderGantt(){
       <span style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block">${r.produto.substring(0,30)}</span>
     </div>`).join('');
 
-  // COL WIDTHS: maq | produto | qtd_cx | tempo_h | setup | total_maq | days(7) | day_qty(7)
-  const MAQ_W=72, LABEL_W=320, QTY_W=48, TEMPO_W=52, SETUP_W=52, TOTMAQ_W=58, DQTY_W=36;
+  // COL WIDTHS
+  const MAQ_W=72, LABEL_W=320, QTY_W=48, TEMPO_W=52, SETUP_W=52, TOTMAQ_W=68, DQTY_W=36;
   const gridCols=`${MAQ_W}px ${LABEL_W}px ${QTY_W}px ${TEMPO_W}px ${SETUP_W}px ${TOTMAQ_W}px repeat(7,1fr) repeat(7,${DQTY_W}px)`;
 
-  // Pre-calculate total hours per machine (produção + setup) for the "total_maq" column
+  // Pre-calculate total hours per machine
   const maqTotalHrs={};
   for(const maq of MAQUINAS){
     const entries=schedule[maq];
@@ -1783,23 +1880,30 @@ function renderGantt(){
     for(const {rec,setupMin} of entries){
       const p=getProdInfo(rec);
       const totalUnid=rec.qntUnid||(rec.qntCaixas*p.unid);
-      tot+=totalUnid/p.pc_min/60;
+      if(p.pc_min) tot+=totalUnid/p.pc_min/60;
       if(setupMin) tot+=setupMin/60;
     }
     maqTotalHrs[maq]=tot;
   }
 
-  // Build machine sections
+  // Helper: get shift blocks for a machine+day (uses turnosMaquinas if available)
+  function ganttGetBlocks(dayDate, maq){
+    if(typeof getActiveShiftBlocks==='function') return getActiveShiftBlocks(dayDate, maq);
+    const hrs=hoursOnDayMaq(dayDate,maq);
+    if(hrs<=0) return [];
+    return [{turnoIdx:0,label:'T1',inicioMin:0,fimMin:hrs*60}];
+  }
+
   let html=`<div class="gantt-wrap">`;
 
-  // Header row
+  // ── Header row ──
   html+=`<div class="gantt-head-row" style="grid-template-columns:${gridCols}">
     <div class="g-head-label" style="font-size:9px">Máquina</div>
     <div class="g-head-label">Produto</div>
     <div class="g-head-label" style="font-size:9px">Qtd<br>cx</div>
     <div class="g-head-label" style="font-size:9px">Tempo<br>h</div>
     <div class="g-head-label" style="font-size:9px">Set Up<br>h</div>
-    <div class="g-head-label" style="font-size:9px">Total<br>Máq. h</div>`;
+    <div class="g-head-label" style="font-size:9px">Cap.<br>Sem. h</div>`;
   days.forEach(d=>{
     const isToday=dateStr(d)===today;
     const isWknd=hoursOnDay(d)===0;
@@ -1810,30 +1914,38 @@ function renderGantt(){
       <div style="font-size:9px;margin-top:1px;color:${hrs>0?'var(--text3)':'var(--text4)'}">${hrs>0?hrs+'h':'—'}</div>
     </div>`;
   });
-  // 7-day qty column headers
   days.forEach(d=>{
     const isWknd=hoursOnDay(d)===0;
     html+=`<div class="g-head-label" style="font-size:8px;padding:4px 2px;text-align:center;${isWknd?'color:var(--text4)':''}">${DAY_NAMES[d.getDay()]}<br><span style="font-size:7px;color:var(--text3)">${fmtDate(d)}</span></div>`;
   });
   html+=`</div>`;
 
-  // Rows per machine
+  // ── Machine sections ──
   let hasAny=false;
   for(const maq of MAQUINAS){
     const entries=schedule[maq];
     if(!entries||!entries.length) continue;
     hasAny=true;
 
-    // Machine separator — full width with occupation %
     const maqTotH=maqTotalHrs[maq]||0;
-    const WEEK_H=days.reduce((a,d)=>a+hoursOnDay(d),0); // real hours this week
-    const maqOccPct=parseFloat((maqTotH/WEEK_H*100).toFixed(1));
+    // Use real machine week capacity
+    const maqCapH=weekHoursMaq(ganttBaseMonday,maq);
+    const maqOccPct=maqCapH>0?parseFloat((maqTotH/maqCapH*100).toFixed(1)):0;
     const maqOccColor=maqOccPct>100?'var(--red)':maqOccPct>=80?'var(--warn)':'var(--green)';
     const barPct=Math.min(100,maqOccPct);
+
+    // Active shifts summary for this machine (show which turns are on Mon–Fri)
+    let turnosSumario='';
+    if(typeof getTurnosMaquinaDia==='function'){
+      const seg=getTurnosMaquinaDia(maq,1); // Segunda
+      const ativos=['T1','T2','T3'].filter((_,i)=>seg[i]);
+      turnosSumario=ativos.length?` <span style="color:var(--text3);font-size:9px">[${ativos.join('+')}]</span>`:'';
+    }
+
     html+=`<div class="g-maq-sep" style="grid-column:1/-1;display:flex;align-items:center;justify-content:space-between">
-      <span>⚙ ${maq} · ${entries.length} produto(s)</span>
+      <span>⚙ ${maq}${turnosSumario} · ${entries.length} produto(s)</span>
       <span style="font-family:'JetBrains Mono',monospace;font-size:10px;display:flex;align-items:center;gap:10px">
-        <span style="color:var(--text3)">${fmtHrs(maqTotH)} / ${WEEK_H}h</span>
+        <span style="color:var(--text3)">${fmtHrs(maqTotH)} prog. / ${maqCapH}h disp.</span>
         <span style="color:${maqOccColor};font-weight:700">${maqOccPct}% ocupação</span>
         <span style="display:inline-block;width:80px;height:6px;background:var(--s3);border-radius:3px;overflow:hidden;vertical-align:middle">
           <span style="display:block;height:100%;width:${barPct}%;background:${maqOccColor};border-radius:3px"></span>
@@ -1843,11 +1955,8 @@ function renderGantt(){
 
     let firstRowOfMaq=true;
 
-    // Each record row
     for(const {rec,segments,setupMin} of entries){
       const color=colorMap[rec.id];
-
-      // Calculate this product's hours
       const pRow=getProdInfo(rec);
       let prodHrs=0;
       const totalUnidRow=rec.qntUnid||(rec.qntCaixas*pRow.unid);
@@ -1860,9 +1969,7 @@ function renderGantt(){
       html+=`<div class="g-col-maq"><span class="g-col-maq-txt">${rec.maquina}</span></div>`;
 
       // Produto label col
-      html+=`<div class="g-label">
-        <strong title="${rec.produto}">${rec.produto}</strong>
-      </div>`;
+      html+=`<div class="g-label"><strong title="${rec.produto}">${rec.produto}</strong></div>`;
 
       // Qtd cx col
       html+=`<div class="g-col-qty"><div class="g-col-qty-txt">${rec.qntCaixas}<br><span style="font-size:9px;color:var(--text3);font-weight:400">cx</span></div></div>`;
@@ -1870,52 +1977,69 @@ function renderGantt(){
       // Tempo col
       html+=`<div style="display:flex;align-items:center;justify-content:center;border-left:1px solid var(--border);background:var(--s1);font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:600;color:var(--warn);padding:4px 2px;text-align:center">${prodHrsStr}</div>`;
 
-      // Set Up col — tempo real de setup calculado
+      // Set Up col
       const setupHrs=setupMin/60;
       const setupStr=setupMin>0?fmtHrs(setupHrs):'—';
       const setupColor=setupMin>0?'var(--orange)':'var(--text3)';
-      const setupTitle=setupMin>0?`Setup: ${setupStr} antes de iniciar produção`:'Sem setup';
-      html+=`<div style="display:flex;align-items:center;justify-content:center;border-left:1px solid var(--border);background:var(--s1);font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:${setupMin>0?'600':'400'};color:${setupColor};padding:4px 2px;text-align:center" title="${setupTitle}">${setupStr}</div>`;
+      html+=`<div style="display:flex;align-items:center;justify-content:center;border-left:1px solid var(--border);background:var(--s1);font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:${setupMin>0?'600':'400'};color:${setupColor};padding:4px 2px;text-align:center" title="Setup: ${setupStr}">${setupStr}</div>`;
 
-      // Total Máquina col (sum of all products + setups on this machine) — show only on first row
-      const totalHrs=maqTotalHrs[maq]||0;
-      const totalStr=fmtHrs(totalHrs);
-      const weekCapHrs=days.reduce((a,d)=>a+hoursOnDay(d),0);
-      const totalColor=totalHrs>weekCapHrs?'var(--red)':totalHrs>(weekCapHrs*0.85)?'var(--warn)':'var(--cyan)';
-      const totalBg=totalHrs>weekCapHrs?'rgba(255,71,87,.08)':'rgba(0,229,204,.04)';
-      const overTitle=totalHrs>weekCapHrs?` title="⚠ Excede capacidade da semana (${fmtHrs(weekCapHrs)})"`:''
-      html+=`<div${overTitle} style="display:flex;align-items:center;justify-content:center;border-left:2px solid var(--border2);background:${totalBg};font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:700;color:${totalColor};padding:4px 2px;text-align:center">${firstRowOfMaq?totalStr:''}</div>`;
+      // Cap. Sem. col — real machine week capacity (only first row of machine)
+      const weekCapStr=firstRowOfMaq?`${maqCapH}h`:'';
+      const weekCapColor=maqTotH>maqCapH?'var(--red)':maqTotH>(maqCapH*0.85)?'var(--warn)':'var(--cyan)';
+      html+=`<div style="display:flex;align-items:center;justify-content:center;border-left:2px solid var(--border2);background:var(--s1);font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:700;color:${firstRowOfMaq?weekCapColor:'var(--text4)'};padding:4px 2px;text-align:center">${weekCapStr}</div>`;
       firstRowOfMaq=false;
 
-      // Day bar cells (all 7 days)
+      // ── Day bar cells: render per-shift bars ──
       for(let di=0;di<7;di++){
         const day=days[di];
-        const isWknd=hoursOnDay(day)===0;
-        const seg=segments.find(s=>s.dayIdx===di);
+        const isWknd=hoursOnDayMaq(day,maq)===0 && hoursOnDay(day)===0;
         const isToday=dateStr(day)===today;
+        const daySeg=segments.filter(s=>s.dayIdx===di);
+        const blocks=ganttGetBlocks(day,maq);
+        const dayCapMin=(hoursOnDayMaq(day,maq))*60;
 
         html+=`<div class="g-day ${isWknd?'weekend':''}" style="${isToday?'background:rgba(0,229,204,.04)':''}">`;
-        if(seg){
-          const leftPct=seg.startPct.toFixed(1);
-          const widthPct=(seg.endPct-seg.startPct).toFixed(1);
-          const cx=seg.caixasNoDia;
-          const hrsLabel=fmtHrs(seg.hrsNoDia);
-          html+=`<div class="g-bar-wrap">
-            <div class="g-bar" style="left:${leftPct}%;width:${widthPct}%;background:${color};opacity:0.9"
-              title="${rec.produto} · ${cx} cx · ${hrsLabel}">
-              <div class="g-bar-tip">${rec.produto.substring(0,40)}<br>${cx} caixas · ${hrsLabel}</div>
-            </div>
-          </div>`;
+
+        if(daySeg.length && dayCapMin>0){
+          // Show bars for each segment (one per shift block used)
+          html+=`<div class="g-bar-wrap" style="position:relative;width:100%;height:100%">`;
+
+          // Draw inactive shift dividers as subtle backgrounds
+          blocks.forEach((blk,bi)=>{
+            const blkTotalMin=blk.fimMin-blk.inicioMin;
+            let blkOffMin=0;
+            for(let b2=0;b2<bi;b2++) blkOffMin+=(blocks[b2].fimMin-blocks[b2].inicioMin);
+            const blkLeft=(blkOffMin/dayCapMin)*100;
+            const blkW=(blkTotalMin/dayCapMin)*100;
+            const blkColors=['rgba(0,229,204,.04)','rgba(160,100,255,.04)','rgba(255,153,0,.04)'];
+            html+=`<div style="position:absolute;left:${blkLeft.toFixed(1)}%;width:${blkW.toFixed(1)}%;top:0;bottom:0;background:${blkColors[blk.turnoIdx]||''};border-left:1px dashed rgba(255,255,255,.06)"></div>`;
+          });
+
+          daySeg.forEach(seg=>{
+            const leftPct=seg.startPct.toFixed(1);
+            const widthPct=(seg.endPct-seg.startPct).toFixed(1);
+            const cx=seg.caixasNoDia;
+            const hrsLabel=fmtHrs(seg.hrsNoDia);
+            const turnoTip=seg.turnoLabel?` · ${seg.turnoLabel}`:'';
+            html+=`<div class="g-bar" style="left:${leftPct}%;width:${widthPct}%;background:${color};opacity:0.9;position:absolute;top:15%;height:70%"
+              title="${rec.produto}${turnoTip} · ${cx} cx · ${hrsLabel}">
+              <div class="g-bar-tip">${rec.produto.substring(0,40)}<br>${cx} cx · ${hrsLabel}${seg.turnoLabel?' · '+seg.turnoLabel:''}</div>
+            </div>`;
+          });
+          html+=`</div>`;
+        } else if(daySeg.length && dayCapMin===0){
+          // Machine has no availability but somehow segment exists — show plain bar
+          html+=`<div class="g-bar-wrap"><div class="g-bar" style="left:0%;width:100%;background:${color};opacity:0.5"></div></div>`;
         }
         html+=`</div>`;
       }
 
-      // Per-day qty columns (all 7 days)
+      // Per-day qty columns
       days.forEach((day,di)=>{
         const isWknd=hoursOnDay(day)===0;
-        const seg=segments.find(s=>s.dayIdx===di);
-        const cx=seg?seg.caixasNoDia:0;
-        html+=`<div style="display:flex;align-items:center;justify-content:center;border-left:1px solid rgba(31,45,61,.4);background:var(--s1);font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:600;color:${cx>0?(isWknd?'var(--text2)':'var(--cyan)'):'var(--text4)'};">${cx>0?cx:'—'}</div>`;
+        // Sum caixas across all segments on this day
+        const cxDia=segments.filter(s=>s.dayIdx===di).reduce((a,s)=>a+s.caixasNoDia,0);
+        html+=`<div style="display:flex;align-items:center;justify-content:center;border-left:1px solid rgba(31,45,61,.4);background:var(--s1);font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:600;color:${cxDia>0?(isWknd?'var(--text2)':'var(--cyan)'):'var(--text4)'};">${cxDia>0?cxDia:'—'}</div>`;
       });
 
       html+=`</div>`;
@@ -1931,8 +2055,6 @@ function renderGantt(){
   html+=`</div>`;
 
   document.getElementById('gantt-table').innerHTML=html;
-
-  // Clear the side summary (no longer needed)
   document.getElementById('gantt-summary').innerHTML='';
 }
 
@@ -3841,6 +3963,10 @@ function openSettings(){
   renderProdutosCfg();
   renderFuncionariosProducao();
   renderJornadaDays();
+  // Renderiza config de turnos por máquina
+  if(typeof renderTurnosMaquinas === 'function'){
+    renderTurnosMaquinas(MAQUINAS, userDayHrs);
+  }
   // Mostra/oculta abas conforme perfil
   const snavFunc = document.getElementById('snav-funcionarios');
   const snavUsuarios = document.getElementById('snav-usuarios');
@@ -3888,6 +4014,12 @@ function settingsNav(section){
   // Se for funcionários da produção, renderiza
   if(section==='funcionarios'){
     setTimeout(()=>renderFuncionariosProducao(), 50);
+  }
+  // Se for turnos por máquina, renderiza
+  if(section==='turnos'){
+    setTimeout(()=>{
+      if(typeof renderTurnosMaquinas === 'function') renderTurnosMaquinas(MAQUINAS, userDayHrs);
+    }, 50);
   }
 }
 
