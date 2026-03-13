@@ -1,207 +1,149 @@
 /**
- * turnosMaquinas.js
- * Gerencia configuração de turnos por máquina.
+ * turnosMaquinas.js  v3
+ * Configuração de jornada por máquina usando faixas de horário reais.
  *
- * Estrutura salva em localStorage (cfg_turnos_maquinas):
+ * Nova estrutura (cfg_turnos_maquinas_v3):
  * {
- *   horasPorTurno: 8,          // horas por turno (padrão 8)
  *   maquinas: {
  *     "ALFATECK 14": {
- *       turnos: {
- *         0: [true, true, false],   // Dom: T1 on, T2 on, T3 off
- *         1: [true, true, false],   // Seg: T1 on, T2 on, T3 off
+ *       dias: {
+ *         1: [ { ini: "08:00", fim: "17:00" } ],  // Seg: 9h
+ *         2: [ { ini: "08:00", fim: "12:00" } ],  // Ter: 4h
+ *         3: [],                                    // Qua: inativa
  *         ...
- *         6: [false, false, false]  // Sáb: tudo off
  *       }
- *     },
- *     ...
+ *     }
  *   }
  * }
- *
- * Turnos têm horário fixo:
- *   T1: 06:00 – 14:00
- *   T2: 14:00 – 22:00
- *   T3: 22:00 – 06:00 (do dia seguinte)
+ * A chave de dia é 0=Dom…6=Sáb (getDay()).
+ * T1/T2/T3 continuam como atalhos de preenchimento rápido com horários editáveis.
  */
 
-// ──────────────────────────────────────────────
-// Constantes
-// ──────────────────────────────────────────────
-const STORAGE_KEY_TURNOS = 'cfg_turnos_maquinas';
+const STORAGE_KEY_TURNOS    = 'cfg_turnos_maquinas_v3';
+const STORAGE_KEY_TURNOS_HR = 'cfg_turnos_horarios';
 
-// Horários de início de cada turno (minutos desde 00:00)
-const TURNOS_HORARIOS = [
-  { id: 'T1', label: 'Turno 1', inicio: 6 * 60,  fim: 14 * 60 }, // 06:00–14:00
-  { id: 'T2', label: 'Turno 2', inicio: 14 * 60, fim: 22 * 60 }, // 14:00–22:00
-  { id: 'T3', label: 'Turno 3', inicio: 22 * 60, fim: 30 * 60 }, // 22:00–06:00 (+1 dia, fim=30h)
+const DEFAULT_TURNO_HR = [
+  { id: 'T1', ini: '06:00', fim: '14:00' },
+  { id: 'T2', ini: '14:00', fim: '22:00' },
+  { id: 'T3', ini: '22:00', fim: '06:00' },
 ];
 
-// ──────────────────────────────────────────────
-// Storage helpers
-// ──────────────────────────────────────────────
+const DAY_LABELS_TM = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
+
+// ── helpers de tempo ──
+function _hhmm2min(hhmm) {
+  if (!hhmm || typeof hhmm !== 'string') return 0;
+  const parts = hhmm.split(':');
+  return (parseInt(parts[0])||0)*60 + (parseInt(parts[1])||0);
+}
+function _faixaDurHrs(faixa) {
+  let iniMin = _hhmm2min(faixa.ini);
+  let fimMin = _hhmm2min(faixa.fim);
+  if (fimMin <= iniMin) fimMin += 1440;
+  return Math.max(0, (fimMin - iniMin) / 60);
+}
+
+// ── storage ──
 function _loadCfg() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY_TURNOS);
     return raw ? JSON.parse(raw) : null;
   } catch(e) { return null; }
 }
-
 function _saveCfg(cfg) {
   try { localStorage.setItem(STORAGE_KEY_TURNOS, JSON.stringify(cfg)); } catch(e) {}
 }
+function _loadTurnoHr() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_TURNOS_HR);
+    if (raw) { const p = JSON.parse(raw); if (Array.isArray(p) && p.length === 3) return p; }
+  } catch(e) {}
+  return JSON.parse(JSON.stringify(DEFAULT_TURNO_HR));
+}
+function _saveTurnoHr(arr) {
+  try { localStorage.setItem(STORAGE_KEY_TURNOS_HR, JSON.stringify(arr)); } catch(e) {}
+}
 
-function _defaultCfg(maquinas, horasPorTurno) {
-  const hpt = (typeof horasPorTurno === 'number' && horasPorTurno > 0) ? horasPorTurno : 8;
-  const cfg = { horasPorTurno: hpt, maquinas: {} };
-  (maquinas || []).forEach(m => {
-    cfg.maquinas[m] = { turnos: {} };
-    for (let d = 0; d < 7; d++) {
-      // Default: T1 e T2 ativos de Seg(1) a Sex(5), fds off
-      const isWorkday = d >= 1 && d <= 5;
-      cfg.maquinas[m].turnos[d] = [isWorkday, isWorkday, false];
-    }
-  });
+function _defaultDiasCfg() {
+  const dias = {};
+  for (let d = 0; d < 7; d++) {
+    dias[d] = (d >= 1 && d <= 5) ? [{ ini: '08:00', fim: '17:00' }] : [];
+  }
+  return dias;
+}
+function _defaultCfg(maquinas) {
+  const cfg = { maquinas: {} };
+  (maquinas || []).forEach(m => { cfg.maquinas[m] = { dias: _defaultDiasCfg() }; });
   return cfg;
 }
 
-// ──────────────────────────────────────────────
-// API pública – leitura
-// ──────────────────────────────────────────────
-
-/**
- * Retorna array [T1ativo, T2ativo, T3ativo] para a máquina no dia da semana (0=Dom…6=Sáb).
- */
-function getTurnosMaquinaDia(maq, diaSemana) {
-  const cfg = _loadCfg();
-  if (!cfg || !cfg.maquinas || !cfg.maquinas[maq]) return [false, false, false];
-  const t = cfg.maquinas[maq].turnos[diaSemana];
-  if (!Array.isArray(t)) return [false, false, false];
-  return [!!t[0], !!t[1], !!t[2]];
-}
-
-/**
- * Retorna horas por turno configuradas.
- */
-function getHorasPorTurno() {
-  const cfg = _loadCfg();
-  const v = cfg && cfg.horasPorTurno;
-  return (typeof v === 'number' && v > 0) ? v : 8;
-}
-
-/**
- * Retorna total de horas disponíveis para a máquina em uma data específica.
- * Soma apenas os turnos ativos.
- */
-function hoursOnDayForMaq(date, maq) {
-  const dia = date.getDay(); // 0=Dom…6=Sáb
-  const ativos = getTurnosMaquinaDia(maq, dia);
-  const hPorTurno = getHorasPorTurno();
-  const qtdAtivos = ativos.filter(Boolean).length;
-  return qtdAtivos * hPorTurno;
-}
-
-/**
- * Retorna total de horas disponíveis para a máquina na semana (dom a sáb).
- * monday: Date do início da semana.
- */
-function weekHoursForMaq(monday, maq) {
-  let total = 0;
-  for (let i = 0; i < 7; i++) {
-    const d = new Date(monday);
-    d.setDate(monday.getDate() + i);
-    total += hoursOnDayForMaq(d, maq);
-  }
-  return total;
-}
-
-/**
- * Retorna os blocos de turno ativos para a máquina em uma data específica.
- * Cada bloco: { turnoIdx: 0|1|2, label:'T1'|'T2'|'T3', inicioMin, fimMin, duracaoMin }
- * Os blocos estão em ordem cronológica.
- * inicioMin/fimMin são minutos desde 00:00 do DIA (T3 tem fimMin > 1440 para indicar dia seguinte).
- */
-function getActiveShiftBlocks(date, maq) {
-  const dia = date.getDay();
-  const ativos = getTurnosMaquinaDia(maq, dia);
-  const hPorTurno = getHorasPorTurno();
-  const durMin = hPorTurno * 60;
-
-  const blocos = [];
-  TURNOS_HORARIOS.forEach((t, idx) => {
-    if (!ativos[idx]) return;
-    blocos.push({
-      turnoIdx: idx,
-      label: t.id,
-      inicioMin: t.inicio,
-      fimMin: t.inicio + durMin,
-    });
-  });
-  return blocos; // já em ordem cronológica (T1 < T2 < T3)
-}
-
-// ──────────────────────────────────────────────
-// API pública – escrita / inicialização
-// ──────────────────────────────────────────────
-
-/**
- * Inicializa a configuração para as máquinas fornecidas, preservando dados existentes.
- */
-function initTurnosCfgForMaquinas(maquinas, horasPorTurno) {
+// ── inicialização ──
+function initTurnosCfgForMaquinas(maquinas) {
   let cfg = _loadCfg();
-  if (!cfg) {
-    cfg = _defaultCfg(maquinas, horasPorTurno);
-    _saveCfg(cfg);
-    return;
-  }
+  if (!cfg) { cfg = _defaultCfg(maquinas); _saveCfg(cfg); return; }
   if (!cfg.maquinas) cfg.maquinas = {};
-  // Only update horasPorTurno if it's a valid number (never an array)
-  if (typeof horasPorTurno === 'number' && horasPorTurno > 0) cfg.horasPorTurno = horasPorTurno;
-  // Ensure stored value is always a valid number
-  if (typeof cfg.horasPorTurno !== 'number' || !(cfg.horasPorTurno > 0)) cfg.horasPorTurno = 8;
-  // Garante que toda máquina nova tenha config
   (maquinas || []).forEach(m => {
     if (!cfg.maquinas[m]) {
-      cfg.maquinas[m] = { turnos: {} };
-      for (let d = 0; d < 7; d++) {
-        const isWorkday = d >= 1 && d <= 5;
-        cfg.maquinas[m].turnos[d] = [isWorkday, isWorkday, false];
-      }
+      cfg.maquinas[m] = { dias: _defaultDiasCfg() };
+    } else if (!cfg.maquinas[m].dias) {
+      cfg.maquinas[m].dias = _defaultDiasCfg(); // migração formato antigo
     }
   });
   _saveCfg(cfg);
 }
 
-/**
- * Liga/desliga um turno de uma máquina num dia.
- * turnoIdx: 0=T1, 1=T2, 2=T3.
- */
-function toggleTurnoMaq(maq, diaSemana, turnoIdx) {
-  const cfg = _loadCfg();
-  if (!cfg || !cfg.maquinas || !cfg.maquinas[maq]) return;
-  const t = cfg.maquinas[maq].turnos[diaSemana];
-  if (!Array.isArray(t)) return;
-  t[turnoIdx] = !t[turnoIdx];
-  _saveCfg(cfg);
+// ── API pública leitura (usada pelo app.js) ──
+function hoursOnDayForMaqRaw(cfg, maq, dia) {
+  if (!cfg || !cfg.maquinas || !cfg.maquinas[maq]) return 0;
+  const faixas = (cfg.maquinas[maq].dias || {})[dia] || [];
+  return faixas.reduce((acc, f) => acc + _faixaDurHrs(f), 0);
 }
 
-function saveTurnosMaquinas() {
-  // A config é salva em tempo real via toggleTurnoMaq; esta função dispara refresh visual
-  if (typeof renderGantt === 'function' && typeof ganttBaseMonday !== 'undefined' && ganttBaseMonday) {
-    renderGantt();
+function hoursOnDayForMaq(date, maq) {
+  const cfg = _loadCfg();
+  return hoursOnDayForMaqRaw(cfg, maq, date.getDay());
+}
+
+function weekHoursForMaq(monday, maq) {
+  let total = 0;
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(monday); d.setDate(monday.getDate() + i);
+    total += hoursOnDayForMaq(d, maq);
   }
+  return Math.round(total * 10) / 10;
+}
+
+function getActiveShiftBlocks(date, maq) {
+  const cfg = _loadCfg();
+  if (!cfg || !cfg.maquinas || !cfg.maquinas[maq]) return [];
+  const faixas = (cfg.maquinas[maq].dias || {})[date.getDay()] || [];
+  return faixas.map((f, idx) => {
+    let iniMin = _hhmm2min(f.ini);
+    let fimMin = _hhmm2min(f.fim);
+    if (fimMin <= iniMin) fimMin += 1440;
+    return { turnoIdx: idx, label: 'F'+(idx+1), inicioMin: iniMin, fimMin };
+  }).filter(b => b.fimMin > b.inicioMin);
+}
+
+function getTurnosMaquinaDia(maq, diaSemana) {
+  const hrs = hoursOnDayForMaqRaw(_loadCfg(), maq, diaSemana);
+  return [hrs > 0, hrs > 8, hrs > 16];
+}
+
+// ── API escrita ──
+function saveTurnosMaquinas() {
+  if (typeof renderGantt === 'function' && typeof ganttBaseMonday !== 'undefined' && ganttBaseMonday) renderGantt();
   if (typeof renderMaquinas === 'function') renderMaquinas();
 }
 
-function resetTurnosMaquinas(maquinas, horasPorTurno) {
+function resetTurnosMaquinas(maquinas) {
   localStorage.removeItem(STORAGE_KEY_TURNOS);
-  initTurnosCfgForMaquinas(maquinas, horasPorTurno);
-  if (typeof renderTurnosMaquinas === 'function') renderTurnosMaquinas(maquinas, horasPorTurno);
+  localStorage.removeItem(STORAGE_KEY_TURNOS_HR);
+  initTurnosCfgForMaquinas(maquinas);
+  if (typeof renderTurnosMaquinas === 'function') renderTurnosMaquinas(maquinas);
   saveTurnosMaquinas();
 }
 
-/**
- * Copia configuração de turnos de uma máquina origem para uma ou mais destinos.
- */
 function copiarTurnosMaquinas(maqOrigem, maqsDestino) {
   const cfg = _loadCfg();
   if (!cfg || !cfg.maquinas || !cfg.maquinas[maqOrigem]) return;
@@ -213,188 +155,253 @@ function copiarTurnosMaquinas(maqOrigem, maqsDestino) {
   _saveCfg(cfg);
 }
 
-// ──────────────────────────────────────────────
-// UI – renderiza aba "Turnos por Máquina"
-// ──────────────────────────────────────────────
-const DAY_LABELS_TM = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
+function _addFaixa(maqEncoded, dia) {
+  const cfg = _loadCfg(); const maq = decodeURIComponent(maqEncoded);
+  if (!cfg.maquinas[maq]) return;
+  cfg.maquinas[maq].dias[dia] = cfg.maquinas[maq].dias[dia] || [];
+  cfg.maquinas[maq].dias[dia].push({ ini: '08:00', fim: '17:00' });
+  _saveCfg(cfg);
+}
+function _removeFaixa(maqEncoded, dia, fi) {
+  const cfg = _loadCfg(); const maq = decodeURIComponent(maqEncoded);
+  if (!cfg.maquinas[maq]) return;
+  (cfg.maquinas[maq].dias[dia] || []).splice(fi, 1);
+  _saveCfg(cfg);
+}
+function _updateFaixa(maqEncoded, dia, fi, patch) {
+  const cfg = _loadCfg(); const maq = decodeURIComponent(maqEncoded);
+  if (!cfg.maquinas[maq]) return;
+  const arr = cfg.maquinas[maq].dias[dia] || [];
+  if (!arr[fi]) return;
+  Object.assign(arr[fi], patch);
+  cfg.maquinas[maq].dias[dia] = arr;
+  _saveCfg(cfg);
+  saveTurnosMaquinas();
+}
+function _refreshDayCell(container, maqEncoded, dia) {
+  const cfg = _loadCfg(); const maq = decodeURIComponent(maqEncoded);
+  if (!cfg || !cfg.maquinas || !cfg.maquinas[maq]) return;
+  const faixas = (cfg.maquinas[maq].dias || {})[dia] || [];
+  const dayHrs = faixas.reduce((a,f) => a + _faixaDurHrs(f), 0);
+  const dayEl = container.querySelector('.tm-day-hrs[data-maq="'+maqEncoded+'"][data-dia="'+dia+'"]');
+  if (dayEl) { dayEl.textContent = dayHrs > 0 ? dayHrs.toFixed(1)+'h' : ''; dayEl.style.color = dayHrs > 0 ? 'var(--cyan)' : 'var(--text4)'; }
+  let weekTotal = 0;
+  for (let d = 0; d < 7; d++) weekTotal += hoursOnDayForMaqRaw(cfg, maq, d);
+  weekTotal = Math.round(weekTotal * 10) / 10;
+  const weekEl = container.querySelector('.tm-hrsem[data-maq="'+maqEncoded+'"]');
+  if (weekEl) { weekEl.textContent = weekTotal > 0 ? weekTotal+'h' : '—'; weekEl.style.color = weekTotal === 0 ? 'var(--text4)' : weekTotal >= 80 ? 'var(--cyan)' : 'var(--text2)'; }
+}
 
-function renderTurnosMaquinas(maquinas, horasPorTurno) {
-  initTurnosCfgForMaquinas(maquinas, horasPorTurno);
-  const cfg = _loadCfg();
-  // Garante que hpt seja sempre um número válido
-  let hpt = cfg && cfg.horasPorTurno;
-  if (typeof hpt !== 'number' || !(hpt > 0)) {
-    hpt = 8;
-    if (cfg) { cfg.horasPorTurno = 8; _saveCfg(cfg); }
-  }
-
-  // Target: scontent-turnos (the bare container)
+// ── UI ──
+function renderTurnosMaquinas(maquinas) {
+  initTurnosCfgForMaquinas(maquinas);
   const container = document.getElementById('scontent-turnos');
   if (!container) return;
+  const cfg  = _loadCfg();
+  const tHrs = _loadTurnoHr();
+  const TURNO_COLS = ['var(--cyan)','var(--purple)','var(--orange)'];
 
-  let html = `
-  <div style="width:100%;max-width:1100px;padding:20px 0">
+  function calcWeekHrs(maq) {
+    let t = 0; for (let d = 0; d < 7; d++) t += hoursOnDayForMaqRaw(cfg, maq, d);
+    return Math.round(t * 10) / 10;
+  }
 
-    <div style="background:var(--s1);border:1px solid var(--border);border-radius:10px;overflow:hidden">
-      <!-- Header -->
-      <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
-        <div style="display:flex;align-items:center;gap:8px">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--cyan)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-          <span style="font-size:13px;font-weight:700;color:var(--text)">Turnos por Máquina</span>
-          <span style="font-size:11px;color:var(--text3)">— T1: 06:00–14:00 · T2: 14:00–22:00 · T3: 22:00–06:00</span>
-        </div>
-        <div style="display:flex;gap:10px;align-items:center">
-          <label style="font-size:11px;color:var(--text2);display:flex;align-items:center;gap:6px">
-            Horas/turno:
-            <input id="tm-hpt" type="number" min="1" max="12" value="${hpt}"
-              style="width:56px;padding:4px 6px;border:1px solid var(--border2);border-radius:6px;background:var(--s2);color:var(--text);font-size:13px;font-family:'JetBrains Mono',monospace">
-          </label>
-          <button id="tm-reset-btn"
-            style="padding:6px 12px;border:1px solid var(--border2);border-radius:6px;background:var(--s2);color:var(--text3);font-size:11px;cursor:pointer">
-            ↺ Resetar
-          </button>
-        </div>
+  let html = `<div style="width:100%;padding:20px 0 40px">
+  <div style="background:var(--s1);border:1px solid var(--border);border-radius:10px;overflow:hidden">
+
+    <!-- Header -->
+    <div style="padding:12px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
+      <div style="display:flex;align-items:center;gap:8px">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--cyan)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        <span style="font-size:13px;font-weight:700;color:var(--text)">Jornada por Máquina</span>
+        <span style="font-size:11px;color:var(--text3)">— Configure as faixas de horário reais de cada máquina por dia da semana</span>
       </div>
-
-      <!-- Table -->
-      <div style="overflow-x:auto;padding:14px 16px">
-      <table style="width:100%;border-collapse:collapse;font-size:11px">
-        <thead>
-          <tr style="background:var(--s2)">
-            <th style="padding:8px 12px;text-align:left;color:var(--text3);font-weight:600;white-space:nowrap;border-bottom:1px solid var(--border)">Máquina</th>
-            ${DAY_LABELS_TM.map(d=>`<th colspan="3" style="padding:8px 6px;text-align:center;color:var(--text2);font-weight:600;border-bottom:1px solid var(--border);border-left:1px solid var(--border2)">${d}</th>`).join('')}
-            <th style="padding:8px 6px;text-align:center;color:var(--text3);font-weight:600;border-bottom:1px solid var(--border);border-left:2px solid var(--border2);white-space:nowrap">H/sem</th>
-            <th style="padding:8px 6px;text-align:center;color:var(--text3);border-bottom:1px solid var(--border);border-left:1px solid var(--border2)">Copiar</th>
-          </tr>
-          <tr style="background:var(--s1)">
-            <th style="border-bottom:2px solid var(--border2)"></th>
-            ${[0,1,2,3,4,5,6].map(()=>`
-              <th style="padding:3px 4px;text-align:center;color:var(--cyan);font-size:9px;border-left:1px solid var(--border2)">T1</th>
-              <th style="padding:3px 4px;text-align:center;color:var(--purple);font-size:9px">T2</th>
-              <th style="padding:3px 4px;text-align:center;color:var(--orange);font-size:9px">T3</th>
-            `).join('')}
-            <th style="border-bottom:2px solid var(--border2);border-left:2px solid var(--border2)"></th>
-            <th style="border-bottom:2px solid var(--border2)"></th>
-          </tr>
-        </thead>
-        <tbody>`;
-
-  (maquinas || []).forEach((maq, mi) => {
-    const maqCfg = cfg.maquinas[maq] || { turnos: {} };
-    let weekHrs = 0;
-    for (let d = 0; d < 7; d++) {
-      const t = maqCfg.turnos[d] || [false, false, false];
-      weekHrs += t.filter(Boolean).length * hpt;
-    }
-    const maqEncoded = encodeURIComponent(maq);
-
-    html += `<tr style="background:${mi%2===0?'var(--s1)':'var(--s0)'};border-bottom:1px solid var(--border)" data-maq="${maqEncoded}">
-      <td style="padding:7px 12px;color:var(--purple);font-weight:600;font-family:'JetBrains Mono',monospace;font-size:11px;white-space:nowrap">${maq}</td>`;
-
-    for (let d = 0; d < 7; d++) {
-      const t = maqCfg.turnos[d] || [false, false, false];
-      html += `<td style="border-left:1px solid var(--border2)">`;
-      [0, 1, 2].forEach(ti => {
-        const on = !!t[ti];
-        const colors = ['var(--cyan)', 'var(--purple)', 'var(--orange)'];
-        html += `<label style="display:flex;justify-content:center;align-items:center;padding:5px 4px;cursor:pointer" title="T${ti+1} ${DAY_LABELS_TM[d]}">
-          <input type="checkbox" class="tm-check" ${on ? 'checked' : ''}
-            data-maq="${maqEncoded}" data-dia="${d}" data-turno="${ti}"
-            style="width:14px;height:14px;accent-color:${colors[ti]};cursor:pointer">
-        </label>`;
-      });
-      html += `</td>`;
-    }
-
-    // H/sem
-    const weekColor = weekHrs === 0 ? 'var(--text4)' : weekHrs >= 100 ? 'var(--cyan)' : 'var(--text2)';
-    html += `<td class="tm-hrsem" data-maq="${maqEncoded}" style="text-align:center;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:${weekColor};border-left:2px solid var(--border2);padding:0 8px">${weekHrs}h</td>`;
-
-    // Copiar
-    html += `<td style="text-align:center;border-left:1px solid var(--border2);padding:0 8px">
-      <button class="tm-copy-btn" data-maq="${maqEncoded}"
-        style="font-size:9px;padding:3px 7px;border:1px solid var(--border2);border-radius:4px;background:var(--s2);color:var(--text3);cursor:pointer;white-space:nowrap"
-        title="Copiar turnos desta máquina para todas as outras">→ Todas</button>
-    </td>`;
-
-    html += `</tr>`;
-  });
-
-  html += `</tbody></table>
-      </div><!-- /overflow-x:auto -->
-
-      <div style="margin:0 16px 16px;padding:10px 14px;background:var(--s2);border-radius:7px;font-size:10px;color:var(--text3);line-height:1.7">
-        <strong style="color:var(--text2)">💡 Como funciona:</strong>
-        Cada checkbox ativa um turno de ${hpt}h para a máquina naquele dia da semana.
-        T1 = 06:00–14:00 · T2 = 14:00–22:00 · T3 = 22:00–06:00.
-        O algoritmo distribui a produção respeitando exatamente esses blocos.
+      <div style="display:flex;gap:8px;align-items:center">
+        <button id="tm-turno-shortcuts-btn" style="padding:5px 11px;border:1px solid rgba(0,212,255,.3);border-radius:6px;background:rgba(0,212,255,.07);color:var(--cyan);font-size:11px;cursor:pointer">⚡ Atalhos T1/T2/T3</button>
+        <button id="tm-reset-btn" style="padding:5px 11px;border:1px solid var(--border2);border-radius:6px;background:var(--s2);color:var(--text3);font-size:11px;cursor:pointer">↺ Resetar tudo</button>
       </div>
     </div>
-  </div>`;
+
+    <!-- Painel de atalhos (oculto por padrão) -->
+    <div id="tm-shortcuts-panel" style="display:none;padding:14px 18px;border-bottom:1px solid var(--border);background:rgba(0,212,255,.03)">
+      <div style="font-size:11px;color:var(--text2);font-weight:600;margin-bottom:10px">⚡ Atalhos de turno — edite os horários e clique T1/T2/T3 em qualquer célula para aplicar</div>
+      <div style="display:flex;gap:14px;flex-wrap:wrap">
+        ${tHrs.map((t,i)=>`
+        <div style="display:flex;align-items:center;gap:8px;background:var(--s2);border:1px solid var(--border2);border-radius:8px;padding:8px 12px">
+          <span style="font-size:12px;font-weight:700;color:${TURNO_COLS[i]}">${t.id}</span>
+          <input class="tm-thr-ini" data-tidx="${i}" type="time" value="${t.ini}" style="background:var(--s0);border:1px solid var(--border2);border-radius:5px;color:var(--text);font-size:12px;padding:3px 6px;font-family:'JetBrains Mono',monospace;width:88px">
+          <span style="color:var(--text3);font-size:11px">–</span>
+          <input class="tm-thr-fim" data-tidx="${i}" type="time" value="${t.fim}" style="background:var(--s0);border:1px solid var(--border2);border-radius:5px;color:var(--text);font-size:12px;padding:3px 6px;font-family:'JetBrains Mono',monospace;width:88px">
+          <span class="tm-thr-dur" data-tidx="${i}" style="font-size:10px;color:var(--text3);min-width:28px">${_faixaDurHrs({ini:t.ini,fim:t.fim}).toFixed(1)}h</span>
+        </div>`).join('')}
+      </div>
+    </div>
+
+    <!-- Tabela -->
+    <div style="overflow-x:auto">
+    <table style="width:100%;border-collapse:collapse;font-size:11px;min-width:960px">
+      <thead>
+        <tr style="background:var(--s2);border-bottom:2px solid var(--border2)">
+          <th style="padding:10px 14px;text-align:left;color:var(--text3);font-weight:600;white-space:nowrap;min-width:130px">Máquina</th>
+          ${DAY_LABELS_TM.map(d=>`<th style="padding:8px 6px;text-align:center;color:var(--text2);font-weight:600;border-left:1px solid var(--border2);min-width:115px">${d}</th>`).join('')}
+          <th style="padding:8px 10px;text-align:center;color:var(--text3);font-weight:600;border-left:2px solid var(--border2);white-space:nowrap">H/sem</th>
+          <th style="padding:8px 10px;text-align:center;color:var(--text3);border-left:1px solid var(--border2)">Copiar</th>
+        </tr>
+      </thead>
+      <tbody>`;
+
+  (maquinas || []).forEach((maq, mi) => {
+    const maqCfg  = cfg.maquinas[maq] || { dias: _defaultDiasCfg() };
+    const weekHrs = calcWeekHrs(maq);
+    const maqEnc  = encodeURIComponent(maq);
+    const wColor  = weekHrs === 0 ? 'var(--text4)' : weekHrs >= 80 ? 'var(--cyan)' : 'var(--text2)';
+
+    html += `<tr style="background:${mi%2===0?'var(--s1)':'var(--s0)'};border-bottom:1px solid var(--border)">
+      <td style="padding:10px 14px;color:var(--purple);font-weight:600;font-family:'JetBrains Mono',monospace;font-size:11px;white-space:nowrap;vertical-align:top">${maq}</td>`;
+
+    for (let d = 0; d < 7; d++) {
+      const faixas = (maqCfg.dias || {})[d] || [];
+      const dayHrs = faixas.reduce((a,f) => a + _faixaDurHrs(f), 0);
+      const dColor = dayHrs === 0 ? 'var(--text4)' : 'var(--cyan)';
+
+      html += `<td style="border-left:1px solid var(--border2);padding:6px 6px;vertical-align:top">
+        <div class="tm-faixas" data-maq="${maqEnc}" data-dia="${d}">`;
+
+      if (faixas.length === 0) {
+        html += `<div style="text-align:center;color:var(--text4);font-size:10px;padding:4px 0;line-height:1.4">—<br><span style="font-size:9px">inativa</span></div>`;
+      } else {
+        faixas.forEach((f, fi) => {
+          html += `<div style="display:flex;align-items:center;gap:3px;margin-bottom:4px">
+            <input type="time" class="tm-ini" value="${f.ini}" data-maq="${maqEnc}" data-dia="${d}" data-fi="${fi}"
+              style="width:74px;background:var(--s0);border:1px solid var(--border2);border-radius:4px;color:var(--text);font-size:10px;padding:2px 4px;font-family:'JetBrains Mono',monospace">
+            <span style="color:var(--text4);font-size:9px">–</span>
+            <input type="time" class="tm-fim" value="${f.fim}" data-maq="${maqEnc}" data-dia="${d}" data-fi="${fi}"
+              style="width:74px;background:var(--s0);border:1px solid var(--border2);border-radius:4px;color:var(--text);font-size:10px;padding:2px 4px;font-family:'JetBrains Mono',monospace">
+            <button class="tm-del-faixa" data-maq="${maqEnc}" data-dia="${d}" data-fi="${fi}"
+              style="background:none;border:none;color:var(--text4);cursor:pointer;font-size:14px;padding:0 2px;line-height:1;opacity:.6" title="Remover">×</button>
+          </div>`;
+        });
+      }
+
+      html += `</div>
+        <div style="display:flex;align-items:center;gap:3px;margin-top:3px;flex-wrap:wrap">
+          <span class="tm-day-hrs" data-maq="${maqEnc}" data-dia="${d}"
+            style="font-size:9px;font-family:'JetBrains Mono',monospace;font-weight:700;color:${dColor};min-width:24px">
+            ${dayHrs > 0 ? dayHrs.toFixed(1)+'h' : ''}
+          </span>
+          <button class="tm-add-faixa" data-maq="${maqEnc}" data-dia="${d}"
+            style="font-size:9px;padding:2px 5px;border:1px dashed var(--border2);border-radius:4px;background:none;color:var(--text3);cursor:pointer">+faixa</button>
+          ${tHrs.map((t,ti)=>`<button class="tm-apply-turno" data-maq="${maqEnc}" data-dia="${d}" data-tidx="${ti}"
+            style="font-size:8px;padding:2px 4px;border:1px solid ${TURNO_COLS[ti]}44;border-radius:4px;background:none;color:${TURNO_COLS[ti]};cursor:pointer">${t.id}</button>`).join('')}
+        </div>
+      </td>`;
+    }
+
+    html += `<td class="tm-hrsem" data-maq="${maqEnc}"
+      style="text-align:center;font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;color:${wColor};border-left:2px solid var(--border2);padding:0 10px;white-space:nowrap;vertical-align:middle">
+      ${weekHrs > 0 ? weekHrs+'h' : '—'}
+    </td>
+    <td style="text-align:center;border-left:1px solid var(--border2);padding:0 8px;vertical-align:middle">
+      <button class="tm-copy-btn" data-maq="${maqEnc}"
+        style="font-size:9px;padding:3px 8px;border:1px solid var(--border2);border-radius:4px;background:var(--s2);color:var(--text3);cursor:pointer;white-space:nowrap">→ Todas</button>
+    </td></tr>`;
+  });
+
+  html += `</tbody></table></div>
+    <div style="margin:12px 16px 16px;padding:10px 14px;background:var(--s2);border-radius:7px;font-size:10px;color:var(--text3);line-height:1.8">
+      <strong style="color:var(--text2)">💡 Como usar:</strong>
+      Configure início e fim de cada faixa de trabalho.
+      Use <strong style="color:var(--cyan)">+faixa</strong> para múltiplos períodos no mesmo dia (ex: manhã + tarde com intervalo).
+      Use <strong style="color:var(--cyan)">T1/T2/T3</strong> como atalhos para preencher turnos pré-definidos.
+      O cálculo de capacidade usa a soma exata das horas configuradas.
+    </div>
+  </div></div>`;
 
   container.innerHTML = html;
   container.style.display = 'flex';
   container.style.flexDirection = 'column';
 
-  // ── Event listeners (evita problemas de escape em onclick inline) ──
+  // ── Events ──
 
-  // Checkbox toggle
-  container.querySelectorAll('.tm-check').forEach(cb => {
-    cb.addEventListener('change', function() {
-      const maq = decodeURIComponent(this.dataset.maq);
-      const dia = parseInt(this.dataset.dia);
-      const turno = parseInt(this.dataset.turno);
-      toggleTurnoMaq(maq, dia, turno);
-      _recalcHsemCell(container, this.dataset.maq, maquinas, hpt);
-      if (typeof saveTurnosMaquinas === 'function') saveTurnosMaquinas();
+  // Toggle atalhos
+  container.querySelector('#tm-turno-shortcuts-btn').addEventListener('click', () => {
+    const p = container.querySelector('#tm-shortcuts-panel');
+    p.style.display = p.style.display === 'none' ? 'block' : 'none';
+  });
+
+  // Editar horários dos atalhos
+  container.querySelectorAll('.tm-thr-ini, .tm-thr-fim').forEach(inp => {
+    inp.addEventListener('change', function() {
+      const tidx = parseInt(this.dataset.tidx);
+      const arr = _loadTurnoHr();
+      if (this.classList.contains('tm-thr-ini')) arr[tidx].ini = this.value;
+      else arr[tidx].fim = this.value;
+      _saveTurnoHr(arr);
+      const durEl = container.querySelector('.tm-thr-dur[data-tidx="'+tidx+'"]');
+      if (durEl) durEl.textContent = _faixaDurHrs({ini:arr[tidx].ini,fim:arr[tidx].fim}).toFixed(1)+'h';
     });
   });
 
-  // Horas/turno input
-  const hptInput = container.querySelector('#tm-hpt');
-  if (hptInput) {
-    hptInput.addEventListener('change', function() {
-      const newHpt = parseInt(this.value) || 8;
-      const c = _loadCfg();
-      c.horasPorTurno = newHpt;
-      _saveCfg(c);
-      if (typeof saveTurnosMaquinas === 'function') saveTurnosMaquinas();
-      renderTurnosMaquinas(maquinas, horasPorTurno);
+  // Editar hora ini de faixa
+  container.querySelectorAll('.tm-ini').forEach(inp => {
+    inp.addEventListener('change', function() {
+      _updateFaixa(this.dataset.maq, +this.dataset.dia, +this.dataset.fi, { ini: this.value });
+      _refreshDayCell(container, this.dataset.maq, +this.dataset.dia);
     });
-  }
+  });
+  // Editar hora fim de faixa
+  container.querySelectorAll('.tm-fim').forEach(inp => {
+    inp.addEventListener('change', function() {
+      _updateFaixa(this.dataset.maq, +this.dataset.dia, +this.dataset.fi, { fim: this.value });
+      _refreshDayCell(container, this.dataset.maq, +this.dataset.dia);
+    });
+  });
+
+  // Remover faixa
+  container.querySelectorAll('.tm-del-faixa').forEach(btn => {
+    btn.addEventListener('click', function() {
+      _removeFaixa(this.dataset.maq, +this.dataset.dia, +this.dataset.fi);
+      renderTurnosMaquinas(maquinas); saveTurnosMaquinas();
+    });
+  });
+
+  // Adicionar faixa
+  container.querySelectorAll('.tm-add-faixa').forEach(btn => {
+    btn.addEventListener('click', function() {
+      _addFaixa(this.dataset.maq, +this.dataset.dia);
+      renderTurnosMaquinas(maquinas); saveTurnosMaquinas();
+    });
+  });
+
+  // Aplicar atalho T1/T2/T3
+  container.querySelectorAll('.tm-apply-turno').forEach(btn => {
+    btn.addEventListener('click', function() {
+      const maq  = decodeURIComponent(this.dataset.maq);
+      const dia  = +this.dataset.dia;
+      const tidx = +this.dataset.tidx;
+      const arr  = _loadTurnoHr();
+      const t    = arr[tidx];
+      const c    = _loadCfg();
+      if (!c.maquinas[maq]) return;
+      c.maquinas[maq].dias[dia] = [{ ini: t.ini, fim: t.fim }];
+      _saveCfg(c);
+      renderTurnosMaquinas(maquinas); saveTurnosMaquinas();
+    });
+  });
 
   // Resetar
-  const resetBtn = container.querySelector('#tm-reset-btn');
-  if (resetBtn) {
-    resetBtn.addEventListener('click', function() {
-      if (typeof resetTurnosMaquinas === 'function') resetTurnosMaquinas(maquinas, horasPorTurno);
-    });
-  }
+  container.querySelector('#tm-reset-btn').addEventListener('click', () => {
+    if (confirm('Resetar toda a configuração de jornada para o padrão (Seg–Sex 08:00–17:00)?')) {
+      resetTurnosMaquinas(maquinas);
+    }
+  });
 
   // Copiar para todas
   container.querySelectorAll('.tm-copy-btn').forEach(btn => {
     btn.addEventListener('click', function() {
       const maq = decodeURIComponent(this.dataset.maq);
-      const outros = (maquinas || []).filter(m => m !== maq);
-      copiarTurnosMaquinas(maq, outros);
-      renderTurnosMaquinas(maquinas, horasPorTurno);
-      if (typeof saveTurnosMaquinas === 'function') saveTurnosMaquinas();
+      copiarTurnosMaquinas(maq, (maquinas||[]).filter(m => m !== maq));
+      renderTurnosMaquinas(maquinas); saveTurnosMaquinas();
     });
   });
-}
-
-// Recalculate H/sem cell for one machine without full re-render
-function _recalcHsemCell(container, maqEncoded, maquinas, hpt) {
-  const cfg = _loadCfg();
-  const maq = decodeURIComponent(maqEncoded);
-  if (!cfg || !cfg.maquinas || !cfg.maquinas[maq]) return;
-  let weekHrs = 0;
-  for (let d = 0; d < 7; d++) {
-    const t = cfg.maquinas[maq].turnos[d] || [false, false, false];
-    weekHrs += t.filter(Boolean).length * hpt;
-  }
-  const cell = container.querySelector(`.tm-hrsem[data-maq="${maqEncoded}"]`);
-  if (!cell) return;
-  cell.textContent = weekHrs + 'h';
-  cell.style.color = weekHrs === 0 ? 'var(--text4)' : weekHrs >= 100 ? 'var(--cyan)' : 'var(--text2)';
 }

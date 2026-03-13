@@ -3965,7 +3965,7 @@ function openSettings(){
   renderJornadaDays();
   // Renderiza config de turnos por máquina
   if(typeof renderTurnosMaquinas === 'function'){
-    renderTurnosMaquinas(MAQUINAS, userDayHrs);
+    renderTurnosMaquinas(MAQUINAS);
   }
   // Mostra/oculta abas conforme perfil
   const snavFunc = document.getElementById('snav-funcionarios');
@@ -3984,7 +3984,7 @@ function toggleSnavGroup(group){
   const submenu=document.getElementById('snav-'+group+'-submenu');
   const chevron=document.getElementById('snav-'+group+'-chevron');
   if(!submenu) return;
-  const isOpen=submenu.style.display!=='none';
+  const isOpen=submenu.style.display!=='none'&&submenu.style.display!=='';
   submenu.style.display=isOpen?'none':'flex';
   if(chevron) chevron.style.transform=isOpen?'rotate(0deg)':'rotate(180deg)';
 }
@@ -4042,7 +4042,7 @@ function settingsNav(section){
   // Se for turnos por máquina, renderiza
   if(section==='turnos'){
     setTimeout(()=>{
-      if(typeof renderTurnosMaquinas === 'function') renderTurnosMaquinas(MAQUINAS, userDayHrs);
+      if(typeof renderTurnosMaquinas === 'function') renderTurnosMaquinas(MAQUINAS);
     }, 50);
   }
 }
