@@ -1068,17 +1068,69 @@ function renderTable(){
   if(pg>pages) pg=pages;
   const slice=filtered.slice((pg-1)*PER,pg*PER);
   const tbody=document.getElementById('tbody');
+  impLoadFromStorage();
 
   if(!slice.length){
-    tbody.innerHTML=`<tr><td colspan="9"><div class="empty"><div class="ei">🔍</div>Nenhum registro encontrado</div></td></tr>`;
+    tbody.innerHTML=`<tr><td colspan="10"><div class="empty"><div class="ei">🔍</div>Nenhum registro encontrado</div></td></tr>`;
   } else {
     tbody.innerHTML=slice.map((r,i)=>{
       const n=(pg-1)*PER+i+1;
       const tempo=calcTempoStr(r.maquina,r.qntCaixas,r.qntUnid,r.pcMin,r.unidPorCx);
-      return `<tr>
+      const insumosLista = calcConsumoInsumosRegistro(r);
+      const temInsumos = insumosLista.length > 0;
+      const faltaInsumo = insumosLista.some(i => i.falta);
+      const rowId = `prog-ins-${r.id}`;
+
+      // Badge de insumos
+      let insBadge = '';
+      if(!temInsumos){
+        insBadge = `<span style="background:rgba(255,255,255,.05);color:var(--text3);padding:2px 5px;border-radius:4px;font-size:9px">—</span>`;
+      } else if(faltaInsumo){
+        insBadge = `<button onclick="progToggleInsumos('${rowId}')" style="background:rgba(255,71,87,.18);border:none;color:var(--red);padding:2px 7px;border-radius:4px;font-size:10px;cursor:pointer;font-weight:700" title="Ver insumos">⚠️ Falta MP</button>`;
+      } else if(insumosEstoqueData.length){
+        insBadge = `<button onclick="progToggleInsumos('${rowId}')" style="background:rgba(46,201,122,.1);border:none;color:var(--green);padding:2px 7px;border-radius:4px;font-size:10px;cursor:pointer" title="Ver insumos">✅ MP OK</button>`;
+      } else {
+        insBadge = `<button onclick="progToggleInsumos('${rowId}')" style="background:rgba(255,255,255,.06);border:none;color:var(--text3);padding:2px 7px;border-radius:4px;font-size:10px;cursor:pointer" title="Ver insumos">📋 Insumos</button>`;
+      }
+
+      const rowBg = faltaInsumo ? 'background:rgba(255,71,87,.04);' : '';
+
+      // Detalhe de insumos colapsável
+      let insDetail = '';
+      if(temInsumos){
+        insDetail = `<tr id="${rowId}" style="display:none">
+          <td colspan="10" style="padding:0">
+            <div style="background:var(--s2);border-top:1px solid var(--border);padding:10px 16px">
+              <div style="font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--text3);margin-bottom:8px;font-weight:700">Consumo de Insumos — ${r.produto} (${r.qntCaixas} cx)</div>
+              <table style="width:100%;border-collapse:collapse;font-size:11px;max-width:700px">
+                <thead><tr style="background:rgba(255,255,255,.03)">
+                  <th style="padding:5px 8px;text-align:left;color:var(--text3);font-size:10px">Insumo</th>
+                  <th style="padding:5px 8px;text-align:right;color:var(--warn);font-size:10px">Necessário</th>
+                  <th style="padding:5px 8px;text-align:right;color:var(--cyan);font-size:10px">Estoque Atual</th>
+                  <th style="padding:5px 8px;text-align:right;color:var(--text3);font-size:10px">Saldo Final</th>
+                </tr></thead>
+                <tbody>${insumosLista.map(ins => {
+                  const sc = ins.falta ? 'var(--red)' : ins.estoqueAtual!=null ? 'var(--green)' : 'var(--text3)';
+                  const bg2 = ins.falta ? 'background:rgba(255,71,87,.07)' : '';
+                  const estoqueStr = ins.estoqueAtual != null ? ins.estoqueAtual.toLocaleString('pt-BR',{maximumFractionDigits:3}) : '<span style="color:var(--text4)">Sem estoque MP</span>';
+                  const saldoStr = ins.saldoFinal != null ? ins.saldoFinal.toLocaleString('pt-BR',{maximumFractionDigits:3}) : '—';
+                  return `<tr style="${bg2}">
+                    <td style="padding:5px 8px;color:var(--text)">${ins.nome}</td>
+                    <td style="padding:5px 8px;text-align:right;color:var(--warn);font-family:'JetBrains Mono',monospace">${ins.consumoNecessario.toLocaleString('pt-BR',{maximumFractionDigits:3})}</td>
+                    <td style="padding:5px 8px;text-align:right;font-family:'JetBrains Mono',monospace">${estoqueStr}</td>
+                    <td style="padding:5px 8px;text-align:right;color:${sc};font-family:'JetBrains Mono',monospace;font-weight:700">${saldoStr}${ins.falta?' ⚠️':''}</td>
+                  </tr>`;
+                }).join('')}</tbody>
+              </table>
+            </div>
+          </td>
+        </tr>`;
+      }
+
+      return `<tr style="${rowBg}">
         <td style="color:var(--text3);font-family:'JetBrains Mono',monospace;font-size:11px">${n}</td>
         <td style="max-width:300px">
-          <div style="font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:280px" title="${r.produto}">${r.produto}</div>
+          <div style="font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:260px" title="${r.produto}">${r.produto}</div>
           ${r.obs?`<div style="font-size:10px;color:var(--text3);margin-top:1px">${r.obs}</div>`:''}
         </td>
         <td><span class="badge b-maq">${r.maquina}</span></td>
@@ -1087,13 +1139,14 @@ function renderTable(){
         <td style="text-align:right;color:var(--text2);font-family:'JetBrains Mono',monospace;font-size:11px">${tempo}</td>
         <td style="color:var(--text2);font-family:'JetBrains Mono',monospace;font-size:12px">${r.dtDesejada||'—'}</td>
         <td>${sBadge(r.status)}</td>
+        <td style="text-align:center">${insBadge}</td>
         <td>
           <div style="display:flex;gap:5px">
             <button class="btn btn-edit" onclick="editRec('${r.id}')" style="padding:4px 9px;font-size:11px" title="Editar"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
             <button class="btn btn-danger" onclick="askDel('${r.id}')" style="padding:4px 9px;font-size:11px">🗑</button>
           </div>
         </td>
-      </tr>`;
+      </tr>${insDetail}`;
     }).join('');
   }
 
@@ -5265,18 +5318,30 @@ window.switchTabSidebar = switchTabSidebar;
 // ===================================================================
 
 // In-memory stores (persisted to localStorage)
-let estoqueData   = [];   // [{cod, produto, estoque}]
-let projecaoData  = [];   // [{cod, produto, venda_m1, venda_m2, venda_m3}]
-let importHistorico = []; // [{ts, tipo, qtd, nome}]
+let estoqueData       = [];   // [{cod, produto, estoque}]
+let projecaoData      = [];   // [{cod, produto, venda_m1, venda_m2, venda_m3}]
+let importHistorico   = [];   // [{ts, tipo, qtd, nome}]
+let insumosEstoqueData= [];   // [{insumo, quantidade, unidade}] — estoque de MP/insumos (MRP)
 
 function impLoadFromStorage(){
-  try{ estoqueData   = JSON.parse(localStorage.getItem('imp_estoque')||'[]'); }catch(e){ estoqueData=[]; }
-  try{ projecaoData  = JSON.parse(localStorage.getItem('imp_projecao')||'[]'); }catch(e){ projecaoData=[]; }
-  try{ importHistorico = JSON.parse(localStorage.getItem('imp_historico')||'[]'); }catch(e){ importHistorico=[]; }
+  try{ estoqueData        = JSON.parse(localStorage.getItem('imp_estoque')||'[]'); }catch(e){ estoqueData=[]; }
+  try{ projecaoData       = JSON.parse(localStorage.getItem('imp_projecao')||'[]'); }catch(e){ projecaoData=[]; }
+  try{ importHistorico    = JSON.parse(localStorage.getItem('imp_historico')||'[]'); }catch(e){ importHistorico=[]; }
+  try{ insumosEstoqueData = JSON.parse(localStorage.getItem('imp_insumos_estoque')||'[]'); }catch(e){ insumosEstoqueData=[]; }
 }
-function impSaveEstoque(){ localStorage.setItem('imp_estoque', JSON.stringify(estoqueData)); }
-function impSaveProjecao(){ localStorage.setItem('imp_projecao', JSON.stringify(projecaoData)); }
-function impSaveHistorico(){ localStorage.setItem('imp_historico', JSON.stringify(importHistorico)); }
+function impSaveEstoque()  { localStorage.setItem('imp_estoque',         JSON.stringify(estoqueData)); }
+function impSaveProjecao() { localStorage.setItem('imp_projecao',        JSON.stringify(projecaoData)); }
+function impSaveHistorico(){ localStorage.setItem('imp_historico',       JSON.stringify(importHistorico)); }
+function impSaveInsumosEstoque(){ localStorage.setItem('imp_insumos_estoque', JSON.stringify(insumosEstoqueData)); }
+
+// Retorna o estoque disponível de um insumo (busca por nome normalizado)
+function getEstoqueInsumo(nomeInsumo){
+  const norm = s => (s||'').toUpperCase().trim().replace(/\s+/g,' ');
+  const ni = norm(nomeInsumo);
+  const found = insumosEstoqueData.find(x => norm(x.insumo) === ni)
+             || insumosEstoqueData.find(x => norm(x.insumo).includes(ni.substring(0,20)) || ni.includes(norm(x.insumo).substring(0,20)));
+  return found ? (found.quantidade||0) : null; // null = não encontrado
+}
 
 function impAddHistorico(tipo, qtd, nome){
   importHistorico.unshift({ ts: new Date().toISOString(), tipo, qtd, nome });
@@ -5289,10 +5354,17 @@ function renderImportacao(){
   document.getElementById('imp-stat-estoque').textContent = estoqueData.length;
   document.getElementById('imp-stat-proj').textContent    = projecaoData.length;
   document.getElementById('imp-stat-hist').textContent    = importHistorico.length;
+  const insStat = document.getElementById('imp-stat-insumos');
+  if(insStat) insStat.textContent = insumosEstoqueData.length;
   const lastSync = importHistorico[0];
   document.getElementById('imp-stat-sync').textContent = lastSync
     ? new Date(lastSync.ts).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})
     : '—';
+  const insStat2 = document.getElementById('imp-insumos-stat');
+  if(insStat2 && insumosEstoqueData.length){
+    insStat2.textContent = `✅ ${insumosEstoqueData.length} insumos no estoque`;
+    insStat2.style.color = 'var(--green)';
+  }
   renderHistoricoImportacao();
 }
 
@@ -5383,6 +5455,223 @@ function importProjecao(input){
   };
   reader.readAsArrayBuffer(file);
   input.value='';
+}
+
+// ===================================================================
+// ===== IMPORTAÇÃO DE ESTOQUE DE INSUMOS (MRP) ======================
+// ===================================================================
+
+function importEstoqueInsumos(input){
+  const file = input.files[0];
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    try{
+      const wb = XLSX.read(e.target.result, {type:'array'});
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(ws, {header:1, defval:''});
+
+      // Detecta cabeçalho — tenta encontrar colunas por nome
+      const header = (rows[0]||[]).map(h => String(h).toLowerCase().trim());
+      let colInsumo = 0, colQtd = 1, colUnid = 2;
+      header.forEach((h,i) => {
+        if(/insumo|material|descri|nome|mp/.test(h)) colInsumo = i;
+        else if(/qtd|quant|estoque|saldo|stkqtd/.test(h)) colQtd = i;
+        else if(/unid|un\b|medida/.test(h)) colUnid = i;
+      });
+
+      const dataRows = rows.slice(1).filter(r => r[colInsumo]);
+      const norm = s => (s||'').toUpperCase().trim().replace(/\s+/g,' ');
+
+      // Merge: se insumo já existe, atualiza; senão adiciona
+      dataRows.forEach(r => {
+        const insumoNome = String(r[colInsumo]||'').trim();
+        const qtd = parseFloat(String(r[colQtd]||'').replace(',','.'))||0;
+        const unid = String(r[colUnid]||'').trim() || 'UN';
+        if(!insumoNome) return;
+        const idx = insumosEstoqueData.findIndex(x => norm(x.insumo) === norm(insumoNome));
+        if(idx >= 0){
+          insumosEstoqueData[idx].quantidade = qtd;
+          insumosEstoqueData[idx].unidade = unid;
+        } else {
+          insumosEstoqueData.push({ insumo: insumoNome, quantidade: qtd, unidade: unid });
+        }
+      });
+
+      impSaveInsumosEstoque();
+      impAddHistorico('insumos', insumosEstoqueData.length, file.name);
+
+      const prev = document.getElementById('imp-insumos-preview');
+      if(prev){
+        prev.innerHTML = `<div style="margin-bottom:6px;font-size:11px;color:var(--green)">✅ ${dataRows.length} registros processados · ${insumosEstoqueData.length} insumos no estoque</div>`
+          + `<table style="width:100%;border-collapse:collapse;font-size:11px">`
+          + `<thead><tr><th style="text-align:left;padding:3px 6px;color:var(--text3)">Insumo</th><th style="text-align:right;padding:3px 6px;color:var(--text3)">Quantidade</th><th style="text-align:right;padding:3px 6px;color:var(--text3)">Un.</th></tr></thead>`
+          + `<tbody>${insumosEstoqueData.slice(0,8).map(r=>`<tr><td style="padding:3px 6px;color:var(--text)">${r.insumo.substring(0,40)}</td><td style="padding:3px 6px;text-align:right;color:var(--green);font-family:'JetBrains Mono',monospace">${r.quantidade.toLocaleString('pt-BR',{maximumFractionDigits:3})}</td><td style="padding:3px 6px;text-align:right;color:var(--text3)">${r.unidade}</td></tr>`).join('')}</tbody>`
+          + (insumosEstoqueData.length>8?`<tfoot><tr><td colspan="3" style="padding:3px 6px;color:var(--text3);font-style:italic">... e mais ${insumosEstoqueData.length-8} itens</td></tr></tfoot>`:'')
+          + `</table>`;
+      }
+      renderImportacao();
+      renderSaldoInsumos();
+      toast(`Insumos importados: ${insumosEstoqueData.length} itens`, 'ok');
+    }catch(err){ toast('Erro ao importar insumos: '+err.message,'err'); }
+  };
+  reader.readAsArrayBuffer(file);
+  input.value='';
+}
+
+// Calcula consumo total de insumos com base na programação ativa (registros do Gantt)
+function calcConsumoInsumosPorProgramacao(){
+  // Para cada registro programado (status Pendente/Em Andamento), soma o consumo de insumos
+  const consumoMap = {}; // { nomeInsumo: { total, unidade } }
+  records.forEach(rec => {
+    if(rec.status === 'Concluído') return;
+    const insumos = findInsumosProduto(rec.produto, rec.prodCod);
+    if(!insumos || !insumos.length) return;
+    const qntCaixas = rec.qntCaixas || 0;
+    insumos.forEach(ins => {
+      const consumoPorCx = ins.q || 0;
+      const consumoTotal = consumoPorCx * qntCaixas;
+      if(!consumoMap[ins.n]) consumoMap[ins.n] = { total: 0, unidade: 'UN' };
+      consumoMap[ins.n].total += consumoTotal;
+    });
+  });
+  return consumoMap;
+}
+
+// Calcula consumo de insumos para um único registro programado
+function calcConsumoInsumosRegistro(rec){
+  const insumos = findInsumosProduto(rec.produto, rec.prodCod);
+  if(!insumos || !insumos.length) return [];
+  const qntCaixas = rec.qntCaixas || 0;
+  impLoadFromStorage();
+  return insumos.map(ins => {
+    const consumoNecessario = (ins.q || 0) * qntCaixas;
+    const estoqueAtual = getEstoqueInsumo(ins.n);
+    const saldoFinal = estoqueAtual != null ? estoqueAtual - consumoNecessario : null;
+    return {
+      nome: ins.n,
+      consumoNecessario: parseFloat(consumoNecessario.toFixed(4)),
+      estoqueAtual,
+      saldoFinal,
+      falta: saldoFinal != null && saldoFinal < 0
+    };
+  }).filter(i => i.consumoNecessario > 0);
+}
+
+// Calcula consumo de insumos para uma sugestão da programação automática
+function calcConsumoInsumosPA(sug){
+  const fichaTec = FICHA_TECNICA.find(f => String(f.cod)===String(sug.cod) || f.desc===sug.prod)
+                || (typeof fichaTecnicaData !== 'undefined' ? fichaTecnicaData.find(f => String(f.cod)===String(sug.cod) || f.desc===sug.prod) : null);
+  if(!fichaTec || !fichaTec.insumos || !fichaTec.insumos.length) return [];
+  const qntCaixas = sug.cxAlocadas || 0;
+  impLoadFromStorage();
+  return fichaTec.insumos.map(ins => {
+    const consumoNecessario = (ins.qty || 0) * qntCaixas;
+    const estoqueAtual = getEstoqueInsumo(ins.insumo);
+    const saldoFinal = estoqueAtual != null ? estoqueAtual - consumoNecessario : null;
+    return {
+      nome: ins.insumo,
+      consumoNecessario: parseFloat(consumoNecessario.toFixed(4)),
+      estoqueAtual,
+      saldoFinal,
+      falta: saldoFinal != null && saldoFinal < 0
+    };
+  }).filter(i => i.consumoNecessario > 0);
+}
+
+function renderSaldoInsumos(){
+  impLoadFromStorage();
+  const el = document.getElementById('imp-saldo-insumos');
+  if(!el) return;
+
+  if(!insumosEstoqueData.length){
+    el.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text3)">Importe o estoque de insumos acima para ver o saldo MRP.</div>';
+    return;
+  }
+
+  // Calcula consumo comprometido pela programação ativa
+  const consumoMap = calcConsumoInsumosPorProgramacao();
+
+  // Monta tabela
+  const rows = insumosEstoqueData.map(ins => {
+    const consumo = consumoMap[ins.insumo]?.total || 0;
+    // Busca consumo por match parcial também
+    let consumoFinal = consumo;
+    if(!consumo){
+      const norm = s => (s||'').toUpperCase().trim();
+      const ni = norm(ins.insumo);
+      for(const [k,v] of Object.entries(consumoMap)){
+        if(norm(k).includes(ni.substring(0,20)) || ni.includes(norm(k).substring(0,20))){
+          consumoFinal += v.total;
+        }
+      }
+    }
+    const saldo = ins.quantidade - consumoFinal;
+    const status = saldo < 0 ? 'deficit' : saldo < ins.quantidade * 0.15 ? 'baixo' : 'ok';
+    return { ins, consumoFinal, saldo, status };
+  }).sort((a,b) => {
+    const order = { deficit:0, baixo:1, ok:2 };
+    return (order[a.status]||2) - (order[b.status]||2);
+  });
+
+  const deficits = rows.filter(r => r.status==='deficit').length;
+  const baixos   = rows.filter(r => r.status==='baixo').length;
+
+  let html = '';
+  if(deficits || baixos){
+    html += `<div style="display:flex;gap:10px;margin-bottom:12px;flex-wrap:wrap">
+      ${deficits?`<span style="background:rgba(255,71,87,.15);border:1px solid rgba(255,71,87,.4);color:var(--red);padding:4px 10px;border-radius:6px;font-size:11px;font-weight:700">⚠️ ${deficits} insumo(s) em déficit</span>`:''}
+      ${baixos?`<span style="background:rgba(255,179,0,.12);border:1px solid rgba(255,179,0,.35);color:var(--warn);padding:4px 10px;border-radius:6px;font-size:11px;font-weight:700">🟡 ${baixos} insumo(s) com estoque baixo</span>`:''}
+    </div>`;
+  }
+
+  html += `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:11px">
+    <thead><tr style="background:var(--s2);border-bottom:1px solid var(--border)">
+      <th style="padding:8px 10px;text-align:left;color:var(--text3);font-size:10px;text-transform:uppercase;letter-spacing:.8px">Insumo</th>
+      <th style="padding:8px 10px;text-align:right;color:var(--text3);font-size:10px">Un.</th>
+      <th style="padding:8px 10px;text-align:right;color:var(--cyan);font-size:10px">Estoque Atual</th>
+      <th style="padding:8px 10px;text-align:right;color:var(--warn);font-size:10px">Consumo Programado</th>
+      <th style="padding:8px 10px;text-align:right;color:var(--text3);font-size:10px">Saldo Final</th>
+      <th style="padding:8px 10px;text-align:center;color:var(--text3);font-size:10px">Status</th>
+    </tr></thead><tbody>`;
+
+  rows.forEach(({ins, consumoFinal, saldo, status}, idx) => {
+    const bg = idx%2===1 ? 'background:rgba(255,255,255,.01)' : '';
+    const saldoColor = status==='deficit' ? 'var(--red)' : status==='baixo' ? 'var(--warn)' : 'var(--green)';
+    const badge = status==='deficit'
+      ? `<span style="background:rgba(255,71,87,.2);color:var(--red);padding:2px 7px;border-radius:4px;font-size:10px;font-weight:700">Déficit</span>`
+      : status==='baixo'
+      ? `<span style="background:rgba(255,179,0,.15);color:var(--warn);padding:2px 7px;border-radius:4px;font-size:10px;font-weight:700">Baixo</span>`
+      : `<span style="background:rgba(46,201,122,.1);color:var(--green);padding:2px 7px;border-radius:4px;font-size:10px">OK</span>`;
+    html += `<tr style="${bg}${status==='deficit'?';background:rgba(255,71,87,.04)':''}">
+      <td style="padding:7px 10px;color:var(--text);font-size:11px;max-width:280px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${ins.insumo}">${ins.insumo}</td>
+      <td style="padding:7px 10px;text-align:right;color:var(--text3);font-size:10px;font-family:'JetBrains Mono',monospace">${ins.unidade}</td>
+      <td style="padding:7px 10px;text-align:right;color:var(--cyan);font-family:'JetBrains Mono',monospace;font-weight:600">${ins.quantidade.toLocaleString('pt-BR',{maximumFractionDigits:3})}</td>
+      <td style="padding:7px 10px;text-align:right;color:${consumoFinal>0?'var(--warn)':'var(--text3)'};font-family:'JetBrains Mono',monospace">${consumoFinal>0?consumoFinal.toLocaleString('pt-BR',{maximumFractionDigits:3}):'—'}</td>
+      <td style="padding:7px 10px;text-align:right;color:${saldoColor};font-family:'JetBrains Mono',monospace;font-weight:700">${saldo.toLocaleString('pt-BR',{maximumFractionDigits:3})}</td>
+      <td style="padding:7px 10px;text-align:center">${badge}</td>
+    </tr>`;
+  });
+  html += '</tbody></table></div>';
+  el.innerHTML = html;
+}
+
+function exportSaldoInsumosXLSX(){
+  impLoadFromStorage();
+  if(!insumosEstoqueData.length){ toast('Importe o estoque de insumos primeiro','err'); return; }
+  const consumoMap = calcConsumoInsumosPorProgramacao();
+  const data = [['Insumo','Unidade','Estoque Atual','Consumo Programado','Saldo Final','Status']];
+  insumosEstoqueData.forEach(ins => {
+    let consumoFinal = consumoMap[ins.insumo]?.total || 0;
+    const saldo = ins.quantidade - consumoFinal;
+    const status = saldo < 0 ? 'Déficit' : saldo < ins.quantidade*0.15 ? 'Baixo' : 'OK';
+    data.push([ins.insumo, ins.unidade, ins.quantidade, consumoFinal, saldo, status]);
+  });
+  const wb = XLSX.utils.book_new();
+  const ws = XLSX.utils.aoa_to_sheet(data);
+  XLSX.utils.book_append_sheet(wb, ws, 'Saldo Insumos');
+  XLSX.writeFile(wb, `saldo_insumos_${dateStr(new Date())}.xlsx`);
+  toast('Excel exportado!','ok');
 }
 
 function apiTestarConexao(){
@@ -5875,13 +6164,36 @@ function gerarProgAutomarica(){
       const cobProjetadaReal = item.demandaDiaria > 0
         ? parseFloat(((item.estoque + cxAlocar) / item.demandaDiaria).toFixed(1))
         : 999;
+
+      // Validação de insumos
+      const fichaTec = FICHA_TECNICA.find(f => String(f.cod)===String(item.cod) || f.desc===item.prod)
+                    || (typeof fichaTecnicaData!=='undefined' ? fichaTecnicaData.find(f => String(f.cod)===String(item.cod) || f.desc===item.prod) : null);
+      let insumosStatus = [];
+      let temFichasTecnica = !!(fichaTec && fichaTec.insumos && fichaTec.insumos.length);
+      let insumosOk = true;
+      let insumosFaltando = [];
+      if(temFichasTecnica && insumosEstoqueData.length > 0){
+        insumosStatus = fichaTec.insumos.map(ins => {
+          const consumo = (ins.qty||0) * cxAlocar;
+          const estoqueAtual = getEstoqueInsumo(ins.insumo);
+          const saldo = estoqueAtual != null ? estoqueAtual - consumo : null;
+          const falta = saldo != null && saldo < 0;
+          if(falta){ insumosOk = false; insumosFaltando.push({ nome: ins.insumo, consumo, estoqueAtual, saldo, deficit: Math.abs(saldo) }); }
+          return { nome: ins.insumo, consumo, estoqueAtual, saldo, falta };
+        }).filter(i => i.consumo > 0);
+      }
+
       paResultados.push({
         ...item,
         hrsAlocadas: parseFloat(hrsAlocar.toFixed(2)),
         cxAlocadas: cxAlocar,
         pctMaquina: parseFloat(pctUsado.toFixed(1)),
         cobProjetada: cobProjetadaReal,
-        diasDist
+        diasDist,
+        insumosStatus,
+        insumosOk,
+        insumosFaltando,
+        temFichasTecnica
       });
     });
   }
@@ -5953,6 +6265,7 @@ function renderProgAutomaticaResultado(){
     const maqHrs  = items.reduce((a,p)=>a+p.hrsAlocadas,0);
     const maqCox  = items.reduce((a,p)=>a+p.cxAlocadas,0);
     const maqCrit = items.filter(p=>p.risco==='critico').length;
+    const maqSemInsumo = items.filter(p=>!p.insumosOk).length;
     const semanaSel = document.getElementById('pa-semana-sel')?.value;
     const monday = semanaSel ? new Date(semanaSel+'T12:00:00') : getWeekMonday(new Date());
     const maqWeekHrs = weekHrsForMachine(maq, monday);
@@ -5962,6 +6275,7 @@ function renderProgAutomaticaResultado(){
         <div style="display:flex;align-items:center;gap:10px">
           <span class="ins-maq-title">🏭 ${maq}</span>
           ${maqCrit>0?`<span class="risk-tag risk-critico">🔴 ${maqCrit} crítico(s)</span>`:''}
+          ${maqSemInsumo>0?`<span style="background:rgba(255,71,87,.18);color:var(--red);padding:2px 8px;border-radius:6px;font-size:11px;font-weight:700">⚠️ ${maqSemInsumo} sem insumo</span>`:''}
         </div>
         <div style="display:flex;align-items:center;gap:14px;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text2)">
           <span>${maqCox} cx · ${fmtHrs(maqHrs)} · ${pctTotal}% da semana</span>
@@ -5980,13 +6294,66 @@ function renderProgAutomaticaResultado(){
             <th>Tempo</th>
             <th>% Máquina</th>
             <th>Cob. Pós-Prod.</th>
+            <th>Insumos</th>
             <th>Distribuição na Semana</th>
           </tr></thead>
-          <tbody>${items.map(p=>{
+          <tbody>${items.map((p,pi)=>{
             const cobColor = p.risco==='critico'?'var(--red)':p.risco==='alto'?'var(--warn)':p.risco==='medio'?'var(--cyan)':'var(--green)';
             const cobProjStr = p.cobProjetada < 900 ? p.cobProjetada+'d' : '∞';
             const dayPills = (p.diasDist||[]).map(d=>`<span class="pa-day-pill">${d.dayName} ${d.cx}cx</span>`).join('');
-            return `<tr>
+            const rowBg = !p.insumosOk ? 'background:rgba(255,71,87,.06);' : '';
+            const rowBorder = !p.insumosOk ? 'border-left:3px solid var(--red);' : '';
+
+            // Badge de insumos
+            let insBadge = '';
+            if(!p.temFichasTecnica){
+              insBadge = `<span style="background:rgba(255,179,0,.12);color:var(--warn);padding:2px 6px;border-radius:4px;font-size:10px">Sem ficha</span>`;
+            } else if(!insumosEstoqueData.length){
+              insBadge = `<span style="background:rgba(255,255,255,.06);color:var(--text3);padding:2px 6px;border-radius:4px;font-size:10px">Sem estoque MP</span>`;
+            } else if(!p.insumosOk){
+              insBadge = `<span style="cursor:pointer;background:rgba(255,71,87,.2);color:var(--red);padding:2px 7px;border-radius:4px;font-size:10px;font-weight:700" onclick="paToggleInsumos('pa-ins-${maq}-${pi}')">⚠️ Falta insumo ▾</span>`;
+            } else {
+              insBadge = `<span style="cursor:pointer;background:rgba(46,201,122,.1);color:var(--green);padding:2px 7px;border-radius:4px;font-size:10px" onclick="paToggleInsumos('pa-ins-${maq}-${pi}')">✅ OK ▾</span>`;
+            }
+
+            // Detalhes de insumos (colapsável)
+            let insDetail = '';
+            if(p.insumosStatus && p.insumosStatus.length){
+              insDetail = `<tr id="pa-ins-${maq}-${pi}" style="display:none">
+                <td colspan="11" style="padding:0">
+                  <div style="background:var(--s2);border-top:1px solid var(--border);border-bottom:1px solid var(--border);padding:10px 16px">
+                    <div style="font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--text3);margin-bottom:8px;font-weight:700">Consumo de Insumos — ${p.prod}</div>
+                    <table style="width:100%;border-collapse:collapse;font-size:11px">
+                      <thead><tr style="background:rgba(255,255,255,.03)">
+                        <th style="padding:5px 8px;text-align:left;color:var(--text3);font-size:10px">Insumo</th>
+                        <th style="padding:5px 8px;text-align:right;color:var(--warn);font-size:10px">Necessário</th>
+                        <th style="padding:5px 8px;text-align:right;color:var(--cyan);font-size:10px">Estoque Atual</th>
+                        <th style="padding:5px 8px;text-align:right;color:var(--text3);font-size:10px">Saldo Final</th>
+                      </tr></thead>
+                      <tbody>${p.insumosStatus.map(ins => {
+                        const sc = ins.falta ? 'var(--red)' : 'var(--green)';
+                        const rowBg2 = ins.falta ? 'background:rgba(255,71,87,.07)' : '';
+                        const estoqueStr = ins.estoqueAtual != null ? ins.estoqueAtual.toLocaleString('pt-BR',{maximumFractionDigits:3}) : '—';
+                        const saldoStr = ins.saldo != null ? ins.saldo.toLocaleString('pt-BR',{maximumFractionDigits:3}) : '—';
+                        return `<tr style="${rowBg2}">
+                          <td style="padding:5px 8px;color:var(--text)">${ins.nome}</td>
+                          <td style="padding:5px 8px;text-align:right;color:var(--warn);font-family:'JetBrains Mono',monospace">${ins.consumo.toLocaleString('pt-BR',{maximumFractionDigits:3})}</td>
+                          <td style="padding:5px 8px;text-align:right;color:var(--cyan);font-family:'JetBrains Mono',monospace">${estoqueStr}</td>
+                          <td style="padding:5px 8px;text-align:right;color:${sc};font-family:'JetBrains Mono',monospace;font-weight:700">${saldoStr}${ins.falta?' ⚠️':''}</td>
+                        </tr>`;
+                      }).join('')}</tbody>
+                    </table>
+                    ${p.insumosFaltando && p.insumosFaltando.length ? `
+                    <div style="margin-top:8px;padding:8px 10px;background:rgba(255,71,87,.1);border:1px solid rgba(255,71,87,.3);border-radius:6px;font-size:11px">
+                      <div style="color:var(--red);font-weight:700;margin-bottom:4px">⛔ Insumos insuficientes para produzir ${p.cxAlocadas} cx:</div>
+                      ${p.insumosFaltando.map(f=>`<div style="color:var(--red);padding:2px 0"><strong>${f.nome}</strong>: necessário ${f.consumo.toLocaleString('pt-BR',{maximumFractionDigits:3})} / estoque ${f.estoqueAtual!=null?f.estoqueAtual.toLocaleString('pt-BR',{maximumFractionDigits:3}):'—'} / <strong>déficit ${f.deficit.toLocaleString('pt-BR',{maximumFractionDigits:3})}</strong></div>`).join('')}
+                    </div>`:'' }
+                  </div>
+                </td>
+              </tr>`;
+            }
+
+            return `<tr style="${rowBg}${rowBorder}">
               <td><div style="font-weight:600;font-size:12px">${p.prod}</div><div style="font-size:10px;color:var(--text3);font-family:'JetBrains Mono',monospace">Cód: ${p.cod||'—'}</div></td>
               <td style="max-width:200px;white-space:normal;line-height:1.5;font-size:11px">${p.motivo}</td>
               <td>${p.estoque != null ? p.estoque.toLocaleString('pt-BR') : '—'}</td>
@@ -5996,14 +6363,27 @@ function renderProgAutomaticaResultado(){
               <td>${fmtHrs(p.hrsAlocadas)}</td>
               <td><span style="color:${p.pctMaquina>50?'var(--warn)':'var(--text2)'}">${p.pctMaquina}%</span><div class="cov-bar-track" style="margin-top:3px"><div class="cov-bar-fill" style="width:${Math.min(100,p.pctMaquina)}%;background:${p.pctMaquina>50?'var(--warn)':'var(--cyan)'}"></div></div></td>
               <td style="color:var(--green);font-weight:700">${cobProjStr}</td>
+              <td>${insBadge}</td>
               <td style="white-space:normal">${dayPills||'—'}</td>
-            </tr>`;
+            </tr>${insDetail}`;
           }).join('')}</tbody>
         </table>
       </div>
     </div>`;
   }
   el.innerHTML = html;
+}
+
+function paToggleInsumos(id){
+  const el = document.getElementById(id);
+  if(!el) return;
+  el.style.display = el.style.display === 'none' ? 'table-row' : 'none';
+}
+
+function progToggleInsumos(id){
+  const el = document.getElementById(id);
+  if(!el) return;
+  el.style.display = el.style.display === 'none' ? 'table-row' : 'none';
 }
 
 async function aplicarProgAutomaticaNoGantt(){
@@ -6187,6 +6567,9 @@ window.apiTestarConexao = apiTestarConexao;
 window.apiSincronizar = apiSincronizar;
 window.importEstoque = importEstoque;
 window.importProjecao = importProjecao;
+window.importEstoqueInsumos = importEstoqueInsumos;
+window.renderSaldoInsumos = renderSaldoInsumos;
+window.exportSaldoInsumosXLSX = exportSaldoInsumosXLSX;
 window.limparHistoricoImportacao = limparHistoricoImportacao;
 
 
@@ -6211,3 +6594,5 @@ window.renderProgAutomaticaResultado = renderProgAutomaticaResultado;
 window.aplicarProgAutomaticaNoGantt = aplicarProgAutomaticaNoGantt;
 window.simularCenario = simularCenario;
 window.pa_onSemanaChange = pa_onSemanaChange;
+window.paToggleInsumos = paToggleInsumos;
+window.progToggleInsumos = progToggleInsumos;
