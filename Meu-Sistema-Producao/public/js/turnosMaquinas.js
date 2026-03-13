@@ -51,7 +51,8 @@ function _saveCfg(cfg) {
 }
 
 function _defaultCfg(maquinas, horasPorTurno) {
-  const cfg = { horasPorTurno: horasPorTurno || 8, maquinas: {} };
+  const hpt = (typeof horasPorTurno === 'number' && horasPorTurno > 0) ? horasPorTurno : 8;
+  const cfg = { horasPorTurno: hpt, maquinas: {} };
   (maquinas || []).forEach(m => {
     cfg.maquinas[m] = { turnos: {} };
     for (let d = 0; d < 7; d++) {
@@ -83,7 +84,8 @@ function getTurnosMaquinaDia(maq, diaSemana) {
  */
 function getHorasPorTurno() {
   const cfg = _loadCfg();
-  return (cfg && cfg.horasPorTurno) ? cfg.horasPorTurno : 8;
+  const v = cfg && cfg.horasPorTurno;
+  return (typeof v === 'number' && v > 0) ? v : 8;
 }
 
 /**
@@ -152,7 +154,10 @@ function initTurnosCfgForMaquinas(maquinas, horasPorTurno) {
     return;
   }
   if (!cfg.maquinas) cfg.maquinas = {};
-  if (horasPorTurno) cfg.horasPorTurno = horasPorTurno;
+  // Only update horasPorTurno if it's a valid number (never an array)
+  if (typeof horasPorTurno === 'number' && horasPorTurno > 0) cfg.horasPorTurno = horasPorTurno;
+  // Ensure stored value is always a valid number
+  if (typeof cfg.horasPorTurno !== 'number' || !(cfg.horasPorTurno > 0)) cfg.horasPorTurno = 8;
   // Garante que toda máquina nova tenha config
   (maquinas || []).forEach(m => {
     if (!cfg.maquinas[m]) {
@@ -216,7 +221,12 @@ const DAY_LABELS_TM = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
 function renderTurnosMaquinas(maquinas, horasPorTurno) {
   initTurnosCfgForMaquinas(maquinas, horasPorTurno);
   const cfg = _loadCfg();
-  const hpt = cfg.horasPorTurno || 8;
+  // Garante que hpt seja sempre um número válido
+  let hpt = cfg && cfg.horasPorTurno;
+  if (typeof hpt !== 'number' || !(hpt > 0)) {
+    hpt = 8;
+    if (cfg) { cfg.horasPorTurno = 8; _saveCfg(cfg); }
+  }
 
   // Target: scontent-turnos (the bare container)
   const container = document.getElementById('scontent-turnos');
