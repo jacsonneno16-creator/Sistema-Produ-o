@@ -3,7 +3,7 @@ import { auth, db as firestoreDB } from './firebase-config.js';
 import {
   initAuth, login, logout, currentUser,
   can, canAccess, perfilBadge, MODULOS,
-  criarUsuarioSistema, listarUsuariosSistema, atualizarUsuarioSistema,
+  criarUsuarioSistema, listarUsuariosSistema, atualizarUsuarioSistema, excluirUsuarioSistema,
   listarFuncionariosProducao, salvarFuncionarioProducao, excluirFuncionarioProducao,
   enviarResetSenha, adminForcaReset
 } from './auth.js';
@@ -4836,6 +4836,7 @@ async function renderUsuariosSistema(){
           <button onclick="openEditUsuario('${u.uid}')" style="background:var(--s2);border:1px solid var(--border);border-radius:7px;padding:6px 11px;font-size:12px;color:var(--text2);cursor:pointer" title="Editar">✏️</button>
           ${podeAdmin?`<button onclick="adminEnviarResetUI('${u.email}','${(u.nome||'').replace(/'/g,"\'")}')" style="background:rgba(242,101,34,.1);border:1px solid rgba(242,101,34,.3);border-radius:7px;padding:6px 11px;font-size:11px;color:var(--cyan);cursor:pointer" title="Forçar redefinição de senha">🔑 Reset</button>`:''}
           <button onclick="toggleUsuarioAtivo('${u.uid}',${!u.ativo})" style="background:${u.ativo?'var(--s2)':'rgba(46,204,113,.15)'};border:1px solid var(--border);border-radius:7px;padding:6px 12px;font-size:12px;color:${u.ativo?'var(--text2)':'var(--green)'};font-family:'Space Grotesk',sans-serif;cursor:pointer">${u.ativo?'Desativar':'Ativar'}</button>
+          ${podeAdmin?`<button onclick="confirmarExcluirUsuario('${u.uid}','${(u.nome||u.email||'').replace(/'/g,"\\'")}')" style="background:rgba(255,71,87,.1);border:1px solid rgba(255,71,87,.35);border-radius:7px;padding:6px 11px;font-size:12px;color:var(--red);cursor:pointer" title="Excluir usuário">🗑</button>`:''}
         </div>`:''}
       </div>
     </div>`;
@@ -4979,6 +4980,21 @@ async function toggleUsuarioAtivo(uid,ativo){
   await atualizarUsuarioSistema(uid,{ativo});
   await renderUsuariosSistema();
   toast(ativo?'Usuário ativado.':'Usuário desativado.', ativo?'ok':'warn');
+}
+
+async function confirmarExcluirUsuario(uid, nome){
+  if(!can('usuarios','administrar')){ toast('Sem permissão para excluir usuário.','err'); return; }
+  // Impede excluir a si mesmo
+  const { currentUser: cu } = await import('./auth.js');
+  if(cu && cu.uid === uid){ toast('Você não pode excluir sua própria conta.','err'); return; }
+  if(!confirm(`⚠️ Excluir o usuário "${nome}"?\n\nEsta ação remove o perfil e permissões permanentemente.\nO acesso ao sistema será bloqueado imediatamente.\n\nEsta ação não pode ser desfeita.`)) return;
+  try{
+    await excluirUsuarioSistema(uid);
+    toast(`Usuário "${nome}" excluído com sucesso.`,'ok');
+    await renderUsuariosSistema();
+  }catch(e){
+    alert('Erro ao excluir usuário: '+(e.message||e));
+  }
 }
 
 // ── Jornada de Trabalho ──
@@ -6486,6 +6502,7 @@ window.closeUsuarioModal = closeUsuarioModal;
 window.saveUsuarioModal = saveUsuarioModal;
 window.toggleUsuarioAtivo = toggleUsuarioAtivo;
 window.renderUsuariosSistema = renderUsuariosSistema;
+window.confirmarExcluirUsuario = confirmarExcluirUsuario;
 window.openReorderModal = openReorderModal;
 window.openSettings = openSettings;
 window.carregarMaquinasFirestore = carregarMaquinasFirestore;

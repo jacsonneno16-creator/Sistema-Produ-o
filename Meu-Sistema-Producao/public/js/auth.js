@@ -183,6 +183,16 @@ export async function atualizarUsuarioSistema(uid, dados) {
 }
 
 /**
+ * Exclui o registro do usuário no Firestore.
+ * Nota: a conta no Firebase Auth só pode ser excluída via Admin SDK (backend).
+ * Esta função remove o perfil/permissões — o usuário não conseguirá mais logar
+ * pois o sistema não encontrará seu registro no Firestore.
+ */
+export async function excluirUsuarioSistema(uid) {
+  await deleteDoc(doc(db, "usuarios", uid));
+}
+
+/**
  * Admin força reset de senha: envia e-mail de redefinição para o usuário.
  * Não define a senha diretamente — o usuário recebe o link.
  */
