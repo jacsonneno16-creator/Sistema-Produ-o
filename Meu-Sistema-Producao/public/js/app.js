@@ -537,6 +537,14 @@ async function reload() {
   renderDashboard();
   renderTable();
   populateWeekFilters();
+  // Mantém o select de filtro de máquinas atualizado com as máquinas que têm registros
+  const sMaqSel = document.getElementById('s-maq');
+  if(sMaqSel) {
+    const currentVal = sMaqSel.value;
+    const maqs = [...new Set(records.map(r=>r.maquina).filter(Boolean))].sort();
+    sMaqSel.innerHTML = '<option value="">Todas as máquinas</option>' +
+      maqs.map(m=>`<option value="${m}"${m===currentVal?' selected':''}>${m}</option>`).join('');
+  }
   if(!ganttManualNav) {
     const sorted = [...records].filter(r=>r.dtDesejada||r.dtSolicitacao)
       .sort((a,b)=>{const da=b.dtDesejada||b.dtSolicitacao||'';const db2=a.dtDesejada||a.dtSolicitacao||'';return da.localeCompare(db2);});
@@ -2975,7 +2983,7 @@ function renderFichaTecnica(){
       <td style="text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--warn)">${p.pc_min}</td>
       <td style="padding:4px 12px">${insHtml}</td>
       <td style="text-align:center">
-        <button class="btn btn-edit" onclick="editFichaByDesc(this.dataset.desc)" data-desc="${p.desc.trim().replace(/"/g,'&quot;').replace(/'/g,'&#39;')}" style="padding:4px 9px" title="Editar">${PENCIL_SVG}</button>
+        <button class="btn btn-edit" onclick="editFichaByCod(this.dataset.cod)" data-cod="${p.cod}" style="padding:4px 9px" title="Editar">${PENCIL_SVG}</button>
       </td>
     </tr>`;
   });
@@ -3062,16 +3070,16 @@ function fteAddRow(){
   container.appendChild(div);
 }
 
-// Abre o modal de edição usando desc como chave (mesmas insumos aplicadas a todas as máquinas)
-function editFichaByDesc(desc){
-  const p = fichaTecnicaData.find(x=>x.desc.trim()===desc.trim());
+// Abre o modal de edição usando cod como chave (robusto mesmo que descrição mude)
+function editFichaByCod(cod){
+  const codNum = parseInt(cod);
+  const p = fichaTecnicaData.find(x=>x.cod===codNum);
   if(!p) return;
 
   document.getElementById('ft-edit-modal')?.remove();
   const modal=document.createElement('div');
   modal.className='conf-overlay on';
   modal.id='ft-edit-modal';
-  const safeDesc = p.desc.replace(/`/g,'\`').replace(/\\$/g,'$');
   modal.innerHTML=`
     <div class="modal-box" style="max-width:720px">
       <div class="modal-hd">
@@ -3105,7 +3113,7 @@ function editFichaByDesc(desc){
       </div>
       <div class="modal-ft">
         <button class="btn btn-ghost" onclick="document.getElementById('ft-edit-modal').remove()">Cancelar</button>
-        <button class="btn btn-primary" onclick="saveFichaByDesc(this.dataset.desc)" data-desc="${desc.replace(/"/g,'&quot;').replace(/'/g,'&#39;')}">
+        <button class="btn btn-primary" onclick="saveFichaByCod(this.dataset.cod)" data-cod="${p.cod}">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
           Salvar
         </button>
@@ -3114,8 +3122,9 @@ function editFichaByDesc(desc){
   document.body.appendChild(modal);
 }
 
-// Salva e propaga para TODOS os registros com a mesma descrição (multi-máquina)
-function saveFichaByDesc(desc){
+// Salva usando cod como chave — propaga para TODOS os registros com o mesmo cod (multi-máquina)
+function saveFichaByCod(cod){
+  const codNum = parseInt(cod);
   const newUnid = parseInt(document.getElementById('fte-unid').value)||1;
   const newPcMin = parseFloat(document.getElementById('fte-pcmin').value)||1;
   const rows = document.getElementById('fte-insumos-list').querySelectorAll('.fte-ins-row');
@@ -3126,10 +3135,10 @@ function saveFichaByDesc(desc){
     if(name) newInsumos.push({insumo:name, qty});
   });
 
-  // Atualiza TODOS os registros com o mesmo desc (pode estar em múltiplas máquinas)
+  // Atualiza TODOS os registros com o mesmo cod (pode estar em múltiplas máquinas)
   let count = 0;
   fichaTecnicaData.forEach(p=>{
-    if(p.desc.trim()===desc.trim()){
+    if(p.cod===codNum){
       p.unid = newUnid;
       p.pc_min = newPcMin;
       p.insumos = newInsumos.map(i=>({...i})); // cópia independente
@@ -3145,10 +3154,13 @@ function saveFichaByDesc(desc){
   toast(`Produto atualizado em ${count} registro(s). Insumos recalculados.`, 'ok');
 }
 
-// Mantém editFicha(cod) por compatibilidade com chamadas legadas
+// Compatibilidade legada — editFicha(cod) e editFichaByDesc(desc) redirecionam para editFichaByCod
 function editFicha(cod){
-  const p = fichaTecnicaData.find(x=>x.cod===cod);
-  if(p) editFichaByDesc(p.desc);
+  editFichaByCod(cod);
+}
+function editFichaByDesc(desc){
+  const p = fichaTecnicaData.find(x=>x.desc.trim()===desc.trim());
+  if(p) editFichaByCod(p.cod);
 }
 // ===== PRODUZIDO =====
 const APON_HOURS = [7,8,9,10,11,12,13,14,15,16,17];
@@ -4553,7 +4565,7 @@ function renderFichaTecnicaCfg() {
       </div>
       <div class="ft-cfg-panel" style="display:none;padding:10px 16px 12px 36px;background:rgba(0,0,0,.15)">
         <div style="margin-bottom:8px">${insHtml}</div>
-        <button onclick="event.stopPropagation();editFichaByDesc(this.dataset.desc)" data-desc="${safeDesc}"
+        <button onclick="event.stopPropagation();editFichaByCod(this.dataset.cod)" data-cod="${p.cod}"
                 style="background:rgba(0,212,255,.1);border:1px solid rgba(0,212,255,.25);border-radius:6px;padding:5px 12px;font-size:11px;color:var(--cyan);cursor:pointer;font-family:'Space Grotesk',sans-serif;display:inline-flex;align-items:center;gap:6px">
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
           Editar insumos e quantidades
@@ -5244,6 +5256,7 @@ function switchTabSidebar(name) {
   };
   if(bc) bc.innerHTML = `<span>PROGPROD MES</span> <span style="opacity:.4">/</span> <span class="cur">${labels[name]||name}</span>`;
   // Tab-specific renders
+  if(name==='programacao') renderTable();
   if(name==='maquinas') renderMaquinas();
   if(name==='gantt') renderGantt();
   if(name==='apontamento'){ if(!prodBaseMonday) prodToday(); else renderProduzido(); }
@@ -6661,8 +6674,9 @@ window.ganttSetWeek = ganttSetWeek;
 window.aponSaveFunc = aponSaveFunc;
 window.aponRecalcRow = aponRecalcRow;
 window.pdFinalize = pdFinalize;
-window.editFichaByDesc = editFichaByDesc;
-window.saveFichaByDesc = saveFichaByDesc;
+window.editFichaByCod = editFichaByCod;
+window.saveFichaByCod = saveFichaByCod;
+window.editFichaByDesc = editFichaByDesc;  // compat legado
 window.reactivateFuncionario = reactivateFuncionario;
 window.openDeactivate = openDesativarFuncProd;
 window.deleteFuncionario = deleteFuncionario;
