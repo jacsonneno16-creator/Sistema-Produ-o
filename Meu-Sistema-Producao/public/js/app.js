@@ -6469,6 +6469,7 @@ window.closeFuncModal = closeFuncModal;
 window.closeReorderModal = closeReorderModal;
 window.closeSettings = closeSettings;
 window.settingsNav = settingsNav;
+window.toggleSnavGroup = toggleSnavGroup;
 window.handleImportZip = handleImportZip;
 window.confirmClearAll = confirmClearAll;
 window.confirmDeactivate = confirmDeactivate;
