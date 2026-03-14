@@ -3069,7 +3069,7 @@ function editFichaByDesc(desc){
 
   document.getElementById('ft-edit-modal')?.remove();
   const modal=document.createElement('div');
-  modal.className='overlay on';
+  modal.className='conf-overlay on';
   modal.id='ft-edit-modal';
   const safeDesc = p.desc.replace(/`/g,'\`').replace(/\\$/g,'$');
   modal.innerHTML=`
