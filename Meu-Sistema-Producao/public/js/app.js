@@ -3008,6 +3008,7 @@ function editFichaByCod(cod){
   const modal=document.createElement('div');
   modal.className='conf-overlay on';
   modal.id='ft-edit-modal';
+  modal.style.zIndex = '1100'; // acima da tela de Configurações (z-index ~1000)
   modal.innerHTML=`
     <div class="modal-box" style="max-width:720px">
       <div class="modal-hd">
