@@ -1307,20 +1307,48 @@ function renderMaquinas(){
 
   const map={};
   MAQUINAS.forEach(m=>map[m]={items:[],caixas:0,min:0});
-  filteredRecs.forEach((r,idx,arr)=>{
+  filteredRecs.forEach(r=>{
     if(!map[r.maquina]) map[r.maquina]={items:[],caixas:0,min:0};
     map[r.maquina].items.push(r);
     map[r.maquina].caixas+=r.qntCaixas||0;
-    const p=getProdInfo(r);
-    const totalUnid=r.qntUnid||(r.qntCaixas*(p.unid||1));
-    map[r.maquina].min+=totalUnid/p.pc_min;
-    const prevSameMaq=arr.slice(0,idx).filter(x=>x.maquina===r.maquina).pop();
-    if(prevSameMaq) map[r.maquina].min+=getSetupMin(r.maquina, prevSameMaq.produto, r.produto);
   });
+  // Usar buildSchedule para calcular horas REAIS por máquina na semana de refMon
+  // (distribui corretamente pelos blocos/turnos configurados)
+  if(typeof buildSchedule==='function'){
+    const {schedule:sched} = buildSchedule(refMon);
+    MAQUINAS.forEach(m=>{
+      const entries=sched[m]||[];
+      let minTot=0;
+      entries.forEach(({segments,setupSegments})=>{
+        segments.forEach(s=>{ minTot+=s.hrsNoDia*60; });
+        (setupSegments||[]).forEach(s=>{ minTot+=s.setupMin; });
+      });
+      map[m].min=minTot;
+    });
+  } else {
+    // fallback: soma simples se buildSchedule não disponível
+    filteredRecs.forEach((r,idx,arr)=>{
+      const p=getProdInfo(r);
+      const totalUnid=r.qntUnid||(r.qntCaixas*(p.unid||1));
+      if(p.pc_min) map[r.maquina].min+=totalUnid/p.pc_min;
+      const prevSameMaq=arr.slice(0,idx).filter(x=>x.maquina===r.maquina).pop();
+      if(prevSameMaq) map[r.maquina].min+=getSetupMin(r.maquina, prevSameMaq.produto, r.produto);
+    });
+  }
 
   // Per-machine capacity: use real machine hours from turnosMaquinas config
+  // Determine the reference monday: from filter, from records, or current week
+  const refMon = maqWeekFilter
+    ? new Date(maqWeekFilter + 'T12:00:00')
+    : (filteredRecs.length > 0
+        ? (() => {
+            const sorted2 = [...filteredRecs].filter(r=>r.dtDesejada||r.dtSolicitacao)
+              .sort((a,b)=>(b.dtDesejada||b.dtSolicitacao||'').localeCompare(a.dtDesejada||a.dtSolicitacao||''));
+            return getWeekMonday(new Date((sorted2[0].dtDesejada||sorted2[0].dtSolicitacao)+'T12:00:00'));
+          })()
+        : getWeekMonday(new Date()));
   function maqWeekHrs(maq){
-    if(mon) return weekHoursMaq(mon, maq);
+    if(typeof weekHoursMaq === 'function') return weekHoursMaq(refMon, maq);
     return WEEK_AVAIL_HRS;
   }
   function maqPct(usedHrs, maq){
@@ -1334,7 +1362,7 @@ function renderMaquinas(){
   if(maqViewMode==='list'){
     let html=`<div class="maq-list-view">
       <div class="maq-list-row" style="background:var(--s2);font-family:'JetBrains Mono',monospace;font-size:10px;text-transform:uppercase;letter-spacing:.8px;color:var(--text3)">
-        <span>Máquina</span><span>Ocupação da Semana</span><span>Caixas</span><span>Prog. / Disp.</span><span>%</span>
+        <span>Máquina</span><span>Ocupação da Semana</span><span>Caixas</span><span>Prog. / Disp.</span><span>% Máquina</span>
       </div>`;
     MAQUINAS.forEach(m=>{
       const d=map[m];
@@ -1938,19 +1966,19 @@ function renderGantt(){
   const MAQ_W=72, LABEL_W=320, QTY_W=48, TEMPO_W=52, SETUP_W=52, TOTMAQ_W=68, DQTY_W=36;
   const gridCols=`${MAQ_W}px ${LABEL_W}px ${QTY_W}px ${TEMPO_W}px ${SETUP_W}px ${TOTMAQ_W}px repeat(7,1fr) repeat(7,${DQTY_W}px)`;
 
-  // Pre-calculate total hours per machine
+  // Pre-calculate total SCHEDULED hours per machine for THIS WEEK only
+  // Uses the segments from buildSchedule which already distribute by shift block
   const maqTotalHrs={};
   for(const maq of MAQUINAS){
     const entries=schedule[maq];
     if(!entries||!entries.length){maqTotalHrs[maq]=0;continue;}
     let tot=0;
-    for(const {rec,setupMin} of entries){
-      const p=getProdInfo(rec);
-      const totalUnid=rec.qntUnid||(rec.qntCaixas*p.unid);
-      if(p.pc_min) tot+=totalUnid/p.pc_min/60;
-      if(setupMin) tot+=setupMin/60;
+    for(const {segments,setupSegments} of entries){
+      // Sum only hours that fall within this week's days
+      for(const seg of segments) tot+=seg.hrsNoDia;
+      for(const seg of setupSegments) tot+=seg.setupMin/60;
     }
-    maqTotalHrs[maq]=tot;
+    maqTotalHrs[maq]=Math.round(tot*10)/10;
   }
 
   // Helper: get shift blocks for a machine+day (uses turnosMaquinas if available)
@@ -1970,7 +1998,7 @@ function renderGantt(){
     <div class="g-head-label" style="font-size:9px">Qtd<br>cx</div>
     <div class="g-head-label" style="font-size:9px">Tempo<br>h</div>
     <div class="g-head-label" style="font-size:9px">Set Up<br>h</div>
-    <div class="g-head-label" style="font-size:9px">Cap.<br>Sem. h</div>`;
+    <div class="g-head-label" style="font-size:9px">H.<br>Prog.</div>`;
   days.forEach(d=>{
     const isToday=dateStr(d)===today;
     const isWknd=hoursOnDay(d)===0;
@@ -2050,10 +2078,11 @@ function renderGantt(){
       const setupColor=setupMin>0?'var(--orange)':'var(--text3)';
       html+=`<div style="display:flex;align-items:center;justify-content:center;border-left:1px solid var(--border);background:var(--s1);font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:${setupMin>0?'600':'400'};color:${setupColor};padding:4px 2px;text-align:center" title="Setup: ${setupStr}">${setupStr}</div>`;
 
-      // Cap. Sem. col — real machine week capacity (only first row of machine)
-      const weekCapStr=firstRowOfMaq?`${maqCapH}h`:'';
+      // H. Prog. col — total scheduled hours for this machine this week (only first row)
+      const weekProgStr=firstRowOfMaq?fmtHrs(maqTotH):'';
       const weekCapColor=maqTotH>maqCapH?'var(--red)':maqTotH>(maqCapH*0.85)?'var(--warn)':'var(--cyan)';
-      html+=`<div style="display:flex;align-items:center;justify-content:center;border-left:2px solid var(--border2);background:var(--s1);font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:700;color:${firstRowOfMaq?weekCapColor:'var(--text4)'};padding:4px 2px;text-align:center">${weekCapStr}</div>`;
+      const weekProgTitle=firstRowOfMaq?`Programado: ${fmtHrs(maqTotH)} / Disponível: ${maqCapH}h`:'';
+      html+=`<div style="display:flex;align-items:center;justify-content:center;border-left:2px solid var(--border2);background:var(--s1);font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:700;color:${firstRowOfMaq?weekCapColor:'var(--text4)'};padding:4px 2px;text-align:center" title="${weekProgTitle}">${weekProgStr}</div>`;
       firstRowOfMaq=false;
 
       // ── Day bar cells: render per-shift bars ──
@@ -5246,6 +5275,13 @@ function switchTabSidebar(name) {
   document.querySelectorAll('.sb-item[id^="sb-"]').forEach(el => el.classList.remove('active'));
   const sbItem = document.getElementById('sb-' + name);
   if(sbItem) sbItem.classList.add('active');
+  // Update topbar tab buttons (.tab-btn.on)
+  document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('on'));
+  // Match by tab name embedded in onclick attribute
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    const oc = btn.getAttribute('onclick') || '';
+    if(oc.includes("'" + name + "'") || oc.includes('"' + name + '"')) btn.classList.add('on');
+  });
   // Update breadcrumb
   const bc = document.getElementById('tb-bc');
   const labels = {
