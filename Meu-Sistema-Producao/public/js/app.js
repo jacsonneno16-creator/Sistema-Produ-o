@@ -126,369 +126,17 @@ function normProd(s){
     .replace(/\bOBA\b/g,'OBA');
 }
 
-// Matriz de setup: [maquina] -> array de {produtos:[], matrix:[[min]]}
-// minutos = 0 → sem troca necessária; null = não mapeado (usa default)
-const SETUP_DATA = {
-  // SELGRON 01 (Selgron FM 5000 #1) — Coloríficos
-  'SELGRON 01': {
-    prods: [
-      'COLORIFICO COOP 80 G',
-      'COLORIFICO TERRINHA 1,01 KG',
-      'COLORIFICO TERRINHA 500 G',
-      'COLORIFICO TERRINHA 70 G',
-      'COLORIFICO MERCADAO 70 G',
-    ],
-    matrix: [
-    //  COOP80  1,01KG  500G  70G   MRK70
-       [0,      35,     35,   5,    5  ],  // COOP 80G
-       [35,     0,      10,   35,   35 ],  // 1,01KG
-       [35,     10,     0,    35,   35 ],  // 500G
-       [5,      35,     35,   0,    5  ],  // 70G TERRINHA (=Mercadao 70g)
-       [5,      35,     35,   5,    0  ],  // MERCADAO 70G
-    ]
-  },
+// Matriz de setup: agora vem exclusivamente do Firestore (coleção setup_maquinas).
+// SETUP_DATA mantido como objeto vazio — não contém mais dados estáticos.
+const SETUP_DATA = {};
 
-  // ALFATECK 14, 15, 16 — mesmos produtos
-  'ALFATECK 14': {
-    prods: [
-      'CANJICA BRANCA TERRINHA 400 G',
-      'ERVILHA PARTIDA TERRINHA 350 G',
-      'GRAO DE BICO TERRINHA 350 G',
-      'LENTILHA TERRINHA 350 G',
-      'MILHO PIPOCA TERRINHA 400 G',
-      'SAGU MANDIOCA TERRINHA 400 G',
-      'MILHO PIPOCA TERRINHA 1KG',
-    ],
-    matrix: [
-    //  CJB400  ERV350  GRB350  LEN350  MLP400  SAGU400 MLP1KG
-       [0,      8,      8,      8,      8,      8,      8  ],
-       [8,      0,      8,      8,      8,      8,      8  ],
-       [8,      8,      0,      8,      8,      8,      8  ],
-       [8,      8,      8,      0,      8,      8,      8  ],
-       [8,      8,      8,      8,      0,      8,      8  ],
-       [8,      8,      8,      8,      8,      0,      8  ],
-       [8,      8,      8,      8,      8,      8,      0  ],
-    ]
-  },
-  'ALFATECK 15': {
-    prods: [
-      'CANJICA BRANCA TERRINHA 400 G',
-      'ERVILHA PARTIDA TERRINHA 350 G',
-      'GRAO DE BICO TERRINHA 350 G',
-      'LENTILHA TERRINHA 350 G',
-      'MILHO PIPOCA TERRINHA 400 G',
-      'SAGU MANDIOCA TERRINHA 400 G',
-      'MILHO PIPOCA TERRINHA 1KG',
-    ],
-    matrix: [
-       [0,8,8,8,8,8,8],[8,0,8,8,8,8,8],[8,8,0,8,8,8,8],[8,8,8,0,8,8,8],[8,8,8,8,0,8,8],[8,8,8,8,8,0,8],[8,8,8,8,8,8,0],
-    ]
-  },
-  'ALFATECK 16': {
-    prods: [
-      'CANJICA BRANCA TERRINHA 400 G',
-      'ERVILHA PARTIDA TERRINHA 350 G',
-      'GRAO DE BICO TERRINHA 350 G',
-      'LENTILHA TERRINHA 350 G',
-      'MILHO PIPOCA TERRINHA 400 G',
-      'SAGU MANDIOCA TERRINHA 400 G',
-      'MILHO PIPOCA TERRINHA 1KG',
-    ],
-    matrix: [
-       [0,8,8,8,8,8,8],[8,0,8,8,8,8,8],[8,8,0,8,8,8,8],[8,8,8,0,8,8,8],[8,8,8,8,0,8,8],[8,8,8,8,8,0,8],[8,8,8,8,8,8,0],
-    ]
-  },
-
-  // GOLPACK 06 — Especiarias (Alecrim, Alho, Camomila, Cravo, etc.)
-  'GOLPACK 06': {
-    prods: [
-      'ALECRIM TERRINHA 06 G',
-      'ALHO DESID FLOCOS TERRINHA 25 G',
-      'ALHO DESIDRATADO GRANULADO TERRINHA 20 G',
-      'CAMOMILA COOP 10 G',
-      'CAMOMILA TERRINHA 06 G',
-      'CRAVO INDIA TERRINHA 10 G',
-      'CRAVO INDIA MERCADAO 10G',
-      'CANELA CASCA QUEBRADA TERRINHA 10 G',
-      'CANELA CASCA QUEBRADA MERCADAO 10 G',
-      'CANELA EM CASCA QUEBRADA COOP 25 G',
-    ],
-    matrix: [
-    //  ALC  FLC  GRN  CAM-C CAM-T CRV-T CRV-M CAN-T CAN-M CAN-C
-       [0,   20,  20,  20,   20,   20,   20,   20,   20,   20 ],  // Alecrim
-       [30,  0,   10,  30,   30,   30,   30,   30,   30,   30 ],  // Alho Flocos
-       [30,  15,  0,   30,   30,   30,   30,   30,   30,   30 ],  // Alho Granulado
-       [20,  20,  20,  0,    10,   20,   20,   20,   20,   20 ],  // Camomila COOP
-       [20,  20,  20,  10,   0,    20,   20,   20,   20,   20 ],  // Camomila Terrinha
-       [20,  30,  30,  20,   20,   0,    5,    20,   20,   20 ],  // Cravo Terrinha
-       [20,  30,  30,  20,   20,   5,    0,    20,   20,   20 ],  // Cravo Mercadao
-       [20,  20,  20,  20,   20,   20,   20,   0,    10,   10 ],  // Canela Casca T
-       [20,  20,  20,  20,   20,   20,   20,   10,   0,    10 ],  // Canela Casca M
-       [20,  20,  20,  20,   20,   20,   20,   10,   10,   0  ],  // Canela Casca C
-    ]
-  },
-
-  // IMAPACK 12 — Sagu, Tapioca, etc.
-  'IMAPACK 12': {
-    prods: [
-      'MILHO PIPOCA TERRINHA 400 G',
-      'SAGU MANDIOCA TERRINHA 400 G',
-      'TAPIOCA TERRINHA GRANULADA 400 G',
-      'CANJICA BRANCA TERRINHA 400 G',
-      'ERVILHA PARTIDA TERRINHA 350 G',
-      'GRAO DE BICO TERRINHA 350 G',
-      'LENTILHA TERRINHA 350 G',
-      'FEIJAO BRANCO TERRINHA PREMIUM 500G',
-    ],
-    matrix: [
-    //  MLP  SAGU  TAP  CJB   ERV   GRB   LEN   FJB
-       [0,   30,   30,  10,   10,   10,   10,   10 ],
-       [30,  0,    10,  30,   30,   30,   30,   30 ],
-       [30,  10,   0,   30,   30,   30,   30,   30 ],
-       [10,  30,   30,  0,    10,   10,   10,   10 ],
-       [10,  30,   30,  10,   0,    10,   10,   10 ],
-       [10,  30,   30,  10,   10,   0,    10,   10 ],
-       [10,  30,   30,  10,   10,   10,   0,    10 ],
-       [10,  30,   30,  10,   10,   10,   10,   0  ],
-    ]
-  },
-
-  // OLC 13 — Grãos 500g
-  'OLC 13': {
-    prods: [
-      'CANJICA AMARELA TERRINHA 500 G',
-      'CANJICA BRANCA COOP 500 G',
-      'CANJICA BRANCA TERRINHA 500 G',
-      'CANJIQUINHA XEREM TERRINHA 500 G',
-      'ERVILHA PARTIDA COOP 500 G',
-      'ERVILHA PARTIDA TERRINHA 500 G',
-      'FEIJAO BRANCO TERRINHA 500 G',
-      'GRAO DE BICO COOP 500 G',
-      'GRAO DE BICO TERRINHA 500 G',
-      'LENTILHA COOP 500 G',
-      'LENTILHA TERRINHA 500 G',
-      'MILHO DE PIPOCA COOP 500 G',
-      'MILHO PIPOCA TERRINHA 500 G',
-      'SAGU MANDIOCA TERRINHA 500 G',
-    ],
-    matrix: [
-    //  CJA  CJBC  CJBT  CJQX  ERVC  ERVT  FJB   GBC   GBT   LEC   LET   MLPC  MLPT  SAGU
-       [0,   10,   10,   10,   10,   10,   10,   10,   10,   10,   10,   10,   10,   10 ],
-       [10,  0,    10,   10,   10,   10,   10,   10,   10,   10,   10,   10,   10,   10 ],
-       [10,  10,   0,    10,   10,   10,   10,   10,   10,   10,   10,   10,   10,   10 ],
-       [10,  10,   10,   0,    10,   10,   10,   10,   10,   10,   10,   10,   10,   10 ],
-       [10,  10,   10,   10,   0,    10,   10,   10,   10,   10,   10,   10,   10,   10 ],
-       [10,  10,   10,   10,   10,   0,    10,   10,   10,   10,   10,   10,   10,   10 ],
-       [10,  10,   10,   10,   10,   10,   0,    10,   10,   10,   10,   10,   10,   10 ],
-       [10,  10,   10,   10,   10,   10,   10,   0,    10,   10,   10,   10,   10,   10 ],
-       [10,  10,   10,   10,   10,   10,   10,   10,   0,    10,   10,   10,   10,   10 ],
-       [10,  10,   10,   10,   10,   10,   10,   10,   10,   0,    10,   10,   10,   10 ],
-       [10,  10,   10,   10,   10,   10,   10,   10,   10,   10,   0,    10,   10,   10 ],
-       [10,  10,   10,   10,   10,   10,   10,   10,   10,   10,   10,   0,    10,   10 ],
-       [10,  10,   10,   10,   10,   10,   10,   10,   10,   10,   10,   10,   0,    10 ],
-       [10,  10,   10,   10,   10,   10,   10,   10,   10,   10,   10,   10,   10,   0  ],
-    ]
-  },
-
-  // MASIPACK 07-08 — Coco ralado, farinha milho amarela
-  'MASIPACK 07- 08': {
-    prods: [
-      'COCO FLOCOS UMIDO ADOCADO TERRINHA 100 G',
-      'COCO RALADO DESIDRATADO TERRINHA 50 G',
-      'COCO RALADO DESIDRATADO TERRINHA 100 G',
-      'COCO RALADO UMIDO ADOCADO TERRINHA 100 G',
-      'COCO RALADO UMIDO ADOCADO TERRINHA 50 G',
-      'FARINHA MILHO AMARELA COOP 500 G',
-      'FARINHA MILHO AMARELA TERRINHA 500 G',
-    ],
-    matrix: [
-    //  FLOC  DES50 DES100 UM100 UM50  FMLHC FMLHT
-       [0,    10,   10,    10,   10,   30,   30 ],
-       [10,   0,    10,    10,   10,   30,   30 ],
-       [10,   10,   0,     10,   10,   30,   30 ],
-       [10,   10,   10,    0,    10,   30,   30 ],
-       [10,   10,   10,    10,   0,    30,   30 ],
-       [30,   30,   30,    30,   30,   0,    10 ],
-       [30,   30,   30,    30,   30,   10,   0  ],
-    ]
-  },
-
-  // MASIPACK 10 — Pão de queijo / outros
-  'MASIPACK 10': {
-    prods: [
-      'MISTURA PAO DE QUEIJO TERRINHA 250G',
-      'FARINHA MANDIOCA TORRADA TERRINHA 500G',
-      'POLVILHO AZEDO TERRINHA 500 G',
-      'POLVILHO DOCE COOP 500 G',
-    ],
-    matrix: [
-    //  PAO   FMAND POLAZ POLDO
-       [0,    15,   15,   15 ],
-       [15,   0,    15,   15 ],
-       [15,   15,   0,    15 ],
-       [15,   15,   15,   0  ],
-    ]
-  },
-
-  // CANECA MIX 04 — Erva doce, manjericão, orégano, etc.
-  'CANECA MIX 04': {
-    prods: [
-      'ERVA CIDREIRA COOP 12 G',
-      'ERVA DOCE TERRINHA 15 G',
-      'MANJERICAO TERRINHA 10 G',
-      'MANJERICAO MERCADAO 10G',
-      'OREGANO TERRINHA 08 G',
-      'OREGANO TERRINHA 100 G',
-      'OREGANO TERRINHA 200 G',
-      'OREGANO MERCADAO 08 G',
-      'PIMENTA CALABRESA FLOC TERRINHA 15 G',
-      'PIMENTA CALABRESA FLOC MERCADAO 15 G',
-      'PIMENTA CALABRESA FLOCOS COOP 30 G',
-      'SALSA DESIDRATADA TERRINHA 08 G',
-    ],
-    matrix: [
-    //  ERVC  ERVD  MJT   MJM   ORG8  OR100 OR200 ORGM  PCF-T PCF-M PCF-C SALS
-       [0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0  ],  // Erva Cidreira (sem dados exatos, usa 0)
-       [0,    0,    15,   15,   15,   35,   35,   15,   15,   15,   15,   15 ],  // Erva Doce
-       [0,    15,   0,    5,    15,   35,   35,   15,   15,   15,   15,   15 ],  // Manjericao T
-       [0,    15,   5,    0,    15,   35,   35,   15,   15,   15,   15,   15 ],  // Manjericao M
-       [0,    15,   15,   15,   0,    35,   35,   5,    15,   15,   15,   10 ],  // Oregano 8g T
-       [0,    35,   35,   35,   35,   0,    35,   35,   35,   35,   35,   35 ],  // Oregano 100g
-       [0,    35,   35,   35,   35,   35,   0,    35,   35,   35,   35,   35 ],  // Oregano 200g
-       [0,    15,   15,   15,   5,    35,   35,   0,    15,   15,   15,   10 ],  // Oregano M
-       [0,    20,   15,   15,   15,   35,   35,   15,   0,    5,    10,   15 ],  // Pim Cal T
-       [0,    20,   15,   15,   15,   35,   35,   15,   5,    0,    10,   15 ],  // Pim Cal M
-       [0,    20,   15,   15,   15,   35,   35,   15,   10,   10,   0,    15 ],  // Pim Cal C
-       [0,    15,   15,   15,   10,   35,   35,   10,   15,   15,   15,   0  ],  // Salsa
-    ]
-  },
-
-  // CANECA MIX 05 — Chimichurri, temperos
-  'CANECA MIX 05': {
-    prods: [
-      'CHIMICHURRI TERRINHA 20G',
-      'TEMPERO BAIANO PO COOP 50 G',
-      'TEMPERO BAIANO PO TERRINHA 50 G',
-      'TEMPERO BAIANO PO MERCADAO 50 G',
-      'TEMPERO PARA CARNE TERRINHA 50 G',
-      'TEMPERO PARA CHURRASCO TERRINHA 40G',
-      'TEMPERO PARA FRANGO TERRINHA 50 G',
-      'TEMPERO PARA FRANGO MERCADAO 50 G',
-    ],
-    matrix: [
-    //  CHM  TBAC TBAT TBAM CARN CHUR FRG-T FRG-M
-       [0,   20,  20,  20,  20,  20,  20,   20 ],
-       [20,  0,   5,   5,   20,  20,  20,   20 ],
-       [20,  5,   0,   5,   20,  20,  20,   20 ],
-       [20,  5,   5,   0,   20,  20,  20,   20 ],
-       [20,  20,  20,  20,  0,   20,  20,   20 ],
-       [20,  20,  20,  20,  20,  0,   20,   20 ],
-       [20,  20,  20,  20,  20,  20,  0,    5  ],
-       [20,  20,  20,  20,  20,  20,  5,    0  ],
-    ]
-  },
-
-  // ROSCA MIX 03 — Açafrão, canela pó, cominho, curry, páprica, pimenta do reino
-  'ROSCA MIX  03': {
-    prods: [
-      'ACAFRAO TERRINHA 30 G',
-      'ACAFRAO MERCADAO 30 G',
-      'CANELA PO COOP 60G',
-      'CANELA PO TERRINHA 20 G',
-      'CANELA PO MERCADAO 20 G',
-      'COENTRO EM PO TERRINHA 18 G',
-      'COMINHO EM PO COOP 70 G',
-      'COMINHO EM PO TERRINHA 50 G',
-      'CURRY EM PO COOP 60 G',
-      'CURRY EM PO TERRINHA 15 G',
-      'PAPRICA DOCE EM PO COOP 50 G',
-      'PAPRICA DOCE EM PO TERRINHA 15 G',
-      'PAPRICA DOCE EM PO MERCADAO 15 G',
-      'PAPRICA PICANTE EM PO TERRINHA 15 G',
-      'PAPRICA PICANTE EM PO MERCADAO 15 G',
-      'PIMENTA COM COMINHO PO TERRINHA 50G',
-      'PIMENTA DO REINO EM PO COOP 70 G',
-      'PIMENTA DO REINO EM PO TERRINHA 20G',
-      'PIMENTA DO REINO EM PO MERCADAO 20G',
-    ],
-    matrix: [
-    //  ACA-T ACA-M CAN-C CAN-T CAN-M COE   COM-C COM-T CUR-C CUR-T PAP-C PAP-T PAP-M PPT   PPM   PCC   PDR-C PDR-T PDR-M
-       [0,    5,    40,   40,   40,   40,   40,   40,   40,   40,   40,   40,   40,   40,   40,   40,   40,   40,   40 ],// Açafrão T
-       [5,    0,    40,   40,   40,   40,   40,   40,   40,   40,   40,   40,   40,   40,   40,   40,   40,   40,   40 ],// Açafrão M
-       [40,   40,   0,    10,   10,   40,   40,   40,   40,   40,   40,   40,   40,   40,   40,   40,   40,   40,   40 ],// Canela Po C
-       [40,   40,   10,   0,    5,    40,   40,   40,   40,   40,   40,   40,   40,   40,   40,   40,   40,   40,   40 ],// Canela Po T
-       [40,   40,   10,   5,    0,    40,   40,   40,   40,   40,   40,   40,   40,   40,   40,   40,   40,   40,   40 ],// Canela Po M
-       [30,   30,   30,   30,   30,   0,    30,   30,   30,   30,   30,   30,   30,   30,   30,   30,   30,   30,   30 ],// Coentro
-       [40,   40,   40,   40,   40,   40,   0,    10,   40,   40,   40,   40,   40,   40,   40,   35,   40,   40,   40 ],// Cominho C
-       [40,   40,   40,   40,   40,   40,   10,   0,    40,   40,   40,   40,   40,   40,   40,   35,   40,   40,   40 ],// Cominho T
-       [40,   40,   40,   40,   40,   40,   40,   40,   0,    10,   40,   40,   40,   40,   40,   40,   40,   40,   40 ],// Curry C
-       [40,   40,   40,   40,   40,   40,   40,   40,   10,   0,    40,   40,   40,   40,   40,   40,   40,   40,   40 ],// Curry T
-       [40,   40,   40,   40,   40,   40,   40,   40,   40,   40,   0,    15,   15,   15,   15,   40,   40,   40,   40 ],// Paprica Doce C
-       [40,   40,   40,   40,   40,   40,   40,   40,   40,   40,   15,   0,    5,    10,   10,   40,   40,   40,   40 ],// Paprica Doce T
-       [40,   40,   40,   40,   40,   40,   40,   40,   40,   40,   15,   5,    0,    10,   10,   40,   40,   40,   40 ],// Paprica Doce M
-       [40,   40,   40,   40,   40,   40,   40,   40,   40,   40,   15,   10,   20,   0,    5,    40,   40,   40,   40 ],// Paprica Picante T
-       [40,   40,   40,   40,   40,   40,   40,   40,   40,   40,   15,   10,   20,   5,    0,    40,   40,   40,   40 ],// Paprica Picante M
-       [40,   40,   40,   40,   40,   40,   35,   35,   40,   40,   40,   40,   40,   40,   40,   0,    35,   35,   35 ],// Pimenta c/ Cominho
-       [40,   40,   40,   40,   40,   40,   40,   40,   40,   40,   40,   40,   40,   40,   40,   35,   0,    10,   10 ],// Pimenta Reino C
-       [40,   40,   40,   40,   40,   40,   40,   40,   40,   40,   40,   40,   40,   40,   40,   35,   10,   0,    5  ],// Pimenta Reino T
-       [40,   40,   40,   40,   40,   40,   40,   40,   40,   40,   40,   40,   40,   40,   40,   40,   10,   5,    0  ],// Pimenta Reino M
-    ]
-  },
-
-  // SELGRON 02 — Bicarbonato
-  'SELGRON 02': {
-    prods: [
-      'BICARBONATO DE SODIO COOP 80 G',
-      'BICARBONATO DE SODIO TERRINHA 20 G',
-      'BICARBONATO DE SODIO TERRINHA 500 G',
-      'BICARBONATO DE SODIO TERRINHA 80 G',
-      'BICARBONATO DE SODIO MERCADAO 20 G',
-    ],
-    matrix: [
-    //  COOP80 T20G  T500G T80G  M20G
-       [0,     10,   35,   5,    10 ],
-       [10,    0,    35,   10,   5  ],
-       [35,    35,   0,    35,   35 ],
-       [5,     10,   35,   0,    10 ],
-       [10,    5,    35,   10,   0  ],
-    ]
-  },
-};
-
-// Índices de correspondência: produto descricao (parcial) → chave da matriz
-// Varredura: para cada produto do sistema, encontra a chave correspondente na matrix da máquina
-function findSetupKey(maq, prodDesc) {
-  const data = SETUP_DATA[maq];
-  if (!data) return -1;
-  const norm = normProd(prodDesc);
-  // Tenta correspondência direta: verifica se cada chave da matriz está contida na descrição normalizada
-  for (let i = 0; i < data.prods.length; i++) {
-    const key = normProd(data.prods[i]);
-    // Divide a chave em palavras e verifica se as palavras mais importantes batem
-    const keyWords = key.split(' ').filter(w => w.length > 2 && !['500','400','350','100','200','600','700'].includes(w));
-    const matches = keyWords.filter(w => norm.includes(w));
-    // Aceita se pelo menos 60% das palavras importantes batem E o peso/tamanho não contradiz
-    if (keyWords.length > 0 && matches.length / keyWords.length >= 0.6) {
-      // Verificação de tamanho (peso da embalagem) — evita confundir 70g com 500g
-      const normWeights = norm.match(/\d+,?\d*\s*(G|KG|ML)/g) || [];
-      const keyWeights = key.match(/\d+,?\d*\s*(G|KG|ML)/g) || [];
-      if (keyWeights.length > 0 && normWeights.length > 0) {
-        const normW = normWeights.map(w => w.replace(',','.').replace(/\s/g,'')).sort().join(',');
-        const keyW = keyWeights.map(w => w.replace(',','.').replace(/\s/g,'')).sort().join(',');
-        if (normW !== keyW) continue; // peso diferente, pula
-      }
-      return i;
-    }
-  }
-  return -1;
-}
-
-// Retorna tempo de setup em minutos entre dois produtos na mesma máquina
-// Prioridade: 1) Firestore (setup_maquinas) 2) SETUP_DATA estático
+// Retorna tempo de setup em minutos entre dois produtos na mesma máquina.
+// Fonte: Firestore (setup_maquinas) → tempo padrão da máquina → 0
 function getSetupMin(maq, prodDescA, prodDescB) {
   if (!maq || !prodDescA || !prodDescB) return 0;
   if (prodDescA === prodDescB) return 0;
-  // 1) Tentar Firestore
+
+  // 1) Firestore (carregarSetupFirestore populou SETUP_FIRESTORE)
   const fsMaq = SETUP_FIRESTORE[maq];
   if (fsMaq) {
     const normA = normProd(prodDescA);
@@ -496,17 +144,16 @@ function getSetupMin(maq, prodDescA, prodDescB) {
     if (fsMaq[normA] && fsMaq[normA][normB] != null) return fsMaq[normA][normB];
     if (fsMaq[normB] && fsMaq[normB][normA] != null) return fsMaq[normB][normA];
   }
-  // 2) Fallback: SETUP_DATA estático
-  const data = SETUP_DATA[maq];
-  if (!data) return 0;
-  const iA = findSetupKey(maq, prodDescA);
-  const iB = findSetupKey(maq, prodDescB);
-  if (iA < 0 || iB < 0) return 0;
-  if (iA === iB) return 0;
-  return data.matrix[iA][iB] || 0;
+
+  // 2) Tempo padrão configurado na máquina (campo tempoSetupPadrao)
+  const padrao = getSetupPadrao(maq);
+  if (padrao > 0) return padrao;
+
+  // 3) Sem configuração → 0 minutos
+  return 0;
 }
 
-// Retorna o tempo de setup padrão de uma máquina (fallback quando não há mapeamento)
+// Retorna o tempo de setup padrão de uma máquina
 function getSetupPadrao(maq) {
   const d = getMaquinaData(maq);
   return (d && parseFloat(d.tempoSetupPadrao) > 0) ? parseFloat(d.tempoSetupPadrao) : 0;
@@ -1519,29 +1166,39 @@ function renderMaquinas(){
 // ===== DETALHES DA MÁQUINA (ACCORDION NO CARD) =====
 function buildMaqCardDetail(nomeMaq) {
   const d = getMaquinaData(nomeMaq);
-  if (!d) return '<div style="font-size:11px;color:var(--text3)">Sem cadastro. Configure em Configurações → Máquinas.</div>';
+  if (!d) return '<div style="font-size:11px;color:var(--text3);padding:8px">Sem cadastro. Configure em <strong>Configurações → Máquinas</strong>.</div>';
   const cap = d.pcMin ? calcCapacidadeMaquina(d.pcMin, d.eficiencia, d.hTurno, d.nTurnos) : null;
   const prods = Array.isArray(d.produtosCompativeis) ? d.produtosCompativeis : [];
   const statusColor = d.status === 'inativa' ? '#ff6b6b' : '#00d46a';
-  let html = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:5px;font-size:11px;font-family:\'JetBrains Mono\',monospace;margin-bottom:8px">'
-    + '<div><span style="color:var(--text3)">Setor:</span> <span style="color:var(--text2)">' + (d.setor||'—') + '</span></div>'
-    + '<div><span style="color:var(--text3)">Status:</span> <span style="color:' + statusColor + ';font-weight:700">' + ((d.status||'ativa').toUpperCase()) + '</span></div>'
-    + '<div><span style="color:var(--text3)">Vel.padrão:</span> <span style="color:var(--warn)">' + (d.pcMin ? d.pcMin + ' saq/min' : '—') + '</span></div>'
+  const tempoSetup = (d.tempoSetupPadrao && parseFloat(d.tempoSetupPadrao) > 0) ? parseFloat(d.tempoSetupPadrao) + ' min' : '—';
+
+  // Grid de capacidade
+  let html = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 10px;font-size:11px;font-family:\'JetBrains Mono\',monospace;margin-bottom:8px">'
+    + '<div><span style="color:var(--text3)">Setor:</span> <span style="color:var(--text2)">' + (d.setor || '—') + '</span></div>'
+    + '<div><span style="color:var(--text3)">Status:</span> <span style="color:' + statusColor + ';font-weight:700">' + ((d.status || 'ativa').toUpperCase()) + '</span></div>'
+    + '<div><span style="color:var(--text3)">Vel. padrão:</span> <span style="color:var(--warn);font-weight:700">' + (d.pcMin ? d.pcMin + ' saq/min' : '<span style="color:#ff6b6b">⚠ não config.</span>') + '</span></div>'
     + '<div><span style="color:var(--text3)">Eficiência:</span> <span>' + (d.eficiencia != null ? d.eficiencia + '%' : '—') + '</span></div>'
-    + '<div><span style="color:var(--text3)">Turnos/dia:</span> <span>' + (d.nTurnos||'—') + '</span></div>'
-    + '<div><span style="color:var(--text3)">Hrs/turno:</span> <span>' + (d.hTurno||'—') + '</span></div>'
-    + (cap ? '<div><span style="color:var(--text3)">Cap/hora:</span> <span style="color:var(--cyan)">' + cap.porHora.toLocaleString('pt-BR') + ' saq</span></div>' : '')
-    + (cap ? '<div><span style="color:var(--text3)">Cap/dia:</span> <span style="color:var(--cyan)">' + cap.porDia.toLocaleString('pt-BR') + ' saq</span></div>' : '')
+    + '<div><span style="color:var(--text3)">Turnos/dia:</span> <span>' + (d.nTurnos || '—') + '</span></div>'
+    + '<div><span style="color:var(--text3)">Hrs/turno:</span> <span>' + (d.hTurno || '—') + '</span></div>'
+    + '<div><span style="color:var(--text3)">Setup padrão:</span> <span>' + tempoSetup + '</span></div>'
+    + (cap ? '<div><span style="color:var(--text3)">Cap/hora:</span> <span style="color:var(--cyan)">' + cap.porHora.toLocaleString('pt-BR') + ' saq</span></div>' : '<div></div>')
+    + (cap ? '<div><span style="color:var(--text3)">Cap/turno:</span> <span style="color:var(--cyan)">' + cap.porTurno.toLocaleString('pt-BR') + ' saq</span></div>' : '<div></div>')
+    + (cap ? '<div><span style="color:var(--text3)">Cap/dia:</span> <span style="color:var(--cyan);font-weight:700">' + cap.porDia.toLocaleString('pt-BR') + ' saq</span></div>' : '<div></div>')
     + '</div>';
+
+  // Lista de produtos com velocidade específica
   if (!prods.length) {
-    html += '<div style="font-size:11px;color:var(--warn);background:rgba(255,179,0,.08);border:1px solid rgba(255,179,0,.2);border-radius:6px;padding:6px 10px">⚠️ Sem produtos vinculados.</div>';
+    html += '<div style="font-size:11px;color:var(--warn);background:rgba(255,179,0,.08);border:1px solid rgba(255,179,0,.2);border-radius:6px;padding:6px 10px;margin-top:4px">'
+      + '⚠️ Sem produtos vinculados. Edite a máquina → aba <strong>Produtos Compatíveis</strong>.</div>';
   } else {
-    html += '<div style="font-size:10px;text-transform:uppercase;letter-spacing:.7px;color:var(--purple);font-weight:700;margin-bottom:5px">Produtos (' + prods.length + ')</div>';
-    html += prods.map(function(p){
-      return '<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid rgba(255,255,255,.04);font-size:11px">'
-        + '<span style="color:var(--text2);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + p.produto + '</span>'
-        + '<span style="color:' + (p.velocidade != null ? 'var(--cyan)' : 'var(--text3)') + ';font-family:\'JetBrains Mono\',monospace;flex-shrink:0;margin-left:8px">' + (p.velocidade != null ? p.velocidade + ' saq/min' : 'vel. padrão') + '</span>'
-        + '</div>';
+    html += '<div style="font-size:10px;text-transform:uppercase;letter-spacing:.7px;color:var(--purple);font-weight:700;margin-bottom:4px;margin-top:2px">Produtos (' + prods.length + ')</div>';
+    html += prods.map(function(p) {
+      const vel = p.velocidade != null
+        ? '<span style="color:var(--cyan);font-family:\'JetBrains Mono\',monospace">' + p.velocidade + ' saq/min</span>'
+        : '<span style="color:var(--text3)">padrão' + (d.pcMin ? ' (' + d.pcMin + ')' : '') + '</span>';
+      return '<div style="display:flex;justify-content:space-between;align-items:center;padding:3px 0;border-bottom:1px solid rgba(255,255,255,.04);font-size:11px">'
+        + '<span style="color:var(--text2);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-right:8px">' + p.produto + '</span>'
+        + vel + '</div>';
     }).join('');
   }
   return html;
@@ -4602,8 +4259,20 @@ function renderCadastroMaquinas() {
       ? `<span style="background:rgba(139,92,246,.15);color:var(--purple);border:1px solid rgba(139,92,246,.3);border-radius:4px;padding:2px 6px;font-size:10px;font-weight:700">${nProds} prod.</span>`
       : `<span style="background:rgba(255,179,0,.1);color:var(--warn);border:1px solid rgba(255,179,0,.25);border-radius:4px;padding:2px 6px;font-size:10px">Sem produtos</span>`;
     const rowId = 'maq-detail-' + m.replace(/[^a-zA-Z0-9]/g,'_');
-    // Montar detalhe accordion
     let detailHtml = '';
+    const capTurno = cap ? cap.porTurno.toLocaleString('pt-BR') + ' saq/turno' : '—';
+    const setupPadrao = (d.tempoSetupPadrao && parseFloat(d.tempoSetupPadrao) > 0) ? parseFloat(d.tempoSetupPadrao) + ' min' : '—';
+    const capSummary = `<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;padding:8px 14px;background:rgba(0,212,255,.04);border-top:1px solid rgba(0,212,255,.12);font-size:11px;font-family:'JetBrains Mono',monospace">
+      <div style="text-align:center"><div style="color:var(--text3);font-size:9px;text-transform:uppercase;letter-spacing:.6px;margin-bottom:2px">Cap/hora</div><div style="color:var(--cyan);font-weight:700">${cap ? cap.porHora.toLocaleString('pt-BR') + ' saq' : '—'}</div></div>
+      <div style="text-align:center"><div style="color:var(--text3);font-size:9px;text-transform:uppercase;letter-spacing:.6px;margin-bottom:2px">Cap/turno</div><div style="color:var(--cyan);font-weight:700">${cap ? cap.porTurno.toLocaleString('pt-BR') + ' saq' : '—'}</div></div>
+      <div style="text-align:center"><div style="color:var(--text3);font-size:9px;text-transform:uppercase;letter-spacing:.6px;margin-bottom:2px">Cap/dia</div><div style="color:var(--cyan);font-weight:700">${cap ? cap.porDia.toLocaleString('pt-BR') + ' saq' : '—'}</div></div>
+    </div>
+    <div style="padding:4px 14px 6px;display:flex;gap:16px;font-size:11px;font-family:'JetBrains Mono',monospace;background:rgba(0,212,255,.04);border-bottom:1px solid rgba(0,212,255,.12)">
+      <span><span style="color:var(--text3)">Efic:</span> <span style="color:var(--text2)">${d.eficiencia != null ? d.eficiencia + '%' : '—'}</span></span>
+      <span><span style="color:var(--text3)">Turnos:</span> <span style="color:var(--text2)">${d.nTurnos || '—'}</span></span>
+      <span><span style="color:var(--text3)">Hrs/turno:</span> <span style="color:var(--text2)">${d.hTurno || '—'}</span></span>
+      <span><span style="color:var(--text3)">Setup padrão:</span> <span style="color:var(--text2)">${setupPadrao}</span></span>
+    </div>`;
     if (nProds > 0) {
       const prodsRows = d.produtosCompativeis.map(p => {
         const vel = p.velocidade != null ? `<span style="color:var(--cyan);font-family:'JetBrains Mono',monospace">${p.velocidade} saq/min</span>` : `<span style="color:var(--text3)">padrão${d.pcMin ? ' (' + d.pcMin + ')' : ''}</span>`;
@@ -4612,7 +4281,7 @@ function renderCadastroMaquinas() {
           <span>${vel}</span>
         </div>`;
       }).join('');
-      detailHtml = `<div style="padding:8px 14px;background:rgba(139,92,246,.05);border-top:1px solid rgba(139,92,246,.15)">
+      detailHtml = capSummary + `<div style="padding:8px 14px;background:rgba(139,92,246,.05);border-top:1px solid rgba(139,92,246,.15)">
         <div style="font-size:10px;text-transform:uppercase;letter-spacing:.8px;color:var(--purple);font-weight:700;margin-bottom:8px;font-family:'JetBrains Mono',monospace">Produtos Compatíveis (${nProds})</div>
         <div style="display:grid;grid-template-columns:1fr auto;gap:8px;padding:4px 0;border-bottom:1px solid rgba(255,255,255,.07)">
           <span style="font-size:10px;color:var(--text3);font-weight:700">PRODUTO</span>
@@ -4621,7 +4290,7 @@ function renderCadastroMaquinas() {
         ${prodsRows}
       </div>`;
     } else {
-      detailHtml = `<div style="padding:10px 14px;background:rgba(255,179,0,.05);border-top:1px solid rgba(255,179,0,.2);font-size:12px;color:var(--warn)">
+      detailHtml = capSummary + `<div style="padding:10px 14px;background:rgba(255,179,0,.05);border-top:1px solid rgba(255,179,0,.2);font-size:12px;color:var(--warn)">
         ⚠️ Essa máquina ainda não possui produtos vinculados. Clique em <strong>Editar</strong> → aba <strong>Produtos Compatíveis</strong> para configurar.
       </div>`;
     }
@@ -4795,6 +4464,23 @@ function renderMaqProdsLista() {
 async function saveMaquinaModal() {
   const nome = (document.getElementById('maq-nome-inp').value || '').trim();
   if (!nome) { toast('Informe o nome da máquina', 'err'); return; }
+
+  const pcMinVal = parseFloat(document.getElementById('maq-pcmin-inp').value);
+  const hTurnoVal = parseFloat(document.getElementById('maq-hturno-inp').value);
+  const nTurnosVal = parseInt(document.getElementById('maq-nturno-inp').value);
+
+  // Avisar sobre campos importantes sem bloquear — máquina pode ser salva sem velocidade,
+  // mas o sistema não conseguirá calcular tempo de produção nem programação automática
+  const avisos = [];
+  if (!pcMinVal || pcMinVal <= 0) avisos.push('Velocidade padrão (saq/min) não informada — programação automática não funcionará para esta máquina.');
+  if (!hTurnoVal || hTurnoVal <= 0) avisos.push('Horas por turno não informadas — assumirá 8h.');
+  if (!nTurnosVal || nTurnosVal <= 0) avisos.push('Número de turnos não informado — assumirá 1 turno.');
+
+  if (avisos.length) {
+    const ok = confirm('⚠️ Atenção:\n\n' + avisos.join('\n') + '\n\nDeseja salvar mesmo assim?');
+    if (!ok) { switchMaqTab('cap'); return; }
+  }
+
   const dados = {
     _id: document.getElementById('maq-edit-id').value || null,
     nome,
@@ -4802,10 +4488,10 @@ async function saveMaquinaModal() {
     tipo: document.getElementById('maq-tipo-inp').value || '',
     setor: document.getElementById('maq-setor-inp').value || '',
     status: document.getElementById('maq-status-inp').value || 'ativa',
-    pcMin: document.getElementById('maq-pcmin-inp').value || 0,
-    eficiencia: document.getElementById('maq-efic-inp').value || 100,
-    hTurno: document.getElementById('maq-hturno-inp').value || 8,
-    nTurnos: document.getElementById('maq-nturno-inp').value || 1,
+    pcMin: pcMinVal || 0,
+    eficiencia: parseFloat(document.getElementById('maq-efic-inp').value) || 100,
+    hTurno: hTurnoVal || 8,
+    nTurnos: nTurnosVal || 1,
     tempoSetupPadrao: parseFloat((document.getElementById('maq-setup-inp')||{}).value) || 0,
     produtosCompativeis: _maqProdsCompat,
   };
@@ -4960,7 +4646,7 @@ async function carregarProdutosFirestore() {
   } catch(e) { /* ficha técnica opcional */ }
 }
 
-// Salva produto no Firestore
+// Salva produto no Firestore e mantém vínculo bidirecional com a máquina
 async function salvarProdutoFirestore(dados) {
   const payload = {
     cod: parseInt(dados.cod) || 0,
@@ -4985,9 +4671,31 @@ async function salvarProdutoFirestore(dados) {
       payload.criadoEm = new Date().toISOString();
       await addDoc(collection(firestoreDB, 'produtos'), payload);
     }
+    // Vínculo bidirecional: se o produto tem máquina definida, adiciona nos produtosCompativeis da máquina
+    if (payload.maquina && payload.nome) {
+      await _syncProdutoNaMaquina(payload.maquina, payload.nome, payload.velocidadePadrao);
+    }
     await carregarProdutosFirestore();
   } catch(e) {
     toast('Erro ao salvar produto: ' + e.message, 'err');
+  }
+}
+
+// Garante que um produto está listado nos produtosCompativeis de uma máquina
+async function _syncProdutoNaMaquina(nomeMaq, nomeProduto, velocidade) {
+  try {
+    const snap = await getDocs(query(collection(firestoreDB, 'maquinas'), where('nome', '==', nomeMaq)));
+    if (snap.empty) return; // máquina não cadastrada, não força
+    const maqDoc = snap.docs[0];
+    const maqData = maqDoc.data();
+    const prods = Array.isArray(maqData.produtosCompativeis) ? [...maqData.produtosCompativeis] : [];
+    const exists = prods.findIndex(p => p.produto === nomeProduto);
+    if (exists >= 0) return; // já está vinculado
+    prods.push({ produto: nomeProduto, velocidade: velocidade || null });
+    await setDoc(doc(firestoreDB, 'maquinas', maqDoc.id), { ...maqData, produtosCompativeis: prods, atualizadoEm: new Date().toISOString() });
+    await carregarMaquinasFirestore();
+  } catch(e) {
+    console.warn('[SYNC] Não foi possível sincronizar produto na máquina:', e.message);
   }
 }
 
