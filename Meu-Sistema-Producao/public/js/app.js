@@ -3052,7 +3052,7 @@ function editFichaByCod(cod){
 }
 
 // Salva usando cod como chave — propaga para TODOS os registros com o mesmo cod (multi-máquina)
-function saveFichaByCod(cod){
+async function saveFichaByCod(cod){
   const codNum = parseInt(cod);
   const newUnid = parseInt(document.getElementById('fte-unid').value)||1;
   const newPcMin = parseFloat(document.getElementById('fte-pcmin').value)||1;
@@ -3064,23 +3064,47 @@ function saveFichaByCod(cod){
     if(name) newInsumos.push({insumo:name, qty});
   });
 
-  // Atualiza TODOS os registros com o mesmo cod (pode estar em múltiplas máquinas)
+  // Atualiza TODOS os registros com o mesmo cod na memória
   let count = 0;
   fichaTecnicaData.forEach(p=>{
     if(p.cod===codNum){
       p.unid = newUnid;
       p.pc_min = newPcMin;
-      p.insumos = newInsumos.map(i=>({...i})); // cópia independente
+      p.insumos = newInsumos.map(i=>({...i}));
       count++;
     }
   });
 
   document.getElementById('ft-edit-modal').remove();
+
+  // Salva no Firestore (coleção fichaTecnica)
+  try {
+    const snap = await getDocs(query(collection(firestoreDB, 'fichaTecnica'), where('cod', '==', codNum)));
+    // Pega o primeiro registro com esse cod para montar o documento
+    const base = fichaTecnicaData.find(p => p.cod === codNum) || {};
+    const payload = {
+      cod: codNum,
+      desc: base.desc || '',
+      unid: newUnid,
+      pc_min: newPcMin,
+      maquina: base.maquina || '',
+      insumos: newInsumos,
+      atualizadoEm: new Date().toISOString()
+    };
+    if (!snap.empty) {
+      await setDoc(doc(firestoreDB, 'fichaTecnica', snap.docs[0].id), payload);
+    } else {
+      await addDoc(collection(firestoreDB, 'fichaTecnica'), { ...payload, criadoEm: new Date().toISOString() });
+    }
+    toast(`Ficha técnica salva! ${count} registro(s) · ${newInsumos.length} insumos.`, 'ok');
+  } catch(e) {
+    toast('Salvo na memória, mas erro ao gravar no banco: ' + e.message, 'warn');
+  }
+
   renderFichaTecnica();
-  // ← Recalcula abas de insumos com os novos valores da ficha técnica
+  if(typeof renderFichaTecnicaCfg === 'function') renderFichaTecnicaCfg();
   if(insMaqMonday) renderInsumosMaq();
   if(insGeralMonday) renderInsumosGeral();
-  toast(`Produto atualizado em ${count} registro(s). Insumos recalculados.`, 'ok');
 }
 
 // Compatibilidade legada — editFicha(cod) e editFichaByDesc(desc) redirecionam para editFichaByCod
