@@ -4000,10 +4000,17 @@ let userDayHrs = JSON.parse(localStorage.getItem('cfg_day_hrs')||'null') || [...
 
 function toggleHdMenu(){
   const dd=document.getElementById('hd-menu-dropdown');
+  const btn=document.getElementById('hd-menu-btn');
   const isHidden=dd.style.display==='none'||dd.style.display==='';
-  dd.style.display=isHidden?'block':'none';
-  if(dd.style.display==='block'){
+  if(isHidden){
+    const rect=btn.getBoundingClientRect();
+    dd.style.top=(rect.bottom+4)+'px';
+    dd.style.right=(window.innerWidth-rect.right)+'px';
+    dd.style.left='auto';
+    dd.style.display='block';
     setTimeout(()=>document.addEventListener('click',closeHdMenuOutside,{once:true}),10);
+  } else {
+    dd.style.display='none';
   }
 }
 function closeHdMenuOutside(e){
