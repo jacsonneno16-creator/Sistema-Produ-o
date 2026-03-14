@@ -2817,14 +2817,12 @@ function loadFichaTecnica(input){
   const file=input.files[0];
   if(!file) return;
   const reader=new FileReader();
-  reader.onload=e=>{
+  reader.onload=async e=>{
     try{
       const wb=XLSX.read(e.target.result,{type:'array'});
-      // Try to find Base_Maquina_Tempo sheet
       const sheetName=wb.SheetNames.find(s=>s.includes('Base_Maquina'))||wb.SheetNames[0];
       const ws=wb.Sheets[sheetName];
       const rows=XLSX.utils.sheet_to_json(ws,{header:1,defval:''});
-      // Try to find Consumo_Insumos sheet
       const insSheet=wb.SheetNames.find(s=>s.includes('Consumo'));
       let insByProd={};
       if(insSheet){
@@ -2840,7 +2838,7 @@ function loadFichaTecnica(input){
           }
         });
       }
-      fichaTecnicaData=rows.slice(1).filter(r=>r[0]&&r[1]).map(r=>({
+      fichaTecnicaData=rows.slice(1).filter(r=>r[0]&&r[1]&&!isNaN(parseInt(r[0]))).map(r=>({
         cod:parseInt(r[0])||0,
         desc:String(r[1]).trim(),
         unid:parseInt(r[2])||1,
@@ -2848,7 +2846,26 @@ function loadFichaTecnica(input){
         maquina:String(r[5]||'MANUAL').trim(),
         insumos:insByProd[String(r[1]).trim()]||[]
       }));
-      // Refresh machine filter (element may not exist on current view)
+
+      // Salvar TUDO no Firestore
+      toast(`Salvando ${fichaTecnicaData.length} fichas no banco...`, 'ok');
+      try {
+        // Limpa coleção existente e regrava
+        const snapExist = await getDocs(collection(firestoreDB, 'fichaTecnica'));
+        const deletePromises = snapExist.docs.map(d => deleteDoc(doc(firestoreDB, 'fichaTecnica', d.id)));
+        await Promise.all(deletePromises);
+        // Grava em lotes de 50
+        const lote = 50;
+        for(let i=0; i<fichaTecnicaData.length; i+=lote){
+          await Promise.all(fichaTecnicaData.slice(i,i+lote).map(p =>
+            addDoc(collection(firestoreDB,'fichaTecnica'), { ...p, criadoEm: new Date().toISOString() })
+          ));
+        }
+        toast(`✅ Ficha técnica salva: ${fichaTecnicaData.length} produtos`, 'ok');
+      } catch(fe) {
+        toast(`Ficha carregada na memória (erro ao salvar no banco: ${fe.message})`, 'warn');
+      }
+
       const sel = document.getElementById('ft-maq-filter');
       if (sel) {
         const currentVal = sel.value;
@@ -2859,13 +2876,31 @@ function loadFichaTecnica(input){
         sel.value = currentVal;
       }
       if (typeof renderFichaTecnica === 'function') renderFichaTecnica();
-      toast(`Ficha técnica atualizada: ${fichaTecnicaData.length} produtos`, 'ok');
+      if (typeof renderFichaTecnicaCfg === 'function') renderFichaTecnicaCfg();
     }catch(err){
       toast('Erro ao ler arquivo: '+err.message,'err');
     }
   };
   reader.readAsArrayBuffer(file);
   input.value='';
+}
+
+// Exclui produto da ficha técnica
+async function excluirFichaByCod(cod) {
+  const codNum = parseInt(cod);
+  if (!confirm('Excluir este produto da ficha técnica?')) return;
+  // Remove da memória
+  fichaTecnicaData = fichaTecnicaData.filter(p => p.cod !== codNum);
+  // Remove do Firestore
+  try {
+    const snap = await getDocs(query(collection(firestoreDB, 'fichaTecnica'), where('cod', '==', codNum)));
+    await Promise.all(snap.docs.map(d => deleteDoc(doc(firestoreDB, 'fichaTecnica', d.id))));
+    toast('Produto removido da ficha técnica.', 'ok');
+  } catch(e) {
+    toast('Removido da memória, erro no banco: ' + e.message, 'warn');
+  }
+  if (typeof renderFichaTecnica === 'function') renderFichaTecnica();
+  if (typeof renderFichaTecnicaCfg === 'function') renderFichaTecnicaCfg();
 }
 
 function renderFichaTecnica(){
@@ -3042,6 +3077,9 @@ function editFichaByCod(cod){
       </div>
       <div class="modal-ft">
         <button class="btn btn-ghost" onclick="document.getElementById('ft-edit-modal').remove()">Cancelar</button>
+        <button class="btn btn-ghost" onclick="excluirFichaByCod(this.dataset.cod)" data-cod="${p.cod}" style="color:#ff6b6b;border-color:rgba(255,107,107,.3)">
+          🗑 Excluir produto
+        </button>
         <button class="btn btn-primary" onclick="saveFichaByCod(this.dataset.cod)" data-cod="${p.cod}">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
           Salvar
@@ -7200,6 +7238,7 @@ window.aponRecalcRow = aponRecalcRow;
 window.pdFinalize = pdFinalize;
 window.editFichaByCod = editFichaByCod;
 window.saveFichaByCod = saveFichaByCod;
+window.excluirFichaByCod = excluirFichaByCod;
 window.editFichaByDesc = editFichaByDesc;  // compat legado
 window.reactivateFuncionario = reactivateFuncionario;
 window.openDeactivate = openDesativarFuncProd;
