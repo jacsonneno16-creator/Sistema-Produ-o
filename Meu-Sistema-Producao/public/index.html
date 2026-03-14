@@ -785,6 +785,10 @@
             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
             Turnos por Máquina
           </button>
+          <button onclick="settingsNav('setup-maquinas')" id="snav-setup-maquinas" class="snav-btn" style="width:100%;text-align:left;background:none;border:1px solid transparent;border-radius:6px;padding:6px 10px;color:var(--text2);font-family:'Space Grotesk',sans-serif;font-size:11px;cursor:pointer;display:flex;align-items:center;gap:7px;transition:all .15s" onmouseover="if(!this.classList.contains('snav-active'))this.style.background='var(--s2)'" onmouseout="if(!this.classList.contains('snav-active'))this.style.background='none'">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+            Tempos de Setup
+          </button>
         </div>
       </div>
       <!-- Grupo Produtos (expansível) -->
@@ -1007,6 +1011,52 @@
       <!-- SEÇÃO TURNOS POR MÁQUINA -->
       <div id="scontent-turnos" class="scontent" style="display:none;flex-direction:column;gap:0"></div>
 
+      <!-- SEÇÃO TEMPOS DE SETUP -->
+      <div id="scontent-setup-maquinas" class="scontent" style="display:none;flex-direction:column;gap:12px">
+        <div style="background:var(--s1);border:1px solid var(--border);border-radius:10px;overflow:hidden">
+          <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between">
+            <div style="display:flex;align-items:center;gap:8px">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--cyan)" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+              <span style="font-size:13px;font-weight:700;color:var(--text)">Tempos de Setup por Máquina</span>
+              <span style="font-size:11px;color:var(--text3)">(<span id="setup-count">0</span> registros)</span>
+            </div>
+            <button onclick="openAddSetup()" style="background:var(--cyan);color:#000;border:none;border-radius:6px;padding:5px 12px;font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:11px;cursor:pointer">+ Adicionar Setup</button>
+          </div>
+          <!-- Filtros -->
+          <div style="padding:8px 12px;border-bottom:1px solid var(--border);display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <select id="setup-filter-maq" onchange="renderSetupMaquinas()" style="background:var(--s2);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-size:12px;outline:none;min-width:160px">
+              <option value="">Todas as máquinas</option>
+            </select>
+            <span style="font-size:11px;color:var(--text3)">Tempo em minutos · 0 = sem setup</span>
+            <div style="flex:1;text-align:right">
+              <button onclick="recarregarSetup()" style="background:none;border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:11px;color:var(--text2);cursor:pointer">🔄 Recarregar</button>
+            </div>
+          </div>
+          <!-- Tabela de setup -->
+          <div style="overflow-x:auto;max-height:420px;overflow-y:auto">
+            <table style="width:100%;border-collapse:collapse;font-size:12px">
+              <thead>
+                <tr style="background:var(--s2);position:sticky;top:0;z-index:1">
+                  <th style="padding:8px 14px;text-align:left;color:var(--text3);font-size:10px;text-transform:uppercase;letter-spacing:.7px;border-bottom:1px solid var(--border)">Máquina</th>
+                  <th style="padding:8px 10px;text-align:left;color:var(--text3);font-size:10px;text-transform:uppercase;letter-spacing:.7px;border-bottom:1px solid var(--border)">Produto Origem</th>
+                  <th style="padding:8px 10px;text-align:left;color:var(--text3);font-size:10px;text-transform:uppercase;letter-spacing:.7px;border-bottom:1px solid var(--border)">Produto Destino</th>
+                  <th style="padding:8px 10px;text-align:center;color:var(--text3);font-size:10px;text-transform:uppercase;letter-spacing:.7px;border-bottom:1px solid var(--border)">Tempo (min)</th>
+                  <th style="padding:8px 10px;text-align:right;border-bottom:1px solid var(--border)"></th>
+                </tr>
+              </thead>
+              <tbody id="setup-lista"></tbody>
+            </table>
+          </div>
+          <div id="setup-empty" style="display:none;color:var(--text3);font-size:13px;padding:24px;text-align:center">
+            Nenhum setup cadastrado.<br><span style="font-size:11px">Clique em <strong>+ Adicionar Setup</strong> para configurar tempos entre produtos.</span>
+          </div>
+        </div>
+        <!-- Info box -->
+        <div style="background:rgba(0,212,255,.05);border:1px solid rgba(0,212,255,.15);border-radius:8px;padding:12px 16px;font-size:12px;color:var(--text2)">
+          ⚙️ <strong>Tempos de setup</strong> são os minutos necessários para trocar de um produto para outro na mesma máquina. O sistema usa esses dados ao calcular a programação semanal e o Gantt. Se não houver registro, usa o tempo padrão configurado na máquina ou zero.
+        </div>
+      </div>
+
       <!-- SEÇÃO IMPORTAÇÃO / API -->
       <div id="scontent-importacao" class="scontent" style="display:none;flex-direction:column;gap:0">
         <div style="background:var(--s1);border:1px solid var(--border);border-radius:10px;overflow:hidden">
@@ -1170,9 +1220,13 @@
             <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:5px">Número de Turnos / Dia</label>
             <input id="maq-nturno-inp" type="number" step="1" min="1" max="3" placeholder="1" oninput="calcMaqCapacidade()" style="width:100%;background:var(--s2);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-size:13px;outline:none;box-sizing:border-box">
           </div>
+          <div>
+            <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:5px">Tempo de Setup Padrão (min) <span style="font-size:10px;color:var(--text3)">entre produtos</span></label>
+            <input id="maq-setup-inp" type="number" step="1" min="0" placeholder="Ex: 15" style="width:100%;background:var(--s2);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-size:13px;outline:none;box-sizing:border-box">
+          </div>
         </div>
         <div style="background:rgba(0,212,255,.06);border:1px solid rgba(0,212,255,.2);border-radius:8px;padding:12px 14px;font-size:11px;color:var(--text2)">
-          💡 Os cálculos consideram a eficiência configurada. As informações de turnos por máquina são puxadas de <strong>Configurações → Turnos por Máquina</strong>.
+          💡 Os cálculos consideram a eficiência configurada. O setup padrão é usado quando não há setup específico cadastrado no Firestore (<strong>setup_maquinas</strong>).
         </div>
       </div>
       <!-- ABA: Produtos Compatíveis -->
@@ -1599,6 +1653,41 @@ window.irParaLogin = irParaLogin;
   }
 })();
 </script>
+
+<!-- Modal de Setup -->
+<div id="setup-modal" class="overlay" style="display:none;z-index:700" onclick="if(event.target===this)closeSetupModal()">
+  <div class="modal-box" style="max-width:520px;width:96vw">
+    <div class="modal-hd">
+      <h2 id="setup-modal-title">Novo Tempo de Setup</h2>
+      <button class="btn btn-ghost" onclick="closeSetupModal()" style="padding:6px 10px">✕</button>
+    </div>
+    <div class="modal-bd" style="padding:20px 22px;display:flex;flex-direction:column;gap:14px">
+      <input type="hidden" id="setup-edit-id">
+      <div>
+        <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:5px">Máquina *</label>
+        <select id="setup-maq-inp" style="width:100%;background:var(--s2);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-size:13px;outline:none;box-sizing:border-box"></select>
+      </div>
+      <div>
+        <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:5px">Produto Origem *</label>
+        <select id="setup-origem-inp" style="width:100%;background:var(--s2);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-size:13px;outline:none;box-sizing:border-box"></select>
+      </div>
+      <div>
+        <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:5px">Produto Destino *</label>
+        <select id="setup-destino-inp" style="width:100%;background:var(--s2);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-size:13px;outline:none;box-sizing:border-box"></select>
+      </div>
+      <div>
+        <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:5px">Tempo de Setup (minutos) *</label>
+        <input id="setup-tempo-inp" type="number" min="0" step="1" placeholder="Ex: 15" style="width:100%;background:var(--s2);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-size:13px;outline:none;box-sizing:border-box">
+        <div style="font-size:11px;color:var(--text3);margin-top:4px">0 = sem tempo de setup entre esses produtos</div>
+      </div>
+      <div id="setup-modal-alert" style="display:none;background:rgba(255,71,87,.1);border:1px solid rgba(255,71,87,.3);border-radius:6px;padding:8px 12px;font-size:12px;color:var(--red)"></div>
+    </div>
+    <div class="modal-ft">
+      <button class="btn btn-ghost" onclick="closeSetupModal()">Cancelar</button>
+      <button class="btn btn-primary" onclick="saveSetupModal()">Salvar Setup</button>
+    </div>
+  </div>
+</div>
 
 </body>
 

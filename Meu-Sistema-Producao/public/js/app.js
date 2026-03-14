@@ -8,7 +8,7 @@ import {
   enviarResetSenha, adminForcaReset
 } from './auth.js';
 import {
-  collection, getDocs, addDoc, setDoc, doc, deleteDoc, query, orderBy
+  collection, getDocs, addDoc, setDoc, doc, deleteDoc, query, orderBy, where
 } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
 // ===== TURNOS POR MÁQUINA (módulo de disponibilidade real) =====
@@ -54,14 +54,63 @@ async function dbDel(id) {
 }
 
 // ===== DADOS =====
-const PRODUTOS = [{"cod":304,"descricao":"00001 TAPIOCA DA TERRINHA 1 kg - CX 12","unid":12,"kg_fd":0,"pc_min":75.0,"maquina":"FILIAL"},{"cod":27745,"descricao":"00001 TAPIOCA DA TERRINHA 1 kg - FD 12","unid":12,"kg_fd":0,"pc_min":75.0,"maquina":"FILIAL"},{"cod":89620,"descricao":"00014 TAPIOCA DA TERRINHA GRANULADA 5 KG - FD 5","unid":5,"kg_fd":0,"pc_min":5.0,"maquina":"MANUAL"},{"cod":80647,"descricao":"00019 TAPIOCA DA TERRINHA GRANULADA 400 G - CX 12","unid":12,"kg_fd":0,"pc_min":17.0,"maquina":"IMAPACK 12"},{"cod":94691,"descricao":"00931 COCO RALADO DESIDRATADO DA TERRINHA 50 G -  CX 40","unid":40,"kg_fd":0,"pc_min":42.5,"maquina":"MASIPACK 07- 08"},{"cod":79002,"descricao":"00931 COCO RALADO DESIDRATADO DA TERRINHA 50 G -  CX 50","unid":50,"kg_fd":0,"pc_min":42.5,"maquina":"MASIPACK 07- 08"},{"cod":79003,"descricao":"00932 COCO RALADO DESIDRATADO DATERRINHA 100 G - CX 24","unid":24,"kg_fd":0,"pc_min":42.5,"maquina":"MASIPACK 07- 08"},{"cod":79005,"descricao":"00933 COCO RALADO UMIDO ADOCADO DA TERRINHA 50 G - CX 50","unid":50,"kg_fd":0,"pc_min":42.5,"maquina":"MASIPACK 07- 08"},{"cod":79006,"descricao":"00934 COCO RALADO UMIDO ADOCADO DA TERRINHA 100 G - CX 24","unid":24,"kg_fd":0,"pc_min":42.5,"maquina":"MASIPACK 07- 08"},{"cod":79007,"descricao":"00935 COCO FLOCOS UMIDO ADOCADO DA TERRINHA 100 G - CX 24","unid":24,"kg_fd":0,"pc_min":42.5,"maquina":"MASIPACK 07- 08"},{"cod":48023,"descricao":"01506 FARINHA MILHO AMARELA DA TERRINHA 500 G FD10","unid":10,"kg_fd":0,"pc_min":27.2,"maquina":"MASIPACK 07- 08"},{"cod":48005,"descricao":"01516 FUBA PRE COZIDO DA TERRINHA 500 G FD 12","unid":12,"kg_fd":0,"pc_min":8.0,"maquina":"MANUAL"},{"cod":61828,"descricao":"01602 CANJICA AMARELA DA TERRINHA 500 G - FD 12","unid":12,"kg_fd":0,"pc_min":27.2,"maquina":"OLC 13"},{"cod":87960,"descricao":"01602 CANJICA AMARELA DA TERRINHA 500G - EXP CX 12","unid":12,"kg_fd":0,"pc_min":27.2,"maquina":"OLC 13"},{"cod":52688,"descricao":"01604 CANJIQUINHA XEREM DA TERRINHA 500 G FD 12","unid":12,"kg_fd":0,"pc_min":27.2,"maquina":"OLC 13"},{"cod":78601,"descricao":"01612 SAGU DE MANDIOCA 5 KG","unid":5,"kg_fd":0,"pc_min":5.0,"maquina":"MANUAL"},{"cod":80605,"descricao":"01614 CANJICA BRANCA DA TERRINHA 400 G - CX 12","unid":12,"kg_fd":0,"pc_min":28.05,"maquina":"ALFATECK 14"},{"cod":80605,"descricao":"01614 CANJICA BRANCA DA TERRINHA 400 G - CX 12","unid":12,"kg_fd":0,"pc_min":28.05,"maquina":"ALFATECK 15"},{"cod":80605,"descricao":"01614 CANJICA BRANCA DA TERRINHA 400 G - CX 12","unid":12,"kg_fd":0,"pc_min":28.05,"maquina":"ALFATECK 16"},{"cod":80607,"descricao":"01615 ERVILHA PARTIDA DA TERRINHA 350 G - CX 12","unid":12,"kg_fd":0,"pc_min":28.05,"maquina":"ALFATECK 14"},{"cod":80607,"descricao":"01615 ERVILHA PARTIDA DA TERRINHA 350 G - CX 12","unid":12,"kg_fd":0,"pc_min":28.05,"maquina":"ALFATECK 15"},{"cod":80607,"descricao":"01615 ERVILHA PARTIDA DA TERRINHA 350 G - CX 12","unid":12,"kg_fd":0,"pc_min":28.05,"maquina":"ALFATECK 16"},{"cod":80649,"descricao":"01616 GRAO DE BICO DA TERRINHA 350 G - CX 12","unid":12,"kg_fd":0,"pc_min":28.05,"maquina":"ALFATECK 14"},{"cod":80649,"descricao":"01616 GRAO DE BICO DA TERRINHA 350 G - CX 12","unid":12,"kg_fd":0,"pc_min":28.05,"maquina":"ALFATECK 15"},{"cod":80649,"descricao":"01616 GRAO DE BICO DA TERRINHA 350 G - CX 12","unid":12,"kg_fd":0,"pc_min":28.05,"maquina":"ALFATECK 16"},{"cod":80641,"descricao":"01617 LENTILHA DA TERRINHA 350 G - CX 12","unid":12,"kg_fd":0,"pc_min":28.05,"maquina":"ALFATECK 14"},{"cod":80641,"descricao":"01617 LENTILHA DA TERRINHA 350 G - CX 12","unid":12,"kg_fd":0,"pc_min":28.05,"maquina":"ALFATECK 15"},{"cod":80641,"descricao":"01617 LENTILHA DA TERRINHA 350 G - CX 12","unid":12,"kg_fd":0,"pc_min":28.05,"maquina":"ALFATECK 16"},{"cod":80643,"descricao":"01618 MILHO PIPOCA DA TERRINHA 400 G - CX 12","unid":12,"kg_fd":0,"pc_min":28.05,"maquina":"ALFATECK 14"},{"cod":80643,"descricao":"01618 MILHO PIPOCA DA TERRINHA 400 G - CX 12","unid":12,"kg_fd":0,"pc_min":28.05,"maquina":"ALFATECK 15"},{"cod":80643,"descricao":"01618 MILHO PIPOCA DA TERRINHA 400 G - CX 12","unid":12,"kg_fd":0,"pc_min":28.05,"maquina":"ALFATECK 16"},{"cod":83381,"descricao":"01619 SAGU MANDIOCA DA TERRINHA 400 G - CX 12","unid":12,"kg_fd":0,"pc_min":16.0,"maquina":"IMAPACK 12"},{"cod":48723,"descricao":"01701 ACAFRAO DA TERRINHA 30 G  - CX 24","unid":24,"kg_fd":0,"pc_min":42.5,"maquina":"ROSCA MIX  03"},{"cod":48783,"descricao":"01702 ALECRIM DA TERRINHA 06 G  - CX 24","unid":24,"kg_fd":0,"pc_min":25.5,"maquina":"GOLPACK 06"},{"cod":48392,"descricao":"01703 ALHO DESID FLOCOS DA TERRINHA 25 G - CX 24","unid":24,"kg_fd":0,"pc_min":25.5,"maquina":"GOLPACK 06"},{"cod":48064,"descricao":"01704 ALHO DESIDRATADO GRANULADO DA TERRINHA 20 G - CX 24","unid":24,"kg_fd":0,"pc_min":42.5,"maquina":"GOLPACK 06"},{"cod":72091,"descricao":"01708 BICARBONATO DE SODIO DA TERRINHA 20 G -  CX 24","unid":24,"kg_fd":0,"pc_min":42.5,"maquina":"SELGRON 02"},{"cod":72092,"descricao":"01710 BICARBONATO DE SODIO DA TERRINHA 80 G - CX 24","unid":24,"kg_fd":0,"pc_min":42.5,"maquina":"SELGRON 02"},{"cod":72170,"descricao":"01712 BICARBONATO DE SODIO DA TERRINHA 500 G - FD 06","unid":6,"kg_fd":0,"pc_min":25.5,"maquina":"SELGRON 02"},{"cod":48787,"descricao":"01715 CAMOMILA DA TERRINHA 06 G  - CX 24","unid":24,"kg_fd":0,"pc_min":25.5,"maquina":"GOLPACK 06"},{"cod":48667,"descricao":"01717 CANELA CASCA QUEBRADA DA TERRINHA 10 G  - CX 24","unid":24,"kg_fd":0,"pc_min":25.5,"maquina":"GOLPACK 06"},{"cod":48685,"descricao":"01723 CANELA PO DA TERRINHA 20 G  - CX 24","unid":24,"kg_fd":0,"pc_min":42.5,"maquina":"ROSCA MIX  03"},{"cod":72093,"descricao":"01732 CHIMICHURRI DA TERRINHA 20G - CX 24","unid":24,"kg_fd":0,"pc_min":42.5,"maquina":"CANECA MIX 05"},{"cod":74109,"descricao":"01734 COENTRO EM PO DA TERRINHA 18 G  - CX 24","unid":24,"kg_fd":0,"pc_min":41.0,"maquina":"ROSCA MIX  03"},{"cod":72094,"descricao":"01736 COLORIFICO DA TERRINHA 70 G  - CX 24","unid":24,"kg_fd":0,"pc_min":46.75,"maquina":"SELGRON 01"},{"cod":50722,"descricao":"01739 COLORIFICO DA TERRINHA 500 G - FD 12","unid":12,"kg_fd":0,"pc_min":25.5,"maquina":"SELGRON 01"},{"cod":75956,"descricao":"01743 COLORIFICO DA TERRINHA 1,01 KG - FD 12","unid":12,"kg_fd":0,"pc_min":21.25,"maquina":"SELGRON 01"},{"cod":48705,"descricao":"01745 COMINHO EM PO DA TERRINHA 50 G  - CX 24","unid":24,"kg_fd":0,"pc_min":38.25,"maquina":"ROSCA MIX  03"},{"cod":72106,"descricao":"01750 CRAVO DA INDIA DA TERRINHA 10 G - CX 24","unid":24,"kg_fd":0,"pc_min":25.5,"maquina":"GOLPACK 06"},{"cod":73227,"descricao":"01750 CRAVO DA INDIA DA TERRINHA 10 G - FD 12","unid":12,"kg_fd":0,"pc_min":25.5,"maquina":"GOLPACK 06"},{"cod":72096,"descricao":"01754 CURRY EM PO DA TERRINHA 15 G - CX 24","unid":24,"kg_fd":0,"pc_min":45.9,"maquina":"ROSCA MIX  03"},{"cod":72097,"descricao":"01759 ERVA DOCE DA TERRINHA 15 G - CX 24","unid":24,"kg_fd":0,"pc_min":42.5,"maquina":"CANECA MIX 04"},{"cod":48751,"descricao":"01769 LOURO EM FOLHA DA TERRINHA 08 G  - CX 24","unid":24,"kg_fd":0,"pc_min":7.0,"maquina":"MANUAL EXT"},{"cod":72108,"descricao":"01774 MANJERICAO DA TERRINHA 10 G - CX 24","unid":24,"kg_fd":0,"pc_min":42.5,"maquina":"CANECA MIX 04"},{"cod":48696,"descricao":"01777 NOZ MOSCADA BOLA DA TERRINHA 08 G  - CX 24","unid":24,"kg_fd":0,"pc_min":8.0,"maquina":"MANUAL"},{"cod":48766,"descricao":"01782 OREGANO DA TERRINHA 08 G  - CX 24","unid":24,"kg_fd":0,"pc_min":42.5,"maquina":"CANECA MIX 04"},{"cod":51328,"descricao":"01784 OREGANO DA TERRINHA 100 G - FD 12","unid":12,"kg_fd":0,"pc_min":13.6,"maquina":"CANECA MIX 04"},{"cod":48642,"descricao":"01785 PAPRICA DOCE EM PO DA TERRINHA 15 G - CX 24","unid":24,"kg_fd":0,"pc_min":45.9,"maquina":"ROSCA MIX  03"},{"cod":71928,"descricao":"01786 OREGANO DA TERRINHA 200 G - CX 12","unid":12,"kg_fd":0,"pc_min":11.9,"maquina":"CANECA MIX 04"},{"cod":48624,"descricao":"01788 PAPRICA PICANTE EM PO DA TERRINHA 15 G  - CX 24","unid":24,"kg_fd":0,"pc_min":45.9,"maquina":"ROSCA MIX  03"},{"cod":48398,"descricao":"01800 PIMENTA CALABRESA FLOC DA TERRINHA 15 G - CX 24","unid":24,"kg_fd":0,"pc_min":42.5,"maquina":"CANECA MIX 04"},{"cod":72098,"descricao":"01804 PIMENTA COM  COMINHO PO DA TERRINHA 50G - CX 24","unid":24,"kg_fd":0,"pc_min":42.5,"maquina":"ROSCA MIX  03"},{"cod":72099,"descricao":"01806 PIMENTA DO REINO EM PO DA TERRINHA 20G - CX 24","unid":24,"kg_fd":0,"pc_min":42.5,"maquina":"ROSCA MIX  03"},{"cod":72100,"descricao":"01813 SALSA DESIDRATADA DA TERRINHA 08 G - CX 24","unid":24,"kg_fd":0,"pc_min":42.5,"maquina":"CANECA MIX 04"},{"cod":72101,"descricao":"01818 TEMPERO BAIANO PO DA TERRINHA 50 G - CX 24","unid":24,"kg_fd":0,"pc_min":42.5,"maquina":"CANECA MIX 05"},{"cod":74110,"descricao":"01821 TEMPERO PARA CARNE DA TERRINHA 50 G - CX 24","unid":24,"kg_fd":0,"pc_min":42.5,"maquina":"CANECA MIX 05"},{"cod":72102,"descricao":"01822 TEMPERO PARA CHURRASCO DA TERRINHA 40G - CX 24","unid":24,"kg_fd":0,"pc_min":42.5,"maquina":"CANECA MIX 05"},{"cod":50145,"descricao":"01825 TEMPERO PARA FRANGO DA TERRINHA 50 G - CX 24","unid":24,"kg_fd":0,"pc_min":42.5,"maquina":"CANECA MIX 05"},{"cod":54148,"descricao":"02606 FEIJAO BRANCO DA TERRINHA PREMIUM 500G CX12","unid":12,"kg_fd":0,"pc_min":11.0,"maquina":"IMAPACK 12"},{"cod":68867,"descricao":"09518 MISTURA PAO DE QUEIJO DA TERRINHA 250G - CX 12","unid":12,"kg_fd":0,"pc_min":20.4,"maquina":"MASIPACK 10"},{"cod":60848,"descricao":"09518 MISTURA PAO DE QUEIJO DA TERRINHA 250G-CX 24","unid":24,"kg_fd":0,"pc_min":20.4,"maquina":"MASIPACK 10"},{"cod":42771,"descricao":"10354 CAMOMILA COOP 10 G - FD 24","unid":24,"kg_fd":0,"pc_min":28.0,"maquina":"GOLPACK 06"},{"cod":42814,"descricao":"11506 FARINHA MILHO AMARELA COOP 500 G FD 10","unid":10,"kg_fd":0,"pc_min":27.2,"maquina":"MASIPACK 07- 08"},{"cod":42872,"descricao":"11521 TRIGO PARA KIBE COOP 500 G FD 12","unid":12,"kg_fd":0,"pc_min":8.0,"maquina":"MANUAL"},{"cod":68108,"descricao":"11559 ERVA CIDREIRA COOP 12 G - FD 24","unid":24,"kg_fd":0,"pc_min":39.0,"maquina":"CANECA MIX 04"},{"cod":42719,"descricao":"11710 BICARBONATO DE SODIO COOP 80 G FD 24","unid":24,"kg_fd":0,"pc_min":42.5,"maquina":"SELGRON 02"},{"cod":42773,"descricao":"11719 CANELA EM CASCA QUEBRADA COOP 25 G FD 24","unid":24,"kg_fd":0,"pc_min":8.0,"maquina":"MANUAL"},{"cod":42470,"descricao":"11726 CANELA PO COOP 60G FD 24","unid":24,"kg_fd":0,"pc_min":41.0,"maquina":"ROSCA MIX  03"},{"cod":42775,"descricao":"11737 COLORIFICO COOP 80 G - FD 24","unid":24,"kg_fd":0,"pc_min":46.75,"maquina":"SELGRON 01"},{"cod":42721,"descricao":"11746 COMINHO EM PO COOP 70 G FD 24","unid":24,"kg_fd":0,"pc_min":38.25,"maquina":"ROSCA MIX  03"},{"cod":42723,"descricao":"11756 CURRY EM PO COOP 60 G FD 24","unid":24,"kg_fd":0,"pc_min":41.0,"maquina":"ROSCA MIX  03"},{"cod":42725,"descricao":"11770 LOURO EM FOLHAS COOP 10 G FD 24","unid":24,"kg_fd":0,"pc_min":5.0,"maquina":"MANUAL EXT"},{"cod":48395,"descricao":"11787 PAPRICA DOCE EM PO COOP 50 G FD 24","unid":24,"kg_fd":0,"pc_min":42.0,"maquina":"ROSCA MIX  03"},{"cod":42985,"descricao":"11801 PIMENTA CALABRESA FLOCOS COOP 30 G FD 24","unid":24,"kg_fd":0,"pc_min":8.0,"maquina":"MANUAL"},{"cod":42981,"descricao":"11808 PIMENTA DO REINO EM PO COOP 70 G FD 24","unid":24,"kg_fd":0,"pc_min":41.0,"maquina":"ROSCA MIX  03"},{"cod":43001,"descricao":"11818 TEMPERO BAIANO PO COOP 50 G FD 24","unid":24,"kg_fd":0,"pc_min":42.5,"maquina":"CANECA MIX 05"},{"cod":52655,"descricao":"12503 FARINHA MANDIOCA TORRADA OBA 500 G CX 12","unid":12,"kg_fd":0,"pc_min":8.0,"maquina":"MANUAL"},{"cod":52653,"descricao":"12505 FARINHA MANDIOCA CRUA GROSSA OBA 250 G CX 12","unid":12,"kg_fd":0,"pc_min":8.0,"maquina":"MANUAL"},{"cod":52656,"descricao":"12506 FARINHA MILHO AMARELA OBA 250 G CX 12.0","unid":12,"kg_fd":0,"pc_min":8.0,"maquina":"MANUAL"},{"cod":52661,"descricao":"12515 FUBA MIMOSO OBA 500 g CX 12.0","unid":12,"kg_fd":0,"pc_min":8.0,"maquina":"MANUAL"},{"cod":52667,"descricao":"12517 POLVILHO AZEDO OBA 500G CX 12","unid":12,"kg_fd":0,"pc_min":8.0,"maquina":"MANUAL"},{"cod":52668,"descricao":"12518 POLVILHO DOCE OBA 500 G CX 12","unid":12,"kg_fd":0,"pc_min":8.0,"maquina":"MANUAL"},{"cod":52648,"descricao":"12603 CANJICA BRANCA OBA 500 G CX 12","unid":12,"kg_fd":0,"pc_min":8.0,"maquina":"MANUAL"},{"cod":52649,"descricao":"12604 CANJIQUINHA OBA 500 G CX 12.0","unid":12,"kg_fd":0,"pc_min":8.0,"maquina":"MANUAL"},{"cod":52651,"descricao":"12605 ERVILHA VERDE PARTIDA OBA 500 G CX 12","unid":12,"kg_fd":0,"pc_min":8.0,"maquina":"MANUAL"},{"cod":52663,"descricao":"12607 GRAO DE BICO OBA 500 G CX 12","unid":12,"kg_fd":0,"pc_min":8.0,"maquina":"MANUAL"},{"cod":52665,"descricao":"12608 LENTILHA OBA 500 G CX 12","unid":12,"kg_fd":0,"pc_min":8.0,"maquina":"MANUAL"},{"cod":52666,"descricao":"12609 MILHO PIPOCA OBA 500 G CX 12.0","unid":12,"kg_fd":0,"pc_min":8.0,"maquina":"MANUAL"},{"cod":75359,"descricao":"14701 - ACAFRAO MERCADAO 30 g  - UND CX 24.0","unid":24,"kg_fd":0,"pc_min":42.5,"maquina":"ROSCA MIX  03"},{"cod":75360,"descricao":"14708 - BICARBONATO DE SODIO MERCADAO 20 G - CX 24","unid":24,"kg_fd":0,"pc_min":42.5,"maquina":"SELGRON 02"},{"cod":75369,"descricao":"14717 CANELA CASCA QUEBRADA MERCADAO 10 G  - CX 24","unid":24,"kg_fd":0,"pc_min":25.5,"maquina":"GOLPACK 06"},{"cod":75361,"descricao":"14723 - CANELA PO MERCADAO 20 g - UND CX 24.0","unid":24,"kg_fd":0,"pc_min":42.5,"maquina":"ROSCA MIX  03"},{"cod":75363,"descricao":"14736 COLORIFICO MERCADAO 70 G  - CX 24","unid":24,"kg_fd":0,"pc_min":46.75,"maquina":"SELGRON 01"},{"cod":75364,"descricao":"14750 CRAVO DA INDIA MERCADAO 10G - CX 24","unid":24,"kg_fd":0,"pc_min":25.5,"maquina":"GOLPACK 06"},{"cod":75372,"descricao":"14769 LOURO EM FOLHA MERCADAO 08 G  - CX 24","unid":24,"kg_fd":0,"pc_min":5.0,"maquina":"MANUAL EXT"},{"cod":75365,"descricao":"14774 - MANJERICAO MERCADAO 10G - UND CX 24.0","unid":24,"kg_fd":0,"pc_min":42.5,"maquina":"CANECA MIX 04"},{"cod":75366,"descricao":"14782 OREGANO MERCADAO 08 G - CX 24","unid":24,"kg_fd":0,"pc_min":42.5,"maquina":"CANECA MIX 04"},{"cod":75367,"descricao":"14785 - PAPRICA DOCE EM PO MERCADAO 15 G - CX 24","unid":24,"kg_fd":0,"pc_min":45.9,"maquina":"ROSCA MIX  03"},{"cod":75370,"descricao":"14788 PAPRICA PICANTE EM PO MERCADAO 15 G - CX 24","unid":24,"kg_fd":0,"pc_min":45.9,"maquina":"ROSCA MIX  03"},{"cod":75373,"descricao":"14800 PIMENTA CALABRESA FLOC MERCADAO 15 G - CX 24","unid":24,"kg_fd":0,"pc_min":42.5,"maquina":"CANECA MIX 04"},{"cod":75374,"descricao":"14806 PIMENTA DO REINO EM PO MERCADAO 20G - CX 24","unid":24,"kg_fd":0,"pc_min":42.5,"maquina":"ROSCA MIX  03"},{"cod":75375,"descricao":"14818 TEMPERO BAIANO PO MERCADAO 50 G - CX 24","unid":24,"kg_fd":0,"pc_min":42.5,"maquina":"CANECA MIX 05"},{"cod":75376,"descricao":"14825 TEMPERO PARA FRANGO MERCADAO 50 G - CX 24","unid":24,"kg_fd":0,"pc_min":42.5,"maquina":"CANECA MIX 05"},{"cod":71725,"descricao":"20978 PIMENTA REINO DA TERRINHA 1 kg - CX 6.0","unid":6,"kg_fd":0,"pc_min":8.0,"maquina":"MANUAL"},{"cod":71695,"descricao":"21706 ALHO DESIDRATADO GRANULADO TERRINHA 1 KG - CX 06","unid":6,"kg_fd":0,"pc_min":8.0,"maquina":"MANUAL"},{"cod":71699,"descricao":"21707 CANELA CASCA DA TERRINHA 500G - CX 06","unid":6,"kg_fd":0,"pc_min":5.0,"maquina":"MANUAL"},{"cod":71723,"descricao":"21785 OREGANO DA TERRINHA 500 G - CX 06","unid":6,"kg_fd":0,"pc_min":5.0,"maquina":"MANUAL"},{"cod":71719,"descricao":"21787 LENTILHA DA TERRINHA 2 KG - CX 06","unid":6,"kg_fd":0,"pc_min":8.0,"maquina":"MANUAL"},{"cod":71697,"descricao":"21788 CANJICA MILHO DA TERRINHA 2 KG - CX 06","unid":6,"kg_fd":0,"pc_min":8.0,"maquina":"MANUAL"},{"cod":71701,"descricao":"21789 COLORIFICO DA TERRINHA 1 KG - CX 06 (OBA)","unid":6,"kg_fd":0,"pc_min":8.0,"maquina":"MANUAL"},{"cod":71729,"descricao":"21790 UVA PASSA PRETA DA TERRINHA 1 KG - CX 06","unid":6,"kg_fd":0,"pc_min":8.0,"maquina":"MANUAL"},{"cod":71727,"descricao":"21791 TRIGO PARA KIBE DA TERRINHA 2 KG - CX 06","unid":6,"kg_fd":0,"pc_min":8.0,"maquina":"MANUAL"},{"cod":71717,"descricao":"21792 GRAO DE BICO DA TERRINHA 2 KG - CX 06","unid":6,"kg_fd":0,"pc_min":8.0,"maquina":"MANUAL"},{"cod":71715,"descricao":"21793 FUBA MIMOSO DA TERRINHA 2 KG - CX 06","unid":6,"kg_fd":0,"pc_min":8.0,"maquina":"MANUAL"},{"cod":71707,"descricao":"21795 FARINHA ROSCA DA TERRINHA 2 KG - CX 06","unid":6,"kg_fd":0,"pc_min":8.0,"maquina":"MANUAL"},{"cod":71711,"descricao":"21796 FARINHA MILHO AMARELA DA TERRINHA 2 KG - CX 03","unid":3,"kg_fd":0,"pc_min":8.0,"maquina":"MANUAL"},{"cod":71709,"descricao":"21797 FARINHA MANDIOCA CRUA FINA DA TERRINHA 2KG - CX 06","unid":6,"kg_fd":0,"pc_min":8.0,"maquina":"MANUAL"},{"cod":71705,"descricao":"21798 CUSCUZ DA TERRINHA 2 KG - CX 06","unid":6,"kg_fd":0,"pc_min":8.0,"maquina":"MANUAL"},{"cod":71703,"descricao":"21799 COMINHO EM PO DA TERRINHA 1 kg - CX 06","unid":6,"kg_fd":0,"pc_min":8.0,"maquina":"MANUAL"},{"cod":75317,"descricao":"22515 FUBA MIMOSO RANCHO 700G - CX 24","unid":24,"kg_fd":0,"pc_min":8.0,"maquina":"MANUAL"},{"cod":75316,"descricao":"22516 FARINHA MANDIOCA TORRADA RANCHO 700G - CX 24","unid":24,"kg_fd":0,"pc_min":8.0,"maquina":"MANUAL"},{"cod":93367,"descricao":"CANJICA BRANCA DA TERRINHA 5 KG - FD 5","unid":5,"kg_fd":0,"pc_min":8.0,"maquina":"MANUAL"},{"cod":42793,"descricao":"GRAO DE BICO COOP 500 G FD 12","unid":12,"kg_fd":0,"pc_min":8.0,"maquina":"MANUAL"},{"cod":93369,"descricao":"MILHO DE PIPOCA DA TERRINHA 5 KG - FD 5","unid":5,"kg_fd":0,"pc_min":8.0,"maquina":"MANUAL"},{"cod":100863,"descricao":"MILHO PIPOCA DA TERRINHA 1KG - CX 12","unid":12,"kg_fd":0,"pc_min":25.0,"maquina":"ALFATECK 14"},{"cod":100863,"descricao":"MILHO PIPOCA DA TERRINHA 1KG - CX 12","unid":12,"kg_fd":0,"pc_min":25.0,"maquina":"ALFATECK 15"},{"cod":100863,"descricao":"MILHO PIPOCA DA TERRINHA 1KG - CX 12","unid":12,"kg_fd":0,"pc_min":25.0,"maquina":"ALFATECK 16"},{"cod":42859,"descricao":"POLVILHO AZEDO COOP 500 G FD 12","unid":12,"kg_fd":0,"pc_min":8.0,"maquina":"MANUAL"},{"cod":42861,"descricao":"POLVILHO DOCE COOP 500 G FD 12","unid":12,"kg_fd":0,"pc_min":8.0,"maquina":"MANUAL"},{"cod":70448,"descricao":"SEMOLA DE MILHO MESTRE CUCA 1 kg - UND FD 12.0","unid":12,"kg_fd":0,"pc_min":8.0,"maquina":"MANUAL"},{"cod":980605,"descricao":"01614 CANJICA BRANCA DA TERRINHA 400 G - CX 12","unid":12,"kg_fd":0,"pc_min":28.05,"maquina":"ALFATECK 15"},{"cod":980607,"descricao":"01615 ERVILHA PARTIDA DA TERRINHA 350 G - CX 12","unid":12,"kg_fd":0,"pc_min":28.05,"maquina":"ALFATECK 15"},{"cod":980649,"descricao":"01616 GRAO DE BICO DA TERRINHA 350 G - CX 12","unid":12,"kg_fd":0,"pc_min":28.05,"maquina":"ALFATECK 15"},{"cod":980641,"descricao":"01617 LENTILHA DA TERRINHA 350 G - CX 12","unid":12,"kg_fd":0,"pc_min":28.05,"maquina":"ALFATECK 15"},{"cod":980643,"descricao":"01618 MILHO PIPOCA DA TERRINHA 400 G - CX 12","unid":12,"kg_fd":0,"pc_min":28.05,"maquina":"ALFATECK 15"},{"cod":1000863,"descricao":"MILHO PIPOCA DA TERRINHA 1KG - CX 12","unid":12,"kg_fd":0,"pc_min":25.0,"maquina":"ALFATECK 15"},{"cod":980705,"descricao":"01614 CANJICA BRANCA DA TERRINHA 400 G - CX 12","unid":12,"kg_fd":0,"pc_min":28.05,"maquina":"ALFATECK 16"},{"cod":980707,"descricao":"01615 ERVILHA PARTIDA DA TERRINHA 350 G - CX 12","unid":12,"kg_fd":0,"pc_min":28.05,"maquina":"ALFATECK 16"},{"cod":980749,"descricao":"01616 GRAO DE BICO DA TERRINHA 350 G - CX 12","unid":12,"kg_fd":0,"pc_min":28.05,"maquina":"ALFATECK 16"},{"cod":980741,"descricao":"01617 LENTILHA DA TERRINHA 350 G - CX 12","unid":12,"kg_fd":0,"pc_min":28.05,"maquina":"ALFATECK 16"},{"cod":980743,"descricao":"01618 MILHO PIPOCA DA TERRINHA 400 G - CX 12","unid":12,"kg_fd":0,"pc_min":28.05,"maquina":"ALFATECK 16"},{"cod":1000963,"descricao":"MILHO PIPOCA DA TERRINHA 1KG - CX 12","unid":12,"kg_fd":0,"pc_min":25.0,"maquina":"ALFATECK 16"}];
-const FICHA_TECNICA=[{"cod":304,"desc":"00001 TAPIOCA DA TERRINHA 1 kg - CX 12","unid":12,"pc_min":75.0,"maquina":"FILIAL","insumos":[]},{"cod":27745,"desc":"00001 TAPIOCA DA TERRINHA 1 kg - FD 12","unid":12,"pc_min":75.0,"maquina":"FILIAL","insumos":[]},{"cod":89620,"desc":"00014 TAPIOCA DA TERRINHA GRANULADA 5 KG - FD 5","unid":5,"pc_min":5.0,"maquina":"MANUAL","insumos":[{"insumo":"SACO PLASTICO FARDO LISO 50 X 75 UNID","qty":1.0},{"insumo":"MP - TAPIOCA GRANULADA TIPO1","qty":25.0},{"insumo":"SACO PLASTICO FARDO LISO  35 X 45 UNID","qty":5.0}]},{"cod":80647,"desc":"00019 TAPIOCA DA TERRINHA GRANULADA 400 G - CX 12","unid":12,"pc_min":17.0,"maquina":"IMAPACK 12","insumos":[{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.003704},{"insumo":"MP - TAPIOCA GRANULADA TIPO1","qty":4.848},{"insumo":"BOBINA TAPIOCA GRANULADA PREMIUM DA TERRINHA 400 G","qty":0.054},{"insumo":"CAIXA PAPELAO GRAOS E FARINACEOS PREMIUM MAIOR","qty":1.0}]},{"cod":94691,"desc":"00931 COCO RALADO DESIDRATADO DA TERRINHA 50 G -  CX 40","unid":40,"pc_min":42.5,"maquina":"MASIPACK 07- 08","insumos":[{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.003846},{"insumo":"MP - COCO RALADO FINO KG","qty":2.28},{"insumo":"BOBINA COCO RALADO DA TERRINHA DESIDRATADO 50 G","qty":0.136149},{"insumo":"CAIXA COCO RALADO","qty":1.0}]},{"cod":79002,"desc":"00931 COCO RALADO DESIDRATADO DA TERRINHA 50 G -  CX 50","unid":50,"pc_min":42.5,"maquina":"MASIPACK 07- 08","insumos":[{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.003846},{"insumo":"MP - COCO RALADO FINO KG","qty":2.85},{"insumo":"BOBINA COCO RALADO DA TERRINHA DESIDRATADO 50 G","qty":0.170186},{"insumo":"CAIXA COCO RALADO","qty":1.0}]},{"cod":79003,"desc":"00932 COCO RALADO DESIDRATADO DATERRINHA 100 G - CX 24","unid":24,"pc_min":42.5,"maquina":"MASIPACK 07- 08","insumos":[{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.003846},{"insumo":"MP - COCO RALADO FINO KG","qty":2.449992},{"insumo":"BOBINA COCO RALADO DESIDRATADO DA TERRINHA 100 G","qty":0.103593},{"insumo":"CAIXA COCO RALADO","qty":1.0}]},{"cod":79005,"desc":"00933 COCO RALADO UMIDO ADOCADO DA TERRINHA 50 G - CX 50","unid":50,"pc_min":42.5,"maquina":"MASIPACK 07- 08","insumos":[{"insumo":"SACO PLASTICO FARDO LISO 60 X 100 UNID","qty":0.082449},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.003846},{"insumo":"MP - AGUA PRODUCAO ML","qty":0.137415},{"insumo":"MP - METABISSULFITO OKKER KG","qty":0.002611},{"insumo":"MP - COCO RALADO FINO KG","qty":1.648976},{"insumo":"MP - PROPILENOGLICOL 1KG","qty":0.002611},{"insumo":"BOBINA COCO RALADO UMIDO ADOCADO DA TERRINHA 50 G","qty":0.173949},{"insumo":"CAIXA COCO RALADO","qty":1.0},{"insumo":"MP - ACUCAR DE CONFEITEIRO","qty":0.824488}]},{"cod":79006,"desc":"00934 COCO RALADO UMIDO ADOCADO DA TERRINHA 100 G - CX 24","unid":24,"pc_min":42.5,"maquina":"MASIPACK 07- 08","insumos":[{"insumo":"SACO PLASTICO FARDO LISO 60 X 100 UNID","qty":0.077214},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.003846},{"insumo":"MP - AGUA PRODUCAO ML","qty":0.12869},{"insumo":"MP - METABISSULFITO OKKER KG","qty":0.002445},{"insumo":"MP - COCO RALADO FINO KG","qty":1.544275},{"insumo":"MP - PROPILENOGLICOL 1KG","qty":0.002445},{"insumo":"BOBINA COCO RALADO UMIDO ADOCADO DA TERRINHA 100 G","qty":0.104949},{"insumo":"CAIXA COCO RALADO","qty":1.0},{"insumo":"MP - ACUCAR DE CONFEITEIRO","qty":0.772137}]},{"cod":79007,"desc":"00935 COCO FLOCOS UMIDO ADOCADO DA TERRINHA 100 G - CX 24","unid":24,"pc_min":42.5,"maquina":"MASIPACK 07- 08","insumos":[{"insumo":"SACO PLASTICO FARDO LISO 60 X 100 UNID","qty":0.077227},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.003846},{"insumo":"MP - AGUA PRODUCAO ML","qty":0.128711},{"insumo":"MP - METABISSULFITO OKKER KG","qty":0.002446},{"insumo":"MP - COCO RALADO EM FLOCOS KG","qty":1.544532},{"insumo":"MP - PROPILENOGLICOL 1KG","qty":0.002446},{"insumo":"BOBINA COCO FLOCOS UMIDO ADOCADO DA TERRINHA 100 G","qty":0.104949},{"insumo":"CAIXA COCO RALADO","qty":1.0},{"insumo":"MP - ACUCAR DE CONFEITEIRO","qty":0.772266}]},{"cod":48023,"desc":"01506 FARINHA MILHO AMARELA DA TERRINHA 500 G FD10","unid":10,"pc_min":27.2,"maquina":"MASIPACK 07- 08","insumos":[{"insumo":"SACO PLASTICO FARDO LISO 50 X 75 UNID","qty":1.0},{"insumo":"MP - FARINHA DE MILHO AMARELA  KG","qty":5.128206},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.006944},{"insumo":"BOBINA FARINHA DE MILHO AMARELA 500 G","qty":0.08}]},{"cod":48005,"desc":"01516 FUBA PRE COZIDO DA TERRINHA 500 G FD 12","unid":12,"pc_min":8.0,"maquina":"MANUAL","insumos":[]},{"cod":61828,"desc":"01602 CANJICA AMARELA DA TERRINHA 500 G - FD 12","unid":12,"pc_min":27.2,"maquina":"OLC 13","insumos":[{"insumo":"MP - CANJICA AMARELA  KG","qty":6.1},{"insumo":"MP - SACO PLASTICO FARDO LISO 29 X 55 UNID","qty":1.0},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.003333},{"insumo":"BOBINA CANJICA AMARELA DA TERRINHA 500 G","qty":0.096}]},{"cod":87960,"desc":"01602 CANJICA AMARELA DA TERRINHA 500G - EXP CX 12","unid":12,"pc_min":27.2,"maquina":"OLC 13","insumos":[{"insumo":"MP - CANJICA AMARELA  KG","qty":6.1},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.003333},{"insumo":"CAIXA PAPELAO GRAOS E FARINACEO TERRINHA","qty":1.0},{"insumo":"BOBINA CANJICA AMARELA DA TERRINHA 500 G","qty":0.096}]},{"cod":52688,"desc":"01604 CANJIQUINHA XEREM DA TERRINHA 500 G FD 12","unid":12,"pc_min":27.2,"maquina":"OLC 13","insumos":[{"insumo":"MP - CANJIQUINHA DE MILHO / MASTER G1 KG","qty":6.0},{"insumo":"MP - SACO PLASTICO FARDO LISO 29 X 55 UNID","qty":1.0},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.003333},{"insumo":"BOBINA CANJIQUINHA DA TERRINHA 500 G","qty":0.072}]},{"cod":78601,"desc":"01612 SAGU DE MANDIOCA 5 KG","unid":5,"pc_min":5.0,"maquina":"MANUAL","insumos":[]},{"cod":80605,"desc":"01614 CANJICA BRANCA DA TERRINHA 400 G - CX 12","unid":12,"pc_min":28.05,"maquina":"ALFATECK 14","insumos":[{"insumo":"MP - CANJICA BRANCA KG","qty":4.880001},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.003125},{"insumo":"BOBINA CANJICA BRANCA PREMIUM DA TERRINHA 400 G","qty":0.054},{"insumo":"CAIXA PAPELAO GRAOS E FARINACEOS PREMIUM MENOR","qty":1.0}]},{"cod":80605,"desc":"01614 CANJICA BRANCA DA TERRINHA 400 G - CX 12","unid":12,"pc_min":28.05,"maquina":"ALFATECK 15","insumos":[{"insumo":"MP - CANJICA BRANCA KG","qty":4.880001},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.003125},{"insumo":"BOBINA CANJICA BRANCA PREMIUM DA TERRINHA 400 G","qty":0.054},{"insumo":"CAIXA PAPELAO GRAOS E FARINACEOS PREMIUM MENOR","qty":1.0}]},{"cod":80605,"desc":"01614 CANJICA BRANCA DA TERRINHA 400 G - CX 12","unid":12,"pc_min":28.05,"maquina":"ALFATECK 16","insumos":[{"insumo":"MP - CANJICA BRANCA KG","qty":4.880001},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.003125},{"insumo":"BOBINA CANJICA BRANCA PREMIUM DA TERRINHA 400 G","qty":0.054},{"insumo":"CAIXA PAPELAO GRAOS E FARINACEOS PREMIUM MENOR","qty":1.0}]},{"cod":80607,"desc":"01615 ERVILHA PARTIDA DA TERRINHA 350 G - CX 12","unid":12,"pc_min":28.05,"maquina":"ALFATECK 14","insumos":[{"insumo":"MP - ERVILHA PARTIDA KG","qty":4.2},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.003125},{"insumo":"BOBINA ERVILHA DA TERRINHA PREMIUM 350 G","qty":0.054},{"insumo":"CAIXA PAPELAO GRAOS E FARINACEOS PREMIUM MENOR","qty":1.0}]},{"cod":80607,"desc":"01615 ERVILHA PARTIDA DA TERRINHA 350 G - CX 12","unid":12,"pc_min":28.05,"maquina":"ALFATECK 15","insumos":[{"insumo":"MP - ERVILHA PARTIDA KG","qty":4.2},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.003125},{"insumo":"BOBINA ERVILHA DA TERRINHA PREMIUM 350 G","qty":0.054},{"insumo":"CAIXA PAPELAO GRAOS E FARINACEOS PREMIUM MENOR","qty":1.0}]},{"cod":80607,"desc":"01615 ERVILHA PARTIDA DA TERRINHA 350 G - CX 12","unid":12,"pc_min":28.05,"maquina":"ALFATECK 16","insumos":[{"insumo":"MP - ERVILHA PARTIDA KG","qty":4.2},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.003125},{"insumo":"BOBINA ERVILHA DA TERRINHA PREMIUM 350 G","qty":0.054},{"insumo":"CAIXA PAPELAO GRAOS E FARINACEOS PREMIUM MENOR","qty":1.0}]},{"cod":80649,"desc":"01616 GRAO DE BICO DA TERRINHA 350 G - CX 12","unid":12,"pc_min":28.05,"maquina":"ALFATECK 14","insumos":[{"insumo":"MP - GRAO DE BICO 9MM KG","qty":4.27},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.003125},{"insumo":"BOBINA GRAO DE BICO PREMIUM DA TERRINHA 350 G","qty":0.054},{"insumo":"CAIXA PAPELAO GRAOS E FARINACEOS PREMIUM MAIOR","qty":1.0}]},{"cod":80649,"desc":"01616 GRAO DE BICO DA TERRINHA 350 G - CX 12","unid":12,"pc_min":28.05,"maquina":"ALFATECK 15","insumos":[{"insumo":"MP - GRAO DE BICO 9MM KG","qty":4.27},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.003125},{"insumo":"BOBINA GRAO DE BICO PREMIUM DA TERRINHA 350 G","qty":0.054},{"insumo":"CAIXA PAPELAO GRAOS E FARINACEOS PREMIUM MAIOR","qty":1.0}]},{"cod":80649,"desc":"01616 GRAO DE BICO DA TERRINHA 350 G - CX 12","unid":12,"pc_min":28.05,"maquina":"ALFATECK 16","insumos":[{"insumo":"MP - GRAO DE BICO 9MM KG","qty":4.27},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.003125},{"insumo":"BOBINA GRAO DE BICO PREMIUM DA TERRINHA 350 G","qty":0.054},{"insumo":"CAIXA PAPELAO GRAOS E FARINACEOS PREMIUM MAIOR","qty":1.0}]},{"cod":80641,"desc":"01617 LENTILHA DA TERRINHA 350 G - CX 12","unid":12,"pc_min":28.05,"maquina":"ALFATECK 14","insumos":[{"insumo":"MP - LENTILHA KG","qty":4.2},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.0025},{"insumo":"BOBINA LENTILHA PREMIUM DA TERRINHA 350 G","qty":0.054},{"insumo":"CAIXA PAPELAO GRAOS E FARINACEOS PREMIUM MENOR","qty":1.0}]},{"cod":80641,"desc":"01617 LENTILHA DA TERRINHA 350 G - CX 12","unid":12,"pc_min":28.05,"maquina":"ALFATECK 15","insumos":[{"insumo":"MP - LENTILHA KG","qty":4.2},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.0025},{"insumo":"BOBINA LENTILHA PREMIUM DA TERRINHA 350 G","qty":0.054},{"insumo":"CAIXA PAPELAO GRAOS E FARINACEOS PREMIUM MENOR","qty":1.0}]},{"cod":80641,"desc":"01617 LENTILHA DA TERRINHA 350 G - CX 12","unid":12,"pc_min":28.05,"maquina":"ALFATECK 16","insumos":[{"insumo":"MP - LENTILHA KG","qty":4.2},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.0025},{"insumo":"BOBINA LENTILHA PREMIUM DA TERRINHA 350 G","qty":0.054},{"insumo":"CAIXA PAPELAO GRAOS E FARINACEOS PREMIUM MENOR","qty":1.0}]},{"cod":80643,"desc":"01618 MILHO PIPOCA DA TERRINHA 400 G - CX 12","unid":12,"pc_min":28.05,"maquina":"ALFATECK 14","insumos":[{"insumo":"MP - MILHO DE PIPOCA KG","qty":4.880001},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.003571},{"insumo":"BOBINA MILHO DE PIPOCA PREMIUM DA TERRINHA 400G","qty":0.054},{"insumo":"CAIXA PAPELAO GRAOS E FARINACEOS PREMIUM MENOR","qty":1.0}]},{"cod":80643,"desc":"01618 MILHO PIPOCA DA TERRINHA 400 G - CX 12","unid":12,"pc_min":28.05,"maquina":"ALFATECK 15","insumos":[{"insumo":"MP - MILHO DE PIPOCA KG","qty":4.880001},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.003571},{"insumo":"BOBINA MILHO DE PIPOCA PREMIUM DA TERRINHA 400G","qty":0.054},{"insumo":"CAIXA PAPELAO GRAOS E FARINACEOS PREMIUM MENOR","qty":1.0}]},{"cod":80643,"desc":"01618 MILHO PIPOCA DA TERRINHA 400 G - CX 12","unid":12,"pc_min":28.05,"maquina":"ALFATECK 16","insumos":[{"insumo":"MP - MILHO DE PIPOCA KG","qty":4.880001},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.003571},{"insumo":"BOBINA MILHO DE PIPOCA PREMIUM DA TERRINHA 400G","qty":0.054},{"insumo":"CAIXA PAPELAO GRAOS E FARINACEOS PREMIUM MENOR","qty":1.0}]},{"cod":83381,"desc":"01619 SAGU MANDIOCA DA TERRINHA 400 G - CX 12","unid":12,"pc_min":16.0,"maquina":"IMAPACK 12","insumos":[{"insumo":"MP - SAGU MANDIOCA (TIPO 1) KG","qty":4.880001},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.003846},{"insumo":"BOBINA SAGU PREMIUM DA TERRINHA 400 G","qty":0.054},{"insumo":"CAIXA PAPELAO GRAOS E FARINACEOS PREMIUM MAIOR","qty":1.0}]},{"cod":48723,"desc":"01701 ACAFRAO DA TERRINHA 30 G  - CX 24","unid":24,"pc_min":42.5,"maquina":"ROSCA MIX  03","insumos":[{"insumo":"MP - ACAFRAO/CURCUMA MOIDA KG","qty":0.766},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.001724},{"insumo":"BOBINA ACAFRAO DA TERRINHA 30 G","qty":0.06833},{"insumo":"CAIXA PAPELAO ESPECIARIAS DA TERRINHA - UNID","qty":1.0}]},{"cod":48783,"desc":"01702 ALECRIM DA TERRINHA 06 G  - CX 24","unid":24,"pc_min":25.5,"maquina":"GOLPACK 06","insumos":[{"insumo":"MP - ALECRIM KG","qty":0.155963},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.001724},{"insumo":"BOBINA ALECRIM DA TERRINHA 6 G","qty":0.0564},{"insumo":"CAIXA PAPELAO ESPECIARIAS DA TERRINHA - UNID","qty":1.0}]},{"cod":48392,"desc":"01703 ALHO DESID FLOCOS DA TERRINHA 25 G - CX 24","unid":24,"pc_min":25.5,"maquina":"GOLPACK 06","insumos":[{"insumo":"MP - ALHO DESIDRATADO FLOCOS KG","qty":0.6},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.001724},{"insumo":"BOBINA ALHO DESID FLOCOS DA TERRINHA 25 G","qty":0.0564},{"insumo":"CAIXA PAPELAO ESPECIARIAS DA TERRINHA - UNID","qty":1.0}]},{"cod":48064,"desc":"01704 ALHO DESIDRATADO GRANULADO DA TERRINHA 20 G - CX 24","unid":24,"pc_min":42.5,"maquina":"GOLPACK 06","insumos":[{"insumo":"MP - ALHO DESIDRATADO GRANULADO KG","qty":0.495049},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.001724},{"insumo":"BOBINA ALHO DESID GRANULADO DA TERRINHA 20 G","qty":0.0564},{"insumo":"CAIXA PAPELAO ESPECIARIAS DA TERRINHA - UNID","qty":1.0}]},{"cod":72091,"desc":"01708 BICARBONATO DE SODIO DA TERRINHA 20 G -  CX 24","unid":24,"pc_min":42.5,"maquina":"SELGRON 02","insumos":[{"insumo":"MP - BICARBONATO DE SODIO KG","qty":0.528},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.001724},{"insumo":"BOBINA BICARBONATO DE SODIO DA TERRINHA 20 G","qty":0.0564},{"insumo":"CAIXA PAPELAO ESPECIARIAS DA TERRINHA - UNID","qty":1.0}]},{"cod":72092,"desc":"01710 BICARBONATO DE SODIO DA TERRINHA 80 G - CX 24","unid":24,"pc_min":42.5,"maquina":"SELGRON 02","insumos":[{"insumo":"MP - BICARBONATO DE SODIO KG","qty":1.98},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.001724},{"insumo":"BOBINA BICARBONATO DE SODIO DA TERRINHA 80 G","qty":0.06},{"insumo":"CAIXA PAPELAO ESPECIARIAS DA TERRINHA - UNID","qty":1.0}]},{"cod":72170,"desc":"01712 BICARBONATO DE SODIO DA TERRINHA 500 G - FD 06","unid":6,"pc_min":25.5,"maquina":"SELGRON 02","insumos":[]},{"cod":48787,"desc":"01715 CAMOMILA DA TERRINHA 06 G  - CX 24","unid":24,"pc_min":25.5,"maquina":"GOLPACK 06","insumos":[{"insumo":"MP - CAMOMILA FLOR KG","qty":0.168},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.001724},{"insumo":"BOBINA CAMOMILA DA TERRINHA 6 G","qty":0.0564},{"insumo":"CAIXA PAPELAO ESPECIARIAS DA TERRINHA - UNID","qty":1.0}]},{"cod":48667,"desc":"01717 CANELA CASCA QUEBRADA DA TERRINHA 10 G  - CX 24","unid":24,"pc_min":25.5,"maquina":"GOLPACK 06","insumos":[{"insumo":"MP - CANELA CASCA INTEIRA / QUEBRADA KG","qty":0.25656},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.001724},{"insumo":"CAIXA PAPELAO ESPECIARIAS DA TERRINHA - UNID","qty":1.0},{"insumo":"BOBINA CANELA EM CASCA DA TERRINHA 10GR","qty":0.0564}]},{"cod":48685,"desc":"01723 CANELA PO DA TERRINHA 20 G  - CX 24","unid":24,"pc_min":42.5,"maquina":"ROSCA MIX  03","insumos":[{"insumo":"MP - CANELA PO MOIDA KG","qty":0.516},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.001724},{"insumo":"BOBINA CANELA PO DA TERRINHA 20 G","qty":0.0636},{"insumo":"CAIXA PAPELAO ESPECIARIAS DA TERRINHA - UNID","qty":1.0}]},{"cod":72093,"desc":"01732 CHIMICHURRI DA TERRINHA 20G - CX 24","unid":24,"pc_min":42.5,"maquina":"CANECA MIX 05","insumos":[{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.001724},{"insumo":"MP - CHIMICHURRI KG","qty":0.504},{"insumo":"BOBINA CHIMICHURRI FLOCOS DA TERRINHA 20 G","qty":0.0564},{"insumo":"CAIXA PAPELAO ESPECIARIAS DA TERRINHA - UNID","qty":1.0}]},{"cod":74109,"desc":"01734 COENTRO EM PO DA TERRINHA 18 G  - CX 24","unid":24,"pc_min":41.0,"maquina":"ROSCA MIX  03","insumos":[{"insumo":"MP - COENTRO EM PO/ MOIDO KG","qty":0.447192},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.001724},{"insumo":"CAIXA PAPELAO ESPECIARIAS DA TERRINHA - UNID","qty":1.0},{"insumo":"BOBINA COENTRO EM PO DA TERRINHA 18 G","qty":0.0576}]},{"cod":72094,"desc":"01736 COLORIFICO DA TERRINHA 70 G  - CX 24","unid":24,"pc_min":46.75,"maquina":"SELGRON 01","insumos":[{"insumo":"SACO PLASTICO FARDO LISO 60 X 100 UNID","qty":0.06042},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.001724},{"insumo":"BOBINA COLORIFICO DA TERRINHA 70 G","qty":0.0612},{"insumo":"CAIXA PAPELAO ESPECIARIAS DA TERRINHA - UNID","qty":1.0},{"insumo":"MP  FUBA MEDIO KG","qty":1.66752},{"insumo":"MP  SUSPENSÃO OLEOSA URUCUM KG","qty":0.06042},{"insumo":"SACO PLASTICO FARDO LISO 60 X 100 UNID","qty":0.06014},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.001724},{"insumo":"BOBINA COLORIFICO DA TERRINHA 70 G","qty":0.0612},{"insumo":"CAIXA PAPELAO ESPECIARIAS DA TERRINHA - UNID","qty":1.0},{"insumo":"MP  FUBA MEDIO KG","qty":1.6598},{"insumo":"MP  SUSPENSÃO OLEOSA URUCUM KG","qty":0.06014}]},{"cod":50722,"desc":"01739 COLORIFICO DA TERRINHA 500 G - FD 12","unid":12,"pc_min":25.5,"maquina":"SELGRON 01","insumos":[{"insumo":"SACO PLASTICO FARDO LISO 40 X 60","qty":1.0},{"insumo":"SACO PLASTICO FARDO LISO 60 X 100 UNID","qty":0.213287},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.005208},{"insumo":"BOBINA COLORIFICO DA TERRINHA 500 G","qty":0.072},{"insumo":"MP  FUBA MEDIO KG","qty":5.8865},{"insumo":"MP  SUSPENSÃO OLEOSA URUCUM KG","qty":0.213287}]},{"cod":75956,"desc":"01743 COLORIFICO DA TERRINHA 1,01 KG - FD 12","unid":12,"pc_min":21.25,"maquina":"SELGRON 01","insumos":[{"insumo":"SACO PLASTICO FARDO LISO 40 X 60","qty":1.0},{"insumo":"SACO PLASTICO FARDO LISO 60 X 100 UNID","qty":0.430294},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.010417},{"insumo":"BOBINA COLORIFICO DA TERRINHA 1,01 KG","qty":0.121782},{"insumo":"MP  FUBA MEDIO KG","qty":11.875682},{"insumo":"MP  SUSPENSÃO OLEOSA URUCUM KG","qty":0.430294},{"insumo":"SACO PLASTICO FARDO LISO 40 X 60","qty":1.0},{"insumo":"SACO PLASTICO FARDO LISO 60 X 100 UNID","qty":0.423776},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.010417},{"insumo":"BOBINA COLORIFICO DA TERRINHA 1,01 KG","qty":0.121782},{"insumo":"MP  FUBA MEDIO KG","qty":11.6958},{"insumo":"MP  SUSPENSÃO OLEOSA URUCUM KG","qty":0.423776}]},{"cod":48705,"desc":"01745 COMINHO EM PO DA TERRINHA 50 G  - CX 24","unid":24,"pc_min":38.25,"maquina":"ROSCA MIX  03","insumos":[{"insumo":"MP - COMINHO PO / MOIDO KG","qty":1.224},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.001724},{"insumo":"BOBINA COMINHO EM PO DA TERRINHA 50 G","qty":0.06},{"insumo":"CAIXA PAPELAO ESPECIARIAS DA TERRINHA - UNID","qty":1.0}]},{"cod":72106,"desc":"01750 CRAVO DA INDIA DA TERRINHA 10 G - CX 24","unid":24,"pc_min":25.5,"maquina":"GOLPACK 06","insumos":[{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.001724},{"insumo":"MP - CRAVO DA INDIA FLOR KG","qty":0.285},{"insumo":"BOBINA CRAVO DA INDIA DA TERRINHA 10 G","qty":0.0564},{"insumo":"CAIXA PAPELAO ESPECIARIAS DA TERRINHA - UNID","qty":1.0}]},{"cod":73227,"desc":"01750 CRAVO DA INDIA DA TERRINHA 10 G - FD 12","unid":12,"pc_min":25.5,"maquina":"GOLPACK 06","insumos":[{"insumo":"SACO PLASTICO FARDO LISO 25 X 30  UNID","qty":1.0},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.001111},{"insumo":"MP - CRAVO DA INDIA FLOR KG","qty":0.1425},{"insumo":"BOBINA CRAVO DA INDIA DA TERRINHA 10 G","qty":0.0282}]},{"cod":72096,"desc":"01754 CURRY EM PO DA TERRINHA 15 G - CX 24","unid":24,"pc_min":45.9,"maquina":"ROSCA MIX  03","insumos":[{"insumo":"MP - CURRY KG","qty":0.396},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.001724},{"insumo":"BOBINA CURRY EM PO DA TERRINHA 15 G","qty":0.0564},{"insumo":"CAIXA PAPELAO ESPECIARIAS DA TERRINHA - UNID","qty":1.0}]},{"cod":72097,"desc":"01759 ERVA DOCE DA TERRINHA 15 G - CX 24","unid":24,"pc_min":42.5,"maquina":"CANECA MIX 04","insumos":[{"insumo":"MP - ERVA DOCE EM GRAO KG","qty":0.384},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.001724},{"insumo":"BOBINA ERVA DOCE DA TERRINHA 15 G","qty":0.0564},{"insumo":"CAIXA PAPELAO ESPECIARIAS DA TERRINHA - UNID","qty":1.0}]},{"cod":48751,"desc":"01769 LOURO EM FOLHA DA TERRINHA 08 G  - CX 24","unid":24,"pc_min":7.0,"maquina":"MANUAL EXT","insumos":[{"insumo":"MP - LOURO EM FOLHAS INTEIRAS KG","qty":0.2},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.001724},{"insumo":"CAIXA PAPELAO ESPECIARIAS DA TERRINHA - UNID","qty":1.0},{"insumo":"BOBINA LOURO EM FOLHA DA TERRINHA 8GR","qty":0.0564}]},{"cod":72108,"desc":"01774 MANJERICAO DA TERRINHA 10 G - CX 24","unid":24,"pc_min":42.5,"maquina":"CANECA MIX 04","insumos":[{"insumo":"MP - MANJERICAO FLOCOS KG","qty":0.264},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.001724},{"insumo":"BOBINA MANJERICAO DA TERRINHA 10 G.","qty":0.0564},{"insumo":"CAIXA PAPELAO ESPECIARIAS DA TERRINHA - UNID","qty":1.0}]},{"cod":48696,"desc":"01777 NOZ MOSCADA BOLA DA TERRINHA 08 G  - CX 24","unid":24,"pc_min":8.0,"maquina":"MANUAL","insumos":[{"insumo":"MP - NOZ MOSCADA BOLA KG","qty":0.2304},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.001724},{"insumo":"SACO PLAST NOZ MOSCADA BOLA DA TERRINHA 8GR","qty":24.0},{"insumo":"CAIXA PAPELAO ESPECIARIAS DA TERRINHA - UNID","qty":1.0}]},{"cod":48766,"desc":"01782 OREGANO DA TERRINHA 08 G  - CX 24","unid":24,"pc_min":42.5,"maquina":"CANECA MIX 04","insumos":[{"insumo":"MP - OREGANO FLOCOS KG","qty":0.216},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.001724},{"insumo":"BOBINA OREGANO DA TERRINHA 8 G","qty":0.0564},{"insumo":"CAIXA PAPELAO ESPECIARIAS DA TERRINHA - UNID","qty":1.0}]},{"cod":51328,"desc":"01784 OREGANO DA TERRINHA 100 G - FD 12","unid":12,"pc_min":13.6,"maquina":"CANECA MIX 04","insumos":[{"insumo":"MP - OREGANO FLOCOS KG","qty":1.212},{"insumo":"MP - SACO PLASTICO FARDO LISO 29 X 55 UNID","qty":1.0},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.001724},{"insumo":"BOBINA OREGANO DA TERRINHA 100 G","qty":0.06}]},{"cod":48642,"desc":"01785 PAPRICA DOCE EM PO DA TERRINHA 15 G - CX 24","unid":24,"pc_min":45.9,"maquina":"ROSCA MIX  03","insumos":[]},{"cod":71928,"desc":"01786 OREGANO DA TERRINHA 200 G - CX 12","unid":12,"pc_min":11.9,"maquina":"CANECA MIX 04","insumos":[]},{"cod":48624,"desc":"01788 PAPRICA PICANTE EM PO DA TERRINHA 15 G  - CX 24","unid":24,"pc_min":45.9,"maquina":"ROSCA MIX  03","insumos":[{"insumo":"MP - PAPRICA PICANTE EM PO/ MOIDO KG","qty":0.384},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.001724},{"insumo":"BOBINA PAPRICA PICANTE EM PO DA TERRINHA 15 G","qty":0.0564},{"insumo":"CAIXA PAPELAO ESPECIARIAS DA TERRINHA - UNID","qty":1.0}]},{"cod":48398,"desc":"01800 PIMENTA CALABRESA FLOC DA TERRINHA 15 G - CX 24","unid":24,"pc_min":42.5,"maquina":"CANECA MIX 04","insumos":[{"insumo":"MP - PIMENTA CALABRESA FLOCOS KG","qty":0.384},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.001724},{"insumo":"BOBINA PIMENTA CALABRESA EM FLOCOS DA TERRINHA 15 G","qty":0.0564},{"insumo":"CAIXA PAPELAO ESPECIARIAS DA TERRINHA - UNID","qty":1.0}]},{"cod":72098,"desc":"01804 PIMENTA COM  COMINHO PO DA TERRINHA 50G - CX 24","unid":24,"pc_min":42.5,"maquina":"ROSCA MIX  03","insumos":[{"insumo":"MP - PIMENTA COM COMINHO PO / MOIDO KG","qty":1.248},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.001724},{"insumo":"BOBINA PIMENTA COM COMINHO DA TERRINHA 50 G","qty":0.06},{"insumo":"CAIXA PAPELAO ESPECIARIAS DA TERRINHA - UNID","qty":1.0}]},{"cod":72099,"desc":"01806 PIMENTA DO REINO EM PO DA TERRINHA 20G - CX 24","unid":24,"pc_min":42.5,"maquina":"ROSCA MIX  03","insumos":[{"insumo":"MP - PIMENTA REINO PRETA PO/ MOIDA KG","qty":0.5292},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.001724},{"insumo":"BOBINA PIMENTA DO REINO EM PO DA TERRINHA 20 G","qty":0.0564},{"insumo":"CAIXA PAPELAO ESPECIARIAS DA TERRINHA - UNID","qty":1.0}]},{"cod":72100,"desc":"01813 SALSA DESIDRATADA DA TERRINHA 08 G - CX 24","unid":24,"pc_min":42.5,"maquina":"CANECA MIX 04","insumos":[{"insumo":"MP - SALSA DESIDRATADA  FLOCOS KG","qty":0.228},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.001724},{"insumo":"BOBINA SALSA DESIDRATADA 8 G","qty":0.0564},{"insumo":"CAIXA PAPELAO ESPECIARIAS DA TERRINHA - UNID","qty":1.0}]},{"cod":72101,"desc":"01818 TEMPERO BAIANO PO DA TERRINHA 50 G - CX 24","unid":24,"pc_min":42.5,"maquina":"CANECA MIX 05","insumos":[{"insumo":"MP - TEMPERO BAIANO KG","qty":1.248},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.001724},{"insumo":"BOBINA TEMPERO BAIANO E PO DA TERRINHA 50 G","qty":0.0564},{"insumo":"CAIXA PAPELAO ESPECIARIAS DA TERRINHA - UNID","qty":1.0}]},{"cod":74110,"desc":"01821 TEMPERO PARA CARNE DA TERRINHA 50 G - CX 24","unid":24,"pc_min":42.5,"maquina":"CANECA MIX 05","insumos":[{"insumo":"MP - TEMPERO PARA CARNE COM AMACIANTE KG","qty":1.23984},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.001724},{"insumo":"CAIXA PAPELAO ESPECIARIAS DA TERRINHA - UNID","qty":1.0},{"insumo":"BOBINA TEMPERO PARA CARNE DA TERRINHA 50 G","qty":0.0576}]},{"cod":72102,"desc":"01822 TEMPERO PARA CHURRASCO DA TERRINHA 40G - CX 24","unid":24,"pc_min":42.5,"maquina":"CANECA MIX 05","insumos":[{"insumo":"MP - TEMPERO PARA CHURRASCO KG","qty":1.008},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.001724},{"insumo":"BOBINA TEMPERO CHURRASCO EM PO DA TERRINHA 40 G","qty":0.0576},{"insumo":"CAIXA PAPELAO ESPECIARIAS DA TERRINHA - UNID","qty":1.0}]},{"cod":50145,"desc":"01825 TEMPERO PARA FRANGO DA TERRINHA 50 G - CX 24","unid":24,"pc_min":42.5,"maquina":"CANECA MIX 05","insumos":[{"insumo":"MP - TEMPERO PARA FRANGO E ARROZ KG","qty":1.24704},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.001724},{"insumo":"CAIXA PAPELAO ESPECIARIAS DA TERRINHA - UNID","qty":1.0},{"insumo":"BOBINA TEMPERO PARA FRANGO DA TERRINHA 50 G","qty":0.0576}]},{"cod":54148,"desc":"02606 FEIJAO BRANCO DA TERRINHA PREMIUM 500G CX12","unid":12,"pc_min":11.0,"maquina":"IMAPACK 12","insumos":[]},{"cod":68867,"desc":"09518 MISTURA PAO DE QUEIJO DA TERRINHA 250G - CX 12","unid":12,"pc_min":20.4,"maquina":"MASIPACK 10","insumos":[{"insumo":"MP - MISTURA PAO DE QUEIJO KG AMP 30","qty":3.0},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.008333},{"insumo":"BOBINA MISTURA PAO DE QUEIJO DA TERRINHA 250G","qty":0.096},{"insumo":"CAIXA PAPELAO GRAOS E FARINACEOS PREMIUM MAIOR","qty":1.0}]},{"cod":60848,"desc":"09518 MISTURA PAO DE QUEIJO DA TERRINHA 250G-CX 24","unid":24,"pc_min":20.4,"maquina":"MASIPACK 10","insumos":[{"insumo":"MP - MISTURA PAO DE QUEIJO KG AMP 30","qty":6.0},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.005495},{"insumo":"CAIXA PAPELAO LISA OKKER 6 X 2 KG","qty":1.0},{"insumo":"BOBINA MISTURA PAO DE QUEIJO DA TERRINHA 250G","qty":0.192}]},{"cod":42771,"desc":"10354 CAMOMILA COOP 10 G - FD 24","unid":24,"pc_min":28.0,"maquina":"GOLPACK 06","insumos":[]},{"cod":42814,"desc":"11506 FARINHA MILHO AMARELA COOP 500 G FD 10","unid":10,"pc_min":27.2,"maquina":"MASIPACK 07- 08","insumos":[{"insumo":"SACO PLASTICO FARDO LISO 40 X 60","qty":1.0},{"insumo":"MP - FARINHA DE MILHO AMARELA  KG","qty":5.0},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.003333},{"insumo":"SACO PLAST FARINHA MILHO AMAR COOP 500G","qty":10.0}]},{"cod":42872,"desc":"11521 TRIGO PARA KIBE COOP 500 G FD 12","unid":12,"pc_min":8.0,"maquina":"MANUAL","insumos":[{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.003333},{"insumo":"BOBINA TRIGO PARA KIBE COOP 500 G","qty":0.084},{"insumo":"INDL - TRIGO PARA KIBE COOP 500 GR","qty":12.0}]},{"cod":68108,"desc":"11559 ERVA CIDREIRA COOP 12 G - FD 24","unid":24,"pc_min":39.0,"maquina":"CANECA MIX 04","insumos":[]},{"cod":42719,"desc":"11710 BICARBONATO DE SODIO COOP 80 G FD 24","unid":24,"pc_min":42.5,"maquina":"SELGRON 02","insumos":[{"insumo":"MP - BICARBONATO DE SODIO KG","qty":1.98},{"insumo":"SACO PLASTICO FARDO LISO 27 X 40 UNID","qty":1.0},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.005556},{"insumo":"BOBINA BICARBONATO DE SODIO COOP  80 G","qty":0.06}]},{"cod":42773,"desc":"11719 CANELA EM CASCA QUEBRADA COOP 25 G FD 24","unid":24,"pc_min":8.0,"maquina":"MANUAL","insumos":[{"insumo":"SACO PLASTICO FARDO LISO 27 X 40 UNID","qty":1.0},{"insumo":"MP - CANELA CASCA INTEIRA / QUEBRADA KG","qty":0.612},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.005556},{"insumo":"BOBINA CANELA EM CASCA QUEBRADA COOP 25G","qty":0.0564}]},{"cod":42470,"desc":"11726 CANELA PO COOP 60G FD 24","unid":24,"pc_min":41.0,"maquina":"ROSCA MIX  03","insumos":[{"insumo":"SOLAPA CANELA EM PO COOP 60 G","qty":24.0},{"insumo":"MP - CANELA PO MOIDA KG","qty":1.476},{"insumo":"SACO PLASTICO FARDO LISO 27 X 40 UNID","qty":1.0},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.000833},{"insumo":"BOBINA LISA LAMINADA ESPECIARIAS 24 CM","qty":0.05448}]},{"cod":42775,"desc":"11737 COLORIFICO COOP 80 G - FD 24","unid":24,"pc_min":46.75,"maquina":"SELGRON 01","insumos":[{"insumo":"SACO PLASTICO FARDO LISO 27 X 40 UNID","qty":1.0},{"insumo":"SACO PLASTICO FARDO LISO 60 X 100 UNID","qty":0.068811},{"insumo":"SOLAPA COLORIFICO PO 80GR COOP","qty":24.0},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.001111},{"insumo":"BOBINA LISA LAMINADA ESPECIARIAS 24 CM","qty":0.05448},{"insumo":"MP  FUBA MEDIO KG","qty":1.89912},{"insumo":"MP  SUSPENSÃO OLEOSA URUCUM KG","qty":0.068811},{"insumo":"SACO PLASTICO FARDO LISO 27 X 40 UNID","qty":1.0},{"insumo":"SACO PLASTICO FARDO LISO 60 X 100 UNID","qty":0.068531},{"insumo":"SOLAPA COLORIFICO PO 80GR COOP","qty":24.0},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.001111},{"insumo":"BOBINA LISA LAMINADA ESPECIARIAS 24 CM","qty":0.05448},{"insumo":"MP  FUBA MEDIO KG","qty":1.8914},{"insumo":"MP  SUSPENSÃO OLEOSA URUCUM KG","qty":0.068531}]},{"cod":42721,"desc":"11746 COMINHO EM PO COOP 70 G FD 24","unid":24,"pc_min":38.25,"maquina":"ROSCA MIX  03","insumos":[{"insumo":"MP - COMINHO PO / MOIDO KG","qty":1.704},{"insumo":"SACO PLASTICO FARDO LISO 27 X 40 UNID","qty":1.0},{"insumo":"SOLAPA COMINHO PO COOP 70GR","qty":24.0},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.001111},{"insumo":"BOBINA LISA LAMINADA ESPECIARIAS 24 CM","qty":0.05448}]},{"cod":42723,"desc":"11756 CURRY EM PO COOP 60 G FD 24","unid":24,"pc_min":41.0,"maquina":"ROSCA MIX  03","insumos":[{"insumo":"MP - CURRY KG","qty":1.488},{"insumo":"SACO PLASTICO FARDO LISO 27 X 40 UNID","qty":1.0},{"insumo":"SOLAPA CURRY EM PO 60GR COOP","qty":24.0},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.001111},{"insumo":"BOBINA LISA LAMINADA ESPECIARIAS 24 CM","qty":0.05448}]},{"cod":42725,"desc":"11770 LOURO EM FOLHAS COOP 10 G FD 24","unid":24,"pc_min":5.0,"maquina":"MANUAL EXT","insumos":[{"insumo":"MP - LOURO EM FOLHAS INTEIRAS KG","qty":0.276},{"insumo":"SACO PLASTICO FARDO LISO 27 X 40 UNID","qty":1.0},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.006667},{"insumo":"BOBINA LOURO EM FOLHAS COOP 10G","qty":0.0564}]},{"cod":48395,"desc":"11787 PAPRICA DOCE EM PO COOP 50 G FD 24","unid":24,"pc_min":42.0,"maquina":"ROSCA MIX  03","insumos":[{"insumo":"SACO PLASTICO FARDO LISO 27 X 40 UNID","qty":1.0},{"insumo":"SOLAPA PAPRICA DOCE PO 50GR COOP","qty":24.0},{"insumo":"MP - PAPRICA DOCE EM PO/ MOIDO  KG","qty":1.248},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.001111},{"insumo":"BOBINA LISA LAMINADA ESPECIARIAS 24 CM","qty":0.05448}]},{"cod":42985,"desc":"11801 PIMENTA CALABRESA FLOCOS COOP 30 G FD 24","unid":24,"pc_min":8.0,"maquina":"MANUAL","insumos":[]},{"cod":42981,"desc":"11808 PIMENTA DO REINO EM PO COOP 70 G FD 24","unid":24,"pc_min":41.0,"maquina":"ROSCA MIX  03","insumos":[{"insumo":"SACO PLASTICO FARDO LISO 27 X 40 UNID","qty":1.0},{"insumo":"MP - PIMENTA REINO PRETA PO/ MOIDA KG","qty":1.7136},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.001111},{"insumo":"BOBINA PIMENTA DO REINO EM PO DA TERRINHA 20 G","qty":0.06}]},{"cod":43001,"desc":"11818 TEMPERO BAIANO PO COOP 50 G FD 24","unid":24,"pc_min":42.5,"maquina":"CANECA MIX 05","insumos":[]},{"cod":52655,"desc":"12503 FARINHA MANDIOCA TORRADA OBA 500 G CX 12","unid":12,"pc_min":8.0,"maquina":"MANUAL","insumos":[{"insumo":"MP - FARINHA DE MANDIOCA TORRADA FINA KG","qty":6.0},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.004274},{"insumo":"SACO PLAST FAR MAND TORRADA OBA 500 G","qty":12.0},{"insumo":"CAIXA PAPELAO GRAOS E FARINACEOS PREMIUM MAIOR 400 E 500G","qty":1.0}]},{"cod":52653,"desc":"12505 FARINHA MANDIOCA CRUA GROSSA OBA 250 G CX 12","unid":12,"pc_min":8.0,"maquina":"MANUAL","insumos":[{"insumo":"MP - FARINHA DE MANDIOCA CRUA GROSSA KG","qty":3.0},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.004274},{"insumo":"SACO PLAST FAR MAND CRUA GROSSA OBA  250 G","qty":12.0},{"insumo":"CAIXA PAPELAO TAPIOCA LISA UNIVERSAL","qty":1.0}]},{"cod":52656,"desc":"12506 FARINHA MILHO AMARELA OBA 250 G CX 12.0","unid":12,"pc_min":8.0,"maquina":"MANUAL","insumos":[{"insumo":"MP - FARINHA DE MILHO AMARELA  KG","qty":3.0},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.004274},{"insumo":"SACO PLAST FARINHA MILHO AMAR OBA 250 G","qty":12.0},{"insumo":"CAIXA PAPELAO GRAOS E FARINACEO TERRINHA","qty":1.0}]},{"cod":52661,"desc":"12515 FUBA MIMOSO OBA 500 g CX 12.0","unid":12,"pc_min":8.0,"maquina":"MANUAL","insumos":[{"insumo":"MP - FUBA MIMOSO KG","qty":6.0828},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.004274},{"insumo":"SACO PLAST FUBA MIMOSO OBA 500 G","qty":12.0},{"insumo":"CAIXA PAPELAO GRAOS E FARINACEO TERRINHA","qty":1.0}]},{"cod":52667,"desc":"12517 POLVILHO AZEDO OBA 500G CX 12","unid":12,"pc_min":8.0,"maquina":"MANUAL","insumos":[{"insumo":"MP - POLVILHO AZEDO KG","qty":6.048},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.004274},{"insumo":"SACO PLAST POLVILHO AZEDO OBA 500 G","qty":12.0},{"insumo":"CAIXA PAPELAO GRAOS E FARINACEOS PREMIUM MAIOR 400 E 500G","qty":1.0}]},{"cod":52668,"desc":"12518 POLVILHO DOCE OBA 500 G CX 12","unid":12,"pc_min":8.0,"maquina":"MANUAL","insumos":[]},{"cod":52648,"desc":"12603 CANJICA BRANCA OBA 500 G CX 12","unid":12,"pc_min":8.0,"maquina":"MANUAL","insumos":[{"insumo":"MP - CANJICA BRANCA KG","qty":6.1},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.004274},{"insumo":"SACO PLAST CANJICA BCA OBA 500 G","qty":12.0},{"insumo":"CAIXA PAPELAO GRAOS E FARINACEO TERRINHA","qty":1.0}]},{"cod":52649,"desc":"12604 CANJIQUINHA OBA 500 G CX 12.0","unid":12,"pc_min":8.0,"maquina":"MANUAL","insumos":[{"insumo":"MP - CANJIQUINHA DE MILHO / MASTER G1 KG","qty":6.0972},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.004274},{"insumo":"SACO PLAST CANJIQUINHA OBA 500 G","qty":12.0},{"insumo":"CAIXA PAPELAO GRAOS E FARINACEOS PREMIUM MAIOR 400 E 500G","qty":1.0}]},{"cod":52651,"desc":"12605 ERVILHA VERDE PARTIDA OBA 500 G CX 12","unid":12,"pc_min":8.0,"maquina":"MANUAL","insumos":[{"insumo":"MP - ERVILHA PARTIDA KG","qty":6.0888},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.004274},{"insumo":"SACO PLAST ERVILHA PARTIDA OBA 500 G","qty":12.0},{"insumo":"CAIXA PAPELAO TAPIOCA LISA UNIVERSAL","qty":1.0}]},{"cod":52663,"desc":"12607 GRAO DE BICO OBA 500 G CX 12","unid":12,"pc_min":8.0,"maquina":"MANUAL","insumos":[{"insumo":"MP - GRAO DE BICO 9MM KG","qty":6.1},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.004274},{"insumo":"SACO PLAST GRAO DE BICO OBA 500 G - UND","qty":12.0},{"insumo":"CAIXA PAPELAO GRAOS E FARINACEOS PREMIUM MAIOR 400 E 500G","qty":1.0}]},{"cod":52665,"desc":"12608 LENTILHA OBA 500 G CX 12","unid":12,"pc_min":8.0,"maquina":"MANUAL","insumos":[{"insumo":"MP - LENTILHA KG","qty":6.0},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.004274},{"insumo":"SACO PLAST LENTILHA OBA 500 G - UNID","qty":12.0},{"insumo":"CAIXA PAPELAO TAPIOCA LISA UNIVERSAL","qty":1.0}]},{"cod":52666,"desc":"12609 MILHO PIPOCA OBA 500 G CX 12.0","unid":12,"pc_min":8.0,"maquina":"MANUAL","insumos":[]},{"cod":75359,"desc":"14701 - ACAFRAO MERCADAO 30 g  - UND CX 24.0","unid":24,"pc_min":42.5,"maquina":"ROSCA MIX  03","insumos":[{"insumo":"MP - ACAFRAO/CURCUMA MOIDA KG","qty":0.775309},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.001724},{"insumo":"CAIXA PAPELAO ESPECIARIAS DA TERRINHA - UNID","qty":1.0},{"insumo":"BOBINA ACAFRAO MERCADAO 30 G","qty":0.0564}]},{"cod":75360,"desc":"14708 - BICARBONATO DE SODIO MERCADAO 20 G - CX 24","unid":24,"pc_min":42.5,"maquina":"SELGRON 02","insumos":[]},{"cod":75369,"desc":"14717 CANELA CASCA QUEBRADA MERCADAO 10 G  - CX 24","unid":24,"pc_min":25.5,"maquina":"GOLPACK 06","insumos":[{"insumo":"MP - CANELA CASCA INTEIRA / QUEBRADA KG","qty":0.299061},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.001724},{"insumo":"CAIXA PAPELAO ESPECIARIAS DA TERRINHA - UNID","qty":1.0},{"insumo":"SACO PLAST MERCADAO CANELA CASCA 10G","qty":24.0}]},{"cod":75361,"desc":"14723 - CANELA PO MERCADAO 20 g - UND CX 24.0","unid":24,"pc_min":42.5,"maquina":"ROSCA MIX  03","insumos":[]},{"cod":75363,"desc":"14736 COLORIFICO MERCADAO 70 G  - CX 24","unid":24,"pc_min":46.75,"maquina":"SELGRON 01","insumos":[{"insumo":"SACO PLASTICO FARDO LISO 60 X 100 UNID","qty":0.06014},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.001724},{"insumo":"CAIXA PAPELAO ESPECIARIAS DA TERRINHA - UNID","qty":1.0},{"insumo":"BOBINA COLORIFICO MERCADAO 70 G","qty":0.0612},{"insumo":"MP  FUBA MEDIO KG","qty":1.6598},{"insumo":"MP  SUSPENSÃO OLEOSA URUCUM KG","qty":0.06014}]},{"cod":75364,"desc":"14750 CRAVO DA INDIA MERCADAO 10G - CX 24","unid":24,"pc_min":25.5,"maquina":"GOLPACK 06","insumos":[{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.001724},{"insumo":"MP - CRAVO DA INDIA FLOR KG","qty":0.261667},{"insumo":"CAIXA PAPELAO ESPECIARIAS DA TERRINHA - UNID","qty":1.0},{"insumo":"BOBINA CRAVO INDIA MERCADAO 10 G","qty":0.0564}]},{"cod":75372,"desc":"14769 LOURO EM FOLHA MERCADAO 08 G  - CX 24","unid":24,"pc_min":5.0,"maquina":"MANUAL EXT","insumos":[{"insumo":"MP - LOURO EM FOLHAS INTEIRAS KG","qty":0.2},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.001724},{"insumo":"CAIXA PAPELAO ESPECIARIAS DA TERRINHA - UNID","qty":1.0},{"insumo":"SACO PLAST MERCADAO LOURO FOLHA 8G","qty":24.0}]},{"cod":75365,"desc":"14774 - MANJERICAO MERCADAO 10G - UND CX 24.0","unid":24,"pc_min":42.5,"maquina":"CANECA MIX 04","insumos":[]},{"cod":75366,"desc":"14782 OREGANO MERCADAO 08 G - CX 24","unid":24,"pc_min":42.5,"maquina":"CANECA MIX 04","insumos":[{"insumo":"MP - OREGANO FLOCOS KG","qty":0.204315},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.001724},{"insumo":"CAIXA PAPELAO ESPECIARIAS DA TERRINHA - UNID","qty":1.0},{"insumo":"BOBINA OREGANO MERCADAO 8 G","qty":0.0564}]},{"cod":75367,"desc":"14785 - PAPRICA DOCE EM PO MERCADAO 15 G - CX 24","unid":24,"pc_min":45.9,"maquina":"ROSCA MIX  03","insumos":[]},{"cod":75370,"desc":"14788 PAPRICA PICANTE EM PO MERCADAO 15 G - CX 24","unid":24,"pc_min":45.9,"maquina":"ROSCA MIX  03","insumos":[{"insumo":"MP - PAPRICA PICANTE EM PO/ MOIDO KG","qty":0.384},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.001724},{"insumo":"CAIXA PAPELAO ESPECIARIAS DA TERRINHA - UNID","qty":1.0},{"insumo":"BOBINA PAPRICA PICANTE MERCADAO 15 G","qty":0.0564}]},{"cod":75373,"desc":"14800 PIMENTA CALABRESA FLOC MERCADAO 15 G - CX 24","unid":24,"pc_min":42.5,"maquina":"CANECA MIX 04","insumos":[{"insumo":"MP - PIMENTA CALABRESA FLOCOS KG","qty":0.384355},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.001724},{"insumo":"CAIXA PAPELAO ESPECIARIAS DA TERRINHA - UNID","qty":1.0},{"insumo":"BOBINA PIMENTA CALABRESA MERCADAO 15 G","qty":0.0564}]},{"cod":75374,"desc":"14806 PIMENTA DO REINO EM PO MERCADAO 20G - CX 24","unid":24,"pc_min":42.5,"maquina":"ROSCA MIX  03","insumos":[{"insumo":"MP - PIMENTA REINO PRETA PO/ MOIDA KG","qty":0.512},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.001724},{"insumo":"CAIXA PAPELAO ESPECIARIAS DA TERRINHA - UNID","qty":1.0},{"insumo":"BOBINA PIMENTA REINO PO MERCADAO 20 G","qty":0.0564}]},{"cod":75375,"desc":"14818 TEMPERO BAIANO PO MERCADAO 50 G - CX 24","unid":24,"pc_min":42.5,"maquina":"CANECA MIX 05","insumos":[{"insumo":"MP - TEMPERO BAIANO KG","qty":1.260521},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.001724},{"insumo":"CAIXA PAPELAO ESPECIARIAS DA TERRINHA - UNID","qty":1.0},{"insumo":"BOBINA TEMPERO BAIANO MERCADAO 50 G","qty":0.06}]},{"cod":75376,"desc":"14825 TEMPERO PARA FRANGO MERCADAO 50 G - CX 24","unid":24,"pc_min":42.5,"maquina":"CANECA MIX 05","insumos":[{"insumo":"MP - TEMPERO PARA FRANGO E ARROZ KG","qty":1.266051},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.001724},{"insumo":"CAIXA PAPELAO ESPECIARIAS DA TERRINHA - UNID","qty":1.0},{"insumo":"BOBINA TEMPERO PARA FRANGO MERCADAO 50 G","qty":0.06}]},{"cod":71725,"desc":"20978 PIMENTA REINO DA TERRINHA 1 kg - CX 6.0","unid":6,"pc_min":8.0,"maquina":"MANUAL","insumos":[]},{"cod":71695,"desc":"21706 ALHO DESIDRATADO GRANULADO TERRINHA 1 KG - CX 06","unid":6,"pc_min":8.0,"maquina":"MANUAL","insumos":[]},{"cod":71699,"desc":"21707 CANELA CASCA DA TERRINHA 500G - CX 06","unid":6,"pc_min":5.0,"maquina":"MANUAL","insumos":[]},{"cod":71723,"desc":"21785 OREGANO DA TERRINHA 500 G - CX 06","unid":6,"pc_min":5.0,"maquina":"MANUAL","insumos":[]},{"cod":71719,"desc":"21787 LENTILHA DA TERRINHA 2 KG - CX 06","unid":6,"pc_min":8.0,"maquina":"MANUAL","insumos":[]},{"cod":71697,"desc":"21788 CANJICA MILHO DA TERRINHA 2 KG - CX 06","unid":6,"pc_min":8.0,"maquina":"MANUAL","insumos":[]},{"cod":71701,"desc":"21789 COLORIFICO DA TERRINHA 1 KG - CX 06 (OBA)","unid":6,"pc_min":8.0,"maquina":"MANUAL","insumos":[]},{"cod":71729,"desc":"21790 UVA PASSA PRETA DA TERRINHA 1 KG - CX 06","unid":6,"pc_min":8.0,"maquina":"MANUAL","insumos":[]},{"cod":71727,"desc":"21791 TRIGO PARA KIBE DA TERRINHA 2 KG - CX 06","unid":6,"pc_min":8.0,"maquina":"MANUAL","insumos":[]},{"cod":71717,"desc":"21792 GRAO DE BICO DA TERRINHA 2 KG - CX 06","unid":6,"pc_min":8.0,"maquina":"MANUAL","insumos":[]},{"cod":71715,"desc":"21793 FUBA MIMOSO DA TERRINHA 2 KG - CX 06","unid":6,"pc_min":8.0,"maquina":"MANUAL","insumos":[]},{"cod":71707,"desc":"21795 FARINHA ROSCA DA TERRINHA 2 KG - CX 06","unid":6,"pc_min":8.0,"maquina":"MANUAL","insumos":[]},{"cod":71711,"desc":"21796 FARINHA MILHO AMARELA DA TERRINHA 2 KG - CX 03","unid":3,"pc_min":8.0,"maquina":"MANUAL","insumos":[]},{"cod":71709,"desc":"21797 FARINHA MANDIOCA CRUA FINA DA TERRINHA 2KG - CX 06","unid":6,"pc_min":8.0,"maquina":"MANUAL","insumos":[]},{"cod":71705,"desc":"21798 CUSCUZ DA TERRINHA 2 KG - CX 06","unid":6,"pc_min":8.0,"maquina":"MANUAL","insumos":[]},{"cod":71703,"desc":"21799 COMINHO EM PO DA TERRINHA 1 kg - CX 06","unid":6,"pc_min":8.0,"maquina":"MANUAL","insumos":[]},{"cod":75317,"desc":"22515 FUBA MIMOSO RANCHO 700G - CX 24","unid":24,"pc_min":8.0,"maquina":"MANUAL","insumos":[{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.008929},{"insumo":"CAIXA PAPELAO JAPAO 24 X 700GR","qty":1.0},{"insumo":"SACO POUCH FUBA MIMOSO DO RANCHO 700GR","qty":24.0},{"insumo":"MP - FUBA MIMOSO S/ FERRO KG","qty":16.968}]},{"cod":75316,"desc":"22516 FARINHA MANDIOCA TORRADA RANCHO 700G - CX 24","unid":24,"pc_min":8.0,"maquina":"MANUAL","insumos":[{"insumo":"MP - FARINHA DE MANDIOCA TORRADA FINA KG","qty":16.9968},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.008929},{"insumo":"CAIXA PAPELAO JAPAO 24 X 700GR","qty":1.0},{"insumo":"SACO POUCH FARINHA DE MANDIOCA TORRADA DO RANCHO 700GR","qty":24.0}]},{"cod":93367,"desc":"CANJICA BRANCA DA TERRINHA 5 KG - FD 5","unid":5,"pc_min":8.0,"maquina":"MANUAL","insumos":[]},{"cod":42793,"desc":"GRAO DE BICO COOP 500 G FD 12","unid":12,"pc_min":8.0,"maquina":"MANUAL","insumos":[]},{"cod":93369,"desc":"MILHO DE PIPOCA DA TERRINHA 5 KG - FD 5","unid":5,"pc_min":8.0,"maquina":"MANUAL","insumos":[]},{"cod":100863,"desc":"MILHO PIPOCA DA TERRINHA 1KG - CX 12","unid":12,"pc_min":25.0,"maquina":"ALFATECK 14","insumos":[]},{"cod":100863,"desc":"MILHO PIPOCA DA TERRINHA 1KG - CX 12","unid":12,"pc_min":25.0,"maquina":"ALFATECK 15","insumos":[]},{"cod":100863,"desc":"MILHO PIPOCA DA TERRINHA 1KG - CX 12","unid":12,"pc_min":25.0,"maquina":"ALFATECK 16","insumos":[]},{"cod":42859,"desc":"POLVILHO AZEDO COOP 500 G FD 12","unid":12,"pc_min":8.0,"maquina":"MANUAL","insumos":[]},{"cod":42861,"desc":"POLVILHO DOCE COOP 500 G FD 12","unid":12,"pc_min":8.0,"maquina":"MANUAL","insumos":[]},{"cod":70448,"desc":"SEMOLA DE MILHO MESTRE CUCA 1 kg - UND FD 12.0","unid":12,"pc_min":8.0,"maquina":"MANUAL","insumos":[{"insumo":"MP - FUBA ITALIANO / SEMOLA KG","qty":12.12},{"insumo":"SACO PLASTICO FARDO LISO 50 X 75 UNID","qty":1.0},{"insumo":"LOGISTICA - FILME STRETCH AUTOMATICO 500x0,30","qty":0.004167},{"insumo":"SACO PLASTICO FARDO LISO 20 X 30","qty":12.0}]}];
+// Array de produtos: populado do Firestore via carregarProdutosFirestore()
+let PRODUTOS = [];
+// Ficha técnica: populada do Firestore ou importação Excel
+let FICHA_TECNICA = [];
 
-let MAQUINAS = ["ALFATECK 14","ALFATECK 15","ALFATECK 16","CANECA MIX 04","CANECA MIX 05","FILIAL","GOLPACK 06","IMAPACK 12","MANUAL","MANUAL EXT","MASIPACK 07- 08","MASIPACK 10","OLC 13","ROSCA MIX  03","SELGRON 01","SELGRON 02"];
+// MAQUINAS: populado exclusivamente via carregarMaquinasFirestore() no boot
+let MAQUINAS = [];
 
 // ===== SETUP TIMES (minutes) =====
-// Each machine has a matrix: SETUP_MATRIX[maq] = { prodKey: { prodKey: minutes } }
-// Product keys are normalized (uppercase, trimmed, first significant words)
+// Cache do Firestore: { maquina: { prodA_norm: { prodB_norm: minutos } } }
+// Populado por carregarSetupFirestore(). Fallback: SETUP_DATA estático abaixo.
+let SETUP_FIRESTORE = {};
+
+// Carrega setup_maquinas do Firestore e popula SETUP_FIRESTORE
+async function carregarSetupFirestore() {
+  try {
+    const snap = await getDocs(collection(firestoreDB, 'setup_maquinas'));
+    SETUP_FIRESTORE = {};
+    snap.docs.forEach(d => {
+      const data = d.data();
+      const maq = data.maquina || '';
+      const pA = normProd(data.produto_origem || '');
+      const pB = normProd(data.produto_destino || '');
+      const t = parseInt(data.tempo_setup) || 0;
+      if (!maq || !pA || !pB) return;
+      if (!SETUP_FIRESTORE[maq]) SETUP_FIRESTORE[maq] = {};
+      if (!SETUP_FIRESTORE[maq][pA]) SETUP_FIRESTORE[maq][pA] = {};
+      SETUP_FIRESTORE[maq][pA][pB] = t;
+      // Bidirecional se não existir o inverso
+      if (!SETUP_FIRESTORE[maq][pB]) SETUP_FIRESTORE[maq][pB] = {};
+      if (SETUP_FIRESTORE[maq][pB][pA] == null) SETUP_FIRESTORE[maq][pB][pA] = t;
+    });
+    if (!snap.empty) console.log('[SETUP] Carregados do Firestore:', snap.size, 'registros');
+  } catch(e) {
+    console.warn('[SETUP] Usando matriz estática (fallback):', e.message);
+  }
+}
+
+// Salva um registro de setup no Firestore
+async function salvarSetupFirestore(maquina, prodOrigem, prodDestino, tempoMinutos) {
+  try {
+    // Verifica se já existe
+    const q = query(collection(firestoreDB, 'setup_maquinas'),
+      where('maquina', '==', maquina),
+      where('produto_origem', '==', prodOrigem),
+      where('produto_destino', '==', prodDestino)
+    );
+    const snap = await getDocs(q);
+    const payload = { maquina, produto_origem: prodOrigem, produto_destino: prodDestino, tempo_setup: parseInt(tempoMinutos)||0, atualizadoEm: new Date().toISOString() };
+    if (!snap.empty) {
+      await setDoc(doc(firestoreDB, 'setup_maquinas', snap.docs[0].id), payload);
+    } else {
+      await addDoc(collection(firestoreDB, 'setup_maquinas'), payload);
+    }
+    await carregarSetupFirestore();
+  } catch(e) { toast('Erro ao salvar setup: ' + e.message, 'err'); }
+}
 
 // Normaliza nome de produto para chave de lookup
 function normProd(s){
@@ -435,15 +484,32 @@ function findSetupKey(maq, prodDesc) {
 }
 
 // Retorna tempo de setup em minutos entre dois produtos na mesma máquina
-// prodDescA = produto anterior, prodDescB = próximo produto
+// Prioridade: 1) Firestore (setup_maquinas) 2) SETUP_DATA estático
 function getSetupMin(maq, prodDescA, prodDescB) {
+  if (!maq || !prodDescA || !prodDescB) return 0;
+  if (prodDescA === prodDescB) return 0;
+  // 1) Tentar Firestore
+  const fsMaq = SETUP_FIRESTORE[maq];
+  if (fsMaq) {
+    const normA = normProd(prodDescA);
+    const normB = normProd(prodDescB);
+    if (fsMaq[normA] && fsMaq[normA][normB] != null) return fsMaq[normA][normB];
+    if (fsMaq[normB] && fsMaq[normB][normA] != null) return fsMaq[normB][normA];
+  }
+  // 2) Fallback: SETUP_DATA estático
   const data = SETUP_DATA[maq];
-  if (!data || !prodDescA || !prodDescB) return 0;
+  if (!data) return 0;
   const iA = findSetupKey(maq, prodDescA);
   const iB = findSetupKey(maq, prodDescB);
-  if (iA < 0 || iB < 0) return 0; // não mapeado → sem setup
+  if (iA < 0 || iB < 0) return 0;
   if (iA === iB) return 0;
   return data.matrix[iA][iB] || 0;
+}
+
+// Retorna o tempo de setup padrão de uma máquina (fallback quando não há mapeamento)
+function getSetupPadrao(maq) {
+  const d = getMaquinaData(maq);
+  return (d && parseFloat(d.tempoSetupPadrao) > 0) ? parseFloat(d.tempoSetupPadrao) : 0;
 }
 
 // Calcula o tempo total de setup de uma lista de produtos em sequência numa máquina
@@ -513,6 +579,8 @@ function filterMaqWeek(val){
 // ===== INIT & RELOAD (Firebase Auth + Firestore) =====
 async function appInit() {
   await carregarMaquinasFirestore();
+  await carregarProdutosFirestore();
+  await carregarSetupFirestore();
   const sel = document.getElementById('s-maq');
   if(sel) {
     MAQUINAS.forEach(m => {
@@ -1229,15 +1297,13 @@ async function confirmClearAll(){
 }
 
 function calcTempoStr(maq,caixas,unid,pcMinRec,unidRec){
-  // pcMinRec and unidRec come from the record directly (most reliable)
-  // Also check machine-specific product velocity from ficha da máquina
   let pcMin = pcMinRec;
   if (!pcMin && maq && window.MAQUINAS_DATA) {
     const maqData = window.MAQUINAS_DATA[maq];
     if (maqData && maqData.pcMin) pcMin = maqData.pcMin;
   }
-  if (!pcMin) pcMin = (PRODUTOS.find(x=>x.maquina===maq)||{pc_min:1}).pc_min;
-  const unidCx=unidRec||(PRODUTOS.find(x=>x.maquina===maq)||{unid:1}).unid;
+  if (!pcMin) pcMin = (getAllProdutos().find(x=>x.maquina===maq)||{pc_min:1}).pc_min;
+  const unidCx=unidRec||(getAllProdutos().find(x=>x.maquina===maq)||{unid:1}).unid;
   if(!caixas) return '—';
   const u=unid||(caixas*unidCx);
   return fmtHrs(u/pcMin/60);
@@ -1267,23 +1333,35 @@ function fmtHrs(h){
 
 // Central helper: get reliable pc_min and unid for a record
 function getProdInfo(rec){
+  const all = getAllProdutos();
   // Priority 1: match by product code (most reliable)
   if(rec.prodCod){
-    const byCode=PRODUTOS.find(x=>x.cod===rec.prodCod);
+    const byCode=all.find(x=>x.cod===rec.prodCod);
     if(byCode) return byCode;
   }
   // Priority 2: match by machine + product name prefix
-  const byName=PRODUTOS.find(x=>x.maquina===rec.maquina&&rec.produto&&rec.produto.startsWith(x.descricao.substring(0,22)));
+  const byName=all.find(x=>x.maquina===rec.maquina&&rec.produto&&rec.produto.startsWith(x.descricao.substring(0,22)));
   if(byName) return byName;
   // Priority 3: use stored pcMin/unidPorCx from record itself
   if(rec.pcMin&&rec.unidPorCx) return {pc_min:rec.pcMin, unid:rec.unidPorCx};
-  // Priority 4: first product of same machine
-  const byMaq=PRODUTOS.find(x=>x.maquina===rec.maquina);
+  // Priority 4: check machine data from Firestore
+  const maqData = getMaquinaData(rec.maquina);
+  if (maqData && maqData.pcMin) return {pc_min: parseFloat(maqData.pcMin), unid: rec.unidPorCx || 1};
+  // Priority 5: first product of same machine
+  const byMaq=all.find(x=>x.maquina===rec.maquina);
   return byMaq||{pc_min:1,unid:1};
 }
 
 // ===== MÁQUINAS =====
 function renderMaquinas(){
+  const grid = document.getElementById('maq-grid');
+  // Mostra aviso se nenhuma máquina cadastrada no Firestore
+  if (!MAQUINAS.length) {
+    if(grid) grid.innerHTML = '<div style="padding:32px;text-align:center;color:var(--text3);font-size:13px">'
+      + '⚙️ Nenhuma máquina cadastrada no Firestore.<br>'
+      + '<span style="font-size:11px">Cadastre em <strong>Configurações → Máquinas → + Adicionar Máquina</strong></span></div>';
+    return;
+  }
   // Apply week filter
   let filteredRecs = records.filter(r=>r.status!=='Concluído');
   if(maqWeekFilter){
@@ -1415,7 +1493,7 @@ function renderMaquinas(){
         const ativos=['T1','T2','T3'].filter((_,i)=>t[i]);
         turnosSumario=ativos.length?`<div style="font-size:9px;color:var(--text3);font-family:'JetBrains Mono',monospace;margin-top:2px">Turnos Seg: ${ativos.join(' + ')}</div>`:'';
       }
-      return `<div class="maq-card">
+      return `<div class="maq-card" style="cursor:pointer" onclick="toggleMaqCardDetail('maqcard-${m.replace(/[^a-zA-Z0-9]/g,'_')}')">
         <div class="maq-title">${m}</div>
         ${turnosSumario}
         <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text2);font-family:'JetBrains Mono',monospace;margin-top:4px">
@@ -1431,9 +1509,49 @@ function renderMaquinas(){
         </div>
         ${overFlag}
         ${d.items.length?`<div class="maq-list">${items}${more}</div>`:''}
+        <div id="maqcard-${m.replace(/[^a-zA-Z0-9]/g,'_')}" style="display:none;margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">${buildMaqCardDetail(m)}</div>
+        <div style="text-align:center;margin-top:6px;font-size:10px;color:var(--text3)">▾ detalhes</div>
       </div>`;
     }).join('');
   }
+}
+
+// ===== DETALHES DA MÁQUINA (ACCORDION NO CARD) =====
+function buildMaqCardDetail(nomeMaq) {
+  const d = getMaquinaData(nomeMaq);
+  if (!d) return '<div style="font-size:11px;color:var(--text3)">Sem cadastro. Configure em Configurações → Máquinas.</div>';
+  const cap = d.pcMin ? calcCapacidadeMaquina(d.pcMin, d.eficiencia, d.hTurno, d.nTurnos) : null;
+  const prods = Array.isArray(d.produtosCompativeis) ? d.produtosCompativeis : [];
+  const statusColor = d.status === 'inativa' ? '#ff6b6b' : '#00d46a';
+  let html = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:5px;font-size:11px;font-family:\'JetBrains Mono\',monospace;margin-bottom:8px">'
+    + '<div><span style="color:var(--text3)">Setor:</span> <span style="color:var(--text2)">' + (d.setor||'—') + '</span></div>'
+    + '<div><span style="color:var(--text3)">Status:</span> <span style="color:' + statusColor + ';font-weight:700">' + ((d.status||'ativa').toUpperCase()) + '</span></div>'
+    + '<div><span style="color:var(--text3)">Vel.padrão:</span> <span style="color:var(--warn)">' + (d.pcMin ? d.pcMin + ' saq/min' : '—') + '</span></div>'
+    + '<div><span style="color:var(--text3)">Eficiência:</span> <span>' + (d.eficiencia != null ? d.eficiencia + '%' : '—') + '</span></div>'
+    + '<div><span style="color:var(--text3)">Turnos/dia:</span> <span>' + (d.nTurnos||'—') + '</span></div>'
+    + '<div><span style="color:var(--text3)">Hrs/turno:</span> <span>' + (d.hTurno||'—') + '</span></div>'
+    + (cap ? '<div><span style="color:var(--text3)">Cap/hora:</span> <span style="color:var(--cyan)">' + cap.porHora.toLocaleString('pt-BR') + ' saq</span></div>' : '')
+    + (cap ? '<div><span style="color:var(--text3)">Cap/dia:</span> <span style="color:var(--cyan)">' + cap.porDia.toLocaleString('pt-BR') + ' saq</span></div>' : '')
+    + '</div>';
+  if (!prods.length) {
+    html += '<div style="font-size:11px;color:var(--warn);background:rgba(255,179,0,.08);border:1px solid rgba(255,179,0,.2);border-radius:6px;padding:6px 10px">⚠️ Sem produtos vinculados.</div>';
+  } else {
+    html += '<div style="font-size:10px;text-transform:uppercase;letter-spacing:.7px;color:var(--purple);font-weight:700;margin-bottom:5px">Produtos (' + prods.length + ')</div>';
+    html += prods.map(function(p){
+      return '<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid rgba(255,255,255,.04);font-size:11px">'
+        + '<span style="color:var(--text2);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + p.produto + '</span>'
+        + '<span style="color:' + (p.velocidade != null ? 'var(--cyan)' : 'var(--text3)') + ';font-family:\'JetBrains Mono\',monospace;flex-shrink:0;margin-left:8px">' + (p.velocidade != null ? p.velocidade + ' saq/min' : 'vel. padrão') + '</span>'
+        + '</div>';
+    }).join('');
+  }
+  return html;
+}
+
+function toggleMaqCardDetail(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const isOpen = el.style.display !== 'none';
+  el.style.display = isOpen ? 'none' : 'block';
 }
 
 // ===== FORM =====
@@ -1488,9 +1606,25 @@ function showProdStep(maq){
 }
 
 function renderProdGrid(maq, filter){
-  const prods=PRODUTOS.filter(p=>p.maquina===maq&&(
-    !filter||p.descricao.toLowerCase().includes(filter.toLowerCase())
+  // Busca produtos do cadastro real (Firestore + localStorage)
+  // Se a máquina tiver produtos compatíveis cadastrados, usa eles como fonte primária
+  const maqData = getMaquinaData(maq);
+  const maqProds = maqData && Array.isArray(maqData.produtosCompativeis) ? maqData.produtosCompativeis : [];
+  
+  let prods = getAllProdutos().filter(p => p.maquina === maq && (
+    !filter || p.descricao.toLowerCase().includes(filter.toLowerCase())
   ));
+  
+  // Se não achou no catálogo mas a máquina tem produtos compatíveis, constrói lista a partir deles
+  if (!prods.length && maqProds.length) {
+    prods = maqProds
+      .filter(p => !filter || p.produto.toLowerCase().includes(filter.toLowerCase()))
+      .map(p => ({
+        descricao: p.produto, cod: 0, unid: 1,
+        pc_min: p.velocidade || (maqData && maqData.pcMin) || 0,
+        maquina: maq, kg_fd: 0
+      }));
+  }
   const grid=document.getElementById('prod-grid');
   if(!prods.length){
     grid.innerHTML=`<div style="grid-column:1/-1;padding:16px;text-align:center;color:var(--text3);font-size:12px">Nenhum produto encontrado</div>`;
@@ -1570,15 +1704,19 @@ async function saveForm(){
   if(!selMaq){toast('Selecione a máquina','err');return;}
   if(!pCod||pNome==='—'){toast('Selecione um produto da lista','err');return;}
   if(!qnt||qnt<1){toast('Informe a quantidade em caixas','err');return;}
-  if(!dtS){toast('Informe a data de início','err');return;}
+  if(!dtS || !/^\d{4}-\d{2}-\d{2}$/.test(dtS)){toast('Informe uma data de início válida (AAAA-MM-DD)','err');return;}
+  // Validação extra: data não pode ser muito antiga
+  const dtObj = new Date(dtS + 'T12:00:00');
+  if (isNaN(dtObj.getTime())) { toast('Data inválida','err'); return; }
 
   const eid=document.getElementById('edit-id').value;
+  const dtFinal = dtS || new Date().toISOString().slice(0,10);
   const obj={
-    produto:pNome,prodCod:parseInt(pCod),maquina:pMaq,pcMin,unidPorCx,
+    produto:pNome,prodCod:parseInt(pCod),maquina:pMaq||selMaq,pcMin,unidPorCx,
     qntCaixas:qnt,qntUnid:qnt*unidPorCx,
     status:document.getElementById('f-status').value,
-    dtSolicitacao:dtS,
-    dtDesejada:dtS,
+    dtSolicitacao:dtFinal,
+    dtDesejada:dtFinal,
     obs:document.getElementById('f-obs').value.trim(),
     updatedAt:new Date().toISOString()
   };
@@ -4248,7 +4386,7 @@ function settingsNav(section){
   }
 
   // ── Grupo Máquinas ──
-  const maqGroupSections=['cadastro-maquinas','turnos'];
+  const maqGroupSections=['cadastro-maquinas','turnos','setup-maquinas'];
   const maqGroupBtn=document.getElementById('snav-maquinas-group-btn');
   const maqSubmenu=document.getElementById('snav-maquinas-submenu');
   const maqChevron=document.getElementById('snav-maquinas-chevron');
@@ -4293,6 +4431,7 @@ function settingsNav(section){
   if(section==='funcionarios') setTimeout(()=>renderFuncionariosProducao(), 50);
   if(section==='turnos') setTimeout(()=>{ if(typeof renderTurnosMaquinas==='function') renderTurnosMaquinas(MAQUINAS); }, 50);
   if(section==='cadastro-maquinas') setTimeout(()=>renderCadastroMaquinas(), 50);
+  if(section==='setup-maquinas') setTimeout(()=>renderSetupMaquinas(), 50);
   if(section==='ficha-tecnica-cfg') setTimeout(()=>renderFichaTecnicaCfg(), 50);
   if(section==='produtos') setTimeout(()=>renderProdutosCfg(), 50);
 }
@@ -4341,17 +4480,25 @@ function handleImportZip(file){
 async function carregarMaquinasFirestore() {
   try {
     const snap = await getDocs(query(collection(firestoreDB, 'maquinas'), orderBy('nome')));
+    MAQUINAS = [];
+    window.MAQUINAS_DATA = {};
     if (!snap.empty) {
-      MAQUINAS = snap.docs.map(d => d.data().nome).filter(Boolean).sort();
-      // Guarda ficha completa indexada por nome
-      window.MAQUINAS_DATA = {};
       snap.docs.forEach(d => {
         const data = d.data();
-        if (data.nome) window.MAQUINAS_DATA[data.nome] = { ...data, _id: d.id };
+        if (data.nome) {
+          MAQUINAS.push(data.nome);
+          window.MAQUINAS_DATA[data.nome] = { ...data, _id: d.id };
+        }
       });
+      MAQUINAS.sort();
+      console.log('[MAQUINAS] Carregadas do Firestore:', MAQUINAS.length);
+    } else {
+      console.warn('[MAQUINAS] Nenhuma máquina cadastrada no Firestore. Cadastre em Configurações → Máquinas.');
     }
   } catch(e) {
-    console.warn('[MAQUINAS] Usando lista padrão:', e.message);
+    console.warn('[MAQUINAS] Erro ao carregar do Firestore:', e.message);
+    MAQUINAS = [];
+    window.MAQUINAS_DATA = {};
   }
 }
 
@@ -4359,6 +4506,9 @@ async function carregarMaquinasFirestore() {
 function getMaquinaData(nome) {
   return (window.MAQUINAS_DATA || {})[nome] || null;
 }
+
+// Helper: retorna lista atual de máquinas (sempre do Firestore, nunca estático)
+function getAllMaquinas() { return MAQUINAS; }
 
 // Calcula capacidade produtiva de uma máquina
 function calcCapacidadeMaquina(pcMin, efic, hTurno, nTurnos) {
@@ -4399,6 +4549,7 @@ async function salvarMaquinaFirestore(dados) {
     eficiencia: parseFloat(dados.eficiencia) || 100,
     hTurno: parseFloat(dados.hTurno) || 8,
     nTurnos: parseInt(dados.nTurnos) || 1,
+    tempoSetupPadrao: parseFloat(dados.tempoSetupPadrao) || 0,
     produtosCompativeis: dados.produtosCompativeis || [],
     atualizadoEm: new Date().toISOString()
   };
@@ -4446,6 +4597,34 @@ function renderCadastroMaquinas() {
     const capHora = cap ? cap.porHora.toLocaleString('pt-BR') + ' saq' : '<span style="color:var(--text3)">—</span>';
     const capDia = cap ? cap.porDia.toLocaleString('pt-BR') + ' saq' : '<span style="color:var(--text3)">—</span>';
     const tipoSetor = [d.tipo, d.setor].filter(Boolean).join(' / ') || '<span style="color:var(--text3)">—</span>';
+    const nProds = Array.isArray(d.produtosCompativeis) ? d.produtosCompativeis.length : 0;
+    const prodsBadge = nProds > 0
+      ? `<span style="background:rgba(139,92,246,.15);color:var(--purple);border:1px solid rgba(139,92,246,.3);border-radius:4px;padding:2px 6px;font-size:10px;font-weight:700">${nProds} prod.</span>`
+      : `<span style="background:rgba(255,179,0,.1);color:var(--warn);border:1px solid rgba(255,179,0,.25);border-radius:4px;padding:2px 6px;font-size:10px">Sem produtos</span>`;
+    const rowId = 'maq-detail-' + m.replace(/[^a-zA-Z0-9]/g,'_');
+    // Montar detalhe accordion
+    let detailHtml = '';
+    if (nProds > 0) {
+      const prodsRows = d.produtosCompativeis.map(p => {
+        const vel = p.velocidade != null ? `<span style="color:var(--cyan);font-family:'JetBrains Mono',monospace">${p.velocidade} saq/min</span>` : `<span style="color:var(--text3)">padrão${d.pcMin ? ' (' + d.pcMin + ')' : ''}</span>`;
+        return `<div style="display:grid;grid-template-columns:1fr auto;gap:8px;padding:5px 0;border-bottom:1px solid rgba(255,255,255,.04);font-size:11px">
+          <span style="color:var(--text2)">${p.produto}</span>
+          <span>${vel}</span>
+        </div>`;
+      }).join('');
+      detailHtml = `<div style="padding:8px 14px;background:rgba(139,92,246,.05);border-top:1px solid rgba(139,92,246,.15)">
+        <div style="font-size:10px;text-transform:uppercase;letter-spacing:.8px;color:var(--purple);font-weight:700;margin-bottom:8px;font-family:'JetBrains Mono',monospace">Produtos Compatíveis (${nProds})</div>
+        <div style="display:grid;grid-template-columns:1fr auto;gap:8px;padding:4px 0;border-bottom:1px solid rgba(255,255,255,.07)">
+          <span style="font-size:10px;color:var(--text3);font-weight:700">PRODUTO</span>
+          <span style="font-size:10px;color:var(--text3);font-weight:700">VELOCIDADE</span>
+        </div>
+        ${prodsRows}
+      </div>`;
+    } else {
+      detailHtml = `<div style="padding:10px 14px;background:rgba(255,179,0,.05);border-top:1px solid rgba(255,179,0,.2);font-size:12px;color:var(--warn)">
+        ⚠️ Essa máquina ainda não possui produtos vinculados. Clique em <strong>Editar</strong> → aba <strong>Produtos Compatíveis</strong> para configurar.
+      </div>`;
+    }
     return `<tr style="border-bottom:1px solid var(--border)" onmouseover="this.style.background='var(--s2)'" onmouseout="this.style.background=''">
       <td style="padding:10px 14px;font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--text1);font-weight:600">${m}${d.codigo ? `<span style="font-size:10px;color:var(--text3);font-weight:400;margin-left:6px">${d.codigo}</span>` : ''}</td>
       <td style="padding:10px 10px;font-size:12px;color:var(--text2)">${tipoSetor}</td>
@@ -4454,13 +4633,24 @@ function renderCadastroMaquinas() {
       <td style="padding:10px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--cyan)">${capDia}</td>
       <td style="padding:10px 10px;text-align:center">${statusBadge}</td>
       <td style="padding:10px 10px;text-align:right">
-        <div style="display:flex;gap:6px;justify-content:flex-end">
+        <div style="display:flex;gap:6px;justify-content:flex-end;align-items:center">
+          ${prodsBadge}
+          <button class="btn btn-ghost" onclick="toggleMaqDetail('${rowId}')" style="padding:4px 8px;font-size:11px;color:var(--purple)" title="Ver produtos">▾</button>
           <button class="btn btn-ghost" onclick="openEditMaquina('${m.replace(/'/g,"\\'")}');" style="padding:4px 10px;font-size:11px;color:var(--cyan)">✏ Editar</button>
-          <button class="btn btn-ghost" onclick="excluirMaquinaFirestore('${m.replace(/'/g,"\\'")}');" style="padding:4px 10px;font-size:11px;color:#ff6b6b">🗑 Remover</button>
+          <button class="btn btn-ghost" onclick="excluirMaquinaFirestore('${m.replace(/'/g,"\\'")}');" style="padding:4px 10px;font-size:11px;color:#ff6b6b">🗑</button>
         </div>
       </td>
+    </tr>
+    <tr id="${rowId}" style="display:none">
+      <td colspan="7" style="padding:0">${detailHtml}</td>
     </tr>`;
   }).join('');
+}
+
+function toggleMaqDetail(rowId) {
+  const el = document.getElementById(rowId);
+  if (!el) return;
+  el.style.display = el.style.display === 'none' ? 'table-row' : 'none';
 }
 
 // Estado do modal de máquina
@@ -4479,6 +4669,8 @@ function openAddMaquina() {
   document.getElementById('maq-efic-inp').value = '';
   document.getElementById('maq-hturno-inp').value = '';
   document.getElementById('maq-nturno-inp').value = '';
+  const setupInpNew = document.getElementById('maq-setup-inp');
+  if (setupInpNew) setupInpNew.value = '';
   document.getElementById('maq-pchora-inp').value = '';
   document.getElementById('maq-pcturno-inp').value = '';
   document.getElementById('maq-pcdia-inp').value = '';
@@ -4499,10 +4691,13 @@ function openEditMaquina(nome) {
   document.getElementById('maq-tipo-inp').value = d.tipo || '';
   document.getElementById('maq-setor-inp').value = d.setor || '';
   document.getElementById('maq-status-inp').value = d.status || 'ativa';
-  document.getElementById('maq-pcmin-inp').value = d.pcMin || '';
-  document.getElementById('maq-efic-inp').value = d.eficiencia || '';
-  document.getElementById('maq-hturno-inp').value = d.hTurno || '';
-  document.getElementById('maq-nturno-inp').value = d.nTurnos || '';
+  // Usar != null para não confundir 0 com vazio
+  document.getElementById('maq-pcmin-inp').value = (d.pcMin != null && d.pcMin !== '') ? d.pcMin : '';
+  document.getElementById('maq-efic-inp').value = (d.eficiencia != null && d.eficiencia !== '') ? d.eficiencia : '';
+  document.getElementById('maq-hturno-inp').value = (d.hTurno != null && d.hTurno !== '') ? d.hTurno : '';
+  document.getElementById('maq-nturno-inp').value = (d.nTurnos != null && d.nTurnos !== '') ? d.nTurnos : '';
+  const setupInp = document.getElementById('maq-setup-inp');
+  if (setupInp) setupInp.value = (d.tempoSetupPadrao != null && d.tempoSetupPadrao !== '') ? d.tempoSetupPadrao : '';
   calcMaqCapacidade();
   switchMaqTab('dados');
   populateMaqProdSel();
@@ -4611,6 +4806,7 @@ async function saveMaquinaModal() {
     eficiencia: document.getElementById('maq-efic-inp').value || 100,
     hTurno: document.getElementById('maq-hturno-inp').value || 8,
     nTurnos: document.getElementById('maq-nturno-inp').value || 1,
+    tempoSetupPadrao: parseFloat((document.getElementById('maq-setup-inp')||{}).value) || 0,
     produtosCompativeis: _maqProdsCompat,
   };
   await salvarMaquinaFirestore(dados);
@@ -4715,10 +4911,85 @@ function ftCfgToggle(header) {
 }
 
 
-// ── Cadastro: Produtos (localStorage) ──
+// ── Cadastro: Produtos (Firestore + localStorage) ──
 let PRODUTOS_EXTRA = JSON.parse(localStorage.getItem('cfg_produtos') || '[]');
 function saveExtraProdutos() { localStorage.setItem('cfg_produtos', JSON.stringify(PRODUTOS_EXTRA)); }
+
+// Retorna todos os produtos: Firestore (PRODUTOS) + extras localStorage (PRODUTOS_EXTRA)
 function getAllProdutos() { return [...PRODUTOS, ...PRODUTOS_EXTRA]; }
+
+// Normaliza um documento Firestore de produto para o formato legado {cod, descricao, unid, pc_min, maquina}
+function normalizeProdutoFirestore(data) {
+  return {
+    cod: data.cod || 0,
+    descricao: data.nome || data.descricao || '',
+    unid: parseInt(data.unid) || 1,
+    pc_min: parseFloat(data.velocidadePadrao || data.pc_min) || 0,
+    maquina: data.maquinaPadrao || data.maquina || '',
+    kg_fd: data.kg_fd || 0,
+    categoria: data.categoria || '',
+    coberturaDias: data.coberturaDias || 0,
+    estoqueMinimo: data.estoqueMinimo || 0,
+    ativo: data.ativo !== false
+  };
+}
+
+// Carrega produtos do Firestore e popula PRODUTOS
+async function carregarProdutosFirestore() {
+  try {
+    const snap = await getDocs(collection(firestoreDB, 'produtos'));
+    if (!snap.empty) {
+      PRODUTOS = snap.docs
+        .map(d => normalizeProdutoFirestore({ ...d.data(), _id: d.id }))
+        .filter(p => p.ativo !== false && p.descricao);
+      console.log('[PRODUTOS] Carregados do Firestore:', PRODUTOS.length);
+    } else {
+      console.log('[PRODUTOS] Nenhum produto no Firestore. Use Configurações → Produtos para importar.');
+    }
+  } catch(e) {
+    console.warn('[PRODUTOS] Erro ao carregar do Firestore:', e.message);
+  }
+  // Recarregar fichaTecnicaData a partir do Firestore
+  try {
+    const snap2 = await getDocs(collection(firestoreDB, 'fichaTecnica'));
+    if (!snap2.empty) {
+      const ftArr = snap2.docs.map(d => d.data());
+      FICHA_TECNICA = ftArr;
+      fichaTecnicaData = JSON.parse(JSON.stringify(ftArr));
+    }
+  } catch(e) { /* ficha técnica opcional */ }
+}
+
+// Salva produto no Firestore
+async function salvarProdutoFirestore(dados) {
+  const payload = {
+    cod: parseInt(dados.cod) || 0,
+    nome: (dados.descricao || dados.nome || '').trim(),
+    descricao: (dados.descricao || dados.nome || '').trim(),
+    unid: parseInt(dados.unid) || 1,
+    pc_min: parseFloat(dados.pc_min) || 0,
+    velocidadePadrao: parseFloat(dados.pc_min) || 0,
+    maquina: dados.maquina || '',
+    maquinaPadrao: dados.maquina || '',
+    kg_fd: 0,
+    categoria: dados.categoria || '',
+    coberturaDias: parseInt(dados.coberturaDias) || 0,
+    estoqueMinimo: parseFloat(dados.estoqueMinimo) || 0,
+    ativo: dados.ativo !== false,
+    atualizadoEm: new Date().toISOString()
+  };
+  try {
+    if (dados._id) {
+      await setDoc(doc(firestoreDB, 'produtos', dados._id), { ...payload, criadoEm: dados.criadoEm || new Date().toISOString() });
+    } else {
+      payload.criadoEm = new Date().toISOString();
+      await addDoc(collection(firestoreDB, 'produtos'), payload);
+    }
+    await carregarProdutosFirestore();
+  } catch(e) {
+    toast('Erro ao salvar produto: ' + e.message, 'err');
+  }
+}
 
 function renderProdutosCfg() {
   const filter = (document.getElementById('prod-search-cfg') || {}).value || '';
@@ -4781,11 +5052,19 @@ function saveProdModal() {
   const pcmin = parseFloat(document.getElementById('pm-pcmin').value);
   const maq = document.getElementById('pm-maq').value;
   if (!cod || !desc || !unid || !pcmin || !maq) { toast('Preencha todos os campos', 'err'); return; }
-  PRODUTOS_EXTRA.push({ cod, descricao: desc, unid, kg_fd: 0, pc_min: pcmin, maquina: maq });
-  saveExtraProdutos();
+  const dados = { cod, descricao: desc, unid, kg_fd: 0, pc_min: pcmin, maquina: maq };
+  // Salva no Firestore (função assíncrona - não bloqueia)
+  salvarProdutoFirestore(dados).then(() => {
+    renderProdutosCfg();
+    toast('Produto salvo!', 'ok');
+  }).catch(() => {
+    // Fallback: salva no localStorage para não perder dados
+    PRODUTOS_EXTRA.push({ cod, descricao: desc, unid, kg_fd: 0, pc_min: pcmin, maquina: maq });
+    saveExtraProdutos();
+    renderProdutosCfg();
+    toast('Produto adicionado (local)!', 'ok');
+  });
   closeProdModal();
-  renderProdutosCfg();
-  toast('Produto adicionado!', 'ok');
 }
 function deleteExtraProduto(cod, maq, desc) {
   const idx = PRODUTOS_EXTRA.findIndex(p => p.cod === cod && p.maquina === maq && p.descricao === desc);
@@ -4798,23 +5077,29 @@ function deleteExtraProduto(cod, maq, desc) {
 function importProdutosExcel(input) {
   const file = input.files[0]; if (!file) return;
   const reader = new FileReader();
-  reader.onload = function(e) {
+  reader.onload = async function(e) {
     try {
       const wb = XLSX.read(e.target.result, { type: 'binary' });
       const ws = wb.Sheets[wb.SheetNames[0]];
       const rows = XLSX.utils.sheet_to_json(ws);
       let added = 0, erros = 0;
+      const promises = [];
       rows.forEach(row => {
         const cod = parseInt(row['cod'] || row['Cod'] || row['COD'] || 0);
-        const desc = (row['descricao'] || row['Descricao'] || row['DESCRICAO'] || '').toString().trim();
-        const maq = (row['maquina'] || row['Maquina'] || row['MAQUINA'] || '').toString().trim();
-        const pcmin = parseFloat(row['pc_min'] || row['PcMin'] || row['PC_MIN'] || 0);
+        const desc = (row['descricao'] || row['nome'] || row['Descricao'] || row['DESCRICAO'] || '').toString().trim();
+        const maq = (row['maquina'] || row['maquinaPadrao'] || row['Maquina'] || row['MAQUINA'] || '').toString().trim();
+        const pcmin = parseFloat(row['pc_min'] || row['velocidadePadrao'] || row['PcMin'] || row['PC_MIN'] || 0);
         const unid = parseInt(row['unid'] || row['Unid'] || row['UNID'] || 0);
-        if (!cod || !desc || !maq || !pcmin || !unid) { erros++; return; }
-        PRODUTOS_EXTRA.push({ cod, descricao: desc, unid, kg_fd: 0, pc_min: pcmin, maquina: maq });
+        const categoria = (row['categoria'] || row['Categoria'] || '').toString().trim();
+        const coberturaDias = parseInt(row['coberturaDias'] || row['CobDias'] || 0);
+        const estoqueMinimo = parseFloat(row['estoqueMinimo'] || row['EstMin'] || 0);
+        if (!cod || !desc || !unid) { erros++; return; }
+        const dados = { cod, descricao: desc, unid, kg_fd: 0, pc_min: pcmin, maquina: maq, categoria, coberturaDias, estoqueMinimo, ativo: true };
+        promises.push(salvarProdutoFirestore(dados));
         added++;
       });
-      saveExtraProdutos();
+      await Promise.all(promises);
+      await carregarProdutosFirestore();
       renderProdutosCfg();
       let msg = added + ' produto(s) importado(s)!';
       if (erros) msg += ' (' + erros + ' linha(s) ignoradas)';
@@ -4827,8 +5112,8 @@ function importProdutosExcel(input) {
 function downloadProdTemplate(e) {
   e.preventDefault();
   const ws = XLSX.utils.aoa_to_sheet([
-    ['cod','descricao','maquina','pc_min','unid'],
-    [12345,'EXEMPLO PRODUTO 500G - CX 12','ALFATECK 14',28.05,12]
+    ['cod','descricao','maquina','pc_min','unid','categoria','coberturaDias','estoqueMinimo'],
+    [12345,'EXEMPLO PRODUTO 500G - CX 12','ALFATECK 14',28.05,12,'ESPECIARIA',15,100]
   ]);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Produtos');
@@ -5371,8 +5656,8 @@ function switchTabSidebar(name) {
   }
   // Update all panels
   document.querySelectorAll('.panel').forEach(p => p.classList.remove('on'));
-  // 'prog-auto' tab maps to 'panel-calculos' (same module)
-  const panelId = name === 'prog-auto' ? 'calculos' : name;
+  // Cada aba abre seu próprio painel (prog-auto → panel-prog-auto)
+  const panelId = name;
   const panel = document.getElementById('panel-' + panelId);
   if(panel) panel.classList.add('on');
   // Update sidebar active state
@@ -6063,7 +6348,7 @@ function calcularProjecao(){
     seen.add(key);
     allProds.push(p);
   });
-  PRODUTOS.forEach(p => {
+  getAllProdutos().forEach(p => {
     const key = String(p.cod).toLowerCase();
     if(!seen.has(key)){
       seen.add(key);
@@ -6087,7 +6372,7 @@ function calcularProjecao(){
     const manualKey = p.cod || p.produto;
     const projFinal = projecaoManual[manualKey] != null ? projecaoManual[manualKey] : projSemanal;
     const estoqueBruto = getEstoqueProduto(p.produto, p.cod);
-    const prodFicha = PRODUTOS.find(x => String(x.cod) === String(p.cod) || x.descricao === p.produto);
+    const prodFicha = getAllProdutos().find(x => String(x.cod) === String(p.cod) || x.descricao === p.produto);
     const unidPorCxProj = prodFicha ? (prodFicha.unid || 1) : 1;
     let estoque = estoqueBruto;
     if(estoque != null && projSemanal > 0 && estoque > projSemanal * unidPorCxProj * 0.5){
@@ -6355,6 +6640,21 @@ function paPopulaSemanas(){
 function pa_onSemanaChange(){ if(paResultados.length) renderProgAutomaticaResultado(); }
 
 function gerarProgAutomarica(){
+  // Validação: precisa de máquinas e produtos reais do Firestore
+  if (!MAQUINAS.length) {
+    const alertEl2 = document.getElementById('pa-alerta');
+    if(alertEl2) alertEl2.innerHTML = '<div style="background:rgba(255,71,87,.1);border:1px solid rgba(255,71,87,.3);border-radius:8px;padding:12px 14px;font-size:12px;color:var(--red)">'
+      + '⛔ <strong>Nenhuma máquina cadastrada no Firestore.</strong> Cadastre máquinas em <strong>Configurações → Máquinas</strong> antes de gerar a programação.</div>';
+    document.getElementById('pa-body').innerHTML = '';
+    return;
+  }
+  if (!getAllProdutos().length) {
+    const alertEl2 = document.getElementById('pa-alerta');
+    if(alertEl2) alertEl2.innerHTML = '<div style="background:rgba(255,179,0,.1);border:1px solid rgba(255,179,0,.3);border-radius:8px;padding:12px 14px;font-size:12px;color:var(--warn)">'
+      + '⚠️ <strong>Nenhum produto cadastrado.</strong> Importe produtos em <strong>Configurações → Produtos → Excel</strong> antes de gerar.</div>';
+    document.getElementById('pa-body').innerHTML = '';
+    return;
+  }
   impLoadFromStorage();
   projLoadManual();
   if(!projecaoCalculada.length) calcularProjecao();
@@ -6368,12 +6668,76 @@ function gerarProgAutomarica(){
   const monday = semanaSel ? new Date(semanaSel+'T12:00:00') : getWeekMonday(new Date());
   const days = getWeekDays(monday);
 
+  // Avisos de configuração
+  const alertEl = document.getElementById('pa-alerta');
+  const maqSemProdutos = MAQUINAS.filter(m => {
+    const d = getMaquinaData(m);
+    return !d || !Array.isArray(d.produtosCompativeis) || d.produtosCompativeis.length === 0;
+  });
+
+  if (!projecaoCalculada.length) {
+    if(alertEl) alertEl.innerHTML = '<div style="background:rgba(255,179,0,.1);border:1px solid rgba(255,179,0,.3);border-radius:8px;padding:12px 14px;font-size:12px;color:var(--warn);margin-bottom:8px">⚠️ <strong>Dados insuficientes:</strong> Nenhuma projeção de vendas encontrada. Importe o estoque e projeção na aba <strong>Importação/API</strong>.</div>';
+    document.getElementById('pa-body').innerHTML = '';
+    paResultados = [];
+    renderProgAutomaticaStats();
+    return;
+  }
+
+  if(alertEl) {
+    let alertHtml = '';
+    if (maqSemProdutos.length > 0) {
+      alertHtml += '<div style="background:rgba(255,179,0,.08);border:1px solid rgba(255,179,0,.25);border-radius:8px;padding:10px 14px;font-size:12px;color:var(--warn);margin-bottom:8px">⚠️ <strong>Máquinas sem produtos vinculados:</strong> ' + maqSemProdutos.join(', ') + '. Configure em <strong>Configurações → Máquinas</strong> → Produtos Compatíveis.</div>';
+    }
+    alertEl.innerHTML = alertHtml;
+  }
+
   const candidates = [];
+  const prodSemMaquina = [];
   projecaoCalculada.forEach(proj => {
-    const ficha = PRODUTOS.find(p => String(p.cod)===String(proj.cod) || p.descricao===proj.produto);
-    if(!ficha) return;
+    const allProds = getAllProdutos();
+    const ficha = allProds.find(p => String(p.cod)===String(proj.cod) || p.descricao===proj.produto);
+
+    let maqNome = ficha ? ficha.maquina : null;
+    let fichaUnid = ficha ? (ficha.unid || 1) : 1;
+    let fichaPcMin = ficha ? (ficha.pc_min || 0) : 0;
+
+    if (!maqNome) {
+      // Tenta encontrar qual maquina tem este produto nos compativeis
+      const maqDataBusca = Object.values(window.MAQUINAS_DATA || {}).find(m =>
+        Array.isArray(m.produtosCompativeis) &&
+        m.produtosCompativeis.some(p => p.produto === proj.produto || (proj.produto && proj.produto.startsWith(p.produto)))
+      );
+      if (maqDataBusca) {
+        maqNome = maqDataBusca.nome;
+        const entry = maqDataBusca.produtosCompativeis.find(p => p.produto === proj.produto || (proj.produto && proj.produto.startsWith(p.produto)));
+        fichaPcMin = (entry && entry.velocidade) ? parseFloat(entry.velocidade) : (parseFloat(maqDataBusca.pcMin) || 0);
+      } else {
+        prodSemMaquina.push(proj.produto);
+        return;
+      }
+    }
+
+    // Buscar velocidade real da maquina no cadastro Firestore
+    const maqData = getMaquinaData(maqNome);
+    let pc_min = fichaPcMin; // 3: fallback catalogo
+    if (maqData) {
+      // 1: velocidade especifica do produto na maquina
+      const prodEntry = Array.isArray(maqData.produtosCompativeis)
+        ? maqData.produtosCompativeis.find(p => p.produto === proj.produto || (proj.produto && proj.produto.startsWith(p.produto)) || p.produto === (ficha && ficha.descricao))
+        : null;
+      if (prodEntry && prodEntry.velocidade != null && prodEntry.velocidade > 0) {
+        pc_min = parseFloat(prodEntry.velocidade);
+      } else if (maqData.pcMin && parseFloat(maqData.pcMin) > 0) {
+        pc_min = parseFloat(maqData.pcMin); // 2: velocidade padrao da maquina
+      }
+      // 3: fichaPcMin (ja definido acima) - fallback
+    }
+    if (!pc_min || pc_min <= 0) {
+      console.warn('[PA] Maquina sem velocidade:', maqNome, '| produto:', proj.produto);
+    }
+
     const demandaDiaria = proj.projFinal / 7;
-    const unidPorCx = ficha.unid || 1;
+    const unidPorCx = fichaUnid;
     const estoqueRaw = proj.estoque ?? 0;
     const estoqueCaixas = unidPorCx > 1 ? estoqueRaw / unidPorCx : estoqueRaw;
     const estoque = estoqueCaixas;
@@ -6383,14 +6747,14 @@ function gerarProgAutomarica(){
     const qntCaixasNecessario = Math.max(0, Math.ceil((estqAlvo - estoque)));
     if(qntCaixasNecessario <= 0 && cobAtual > cobAlvo) return;
     const unidTotal = qntCaixasNecessario * unidPorCx;
-    const tempoMin  = ficha.pc_min > 0 ? unidTotal / ficha.pc_min : 0;
+    const tempoMin  = pc_min > 0 ? unidTotal / pc_min : 0;
     const tempoHrs  = tempoMin / 60;
     const cobProjetada = demandaDiaria > 0 ? parseFloat(((estoque + qntCaixasNecessario) / demandaDiaria).toFixed(1)) : 999;
     candidates.push({
       prod: proj.produto,
       cod: proj.cod,
-      maquina: ficha.maquina,
-      pc_min: ficha.pc_min,
+      maquina: maqNome,
+      pc_min,
       unid: unidPorCx,
       estoque,
       cobAtual: parseFloat(cobAtual.toFixed(1)),
@@ -6401,12 +6765,37 @@ function gerarProgAutomarica(){
       prioridade,
       cobProjetada,
       risco: cobAtual <= riscoLim ? 'critico' : cobAtual <= cobMin ? 'alto' : cobAtual <= cobMin*2 ? 'medio' : 'ok',
-      motivo: buildMotivo(cobAtual, demandaDiaria, riscoLim, cobMin, cobAlvo)
+      motivo: buildMotivo(cobAtual, demandaDiaria, riscoLim, cobMin, cobAlvo),
+      // flags de diagnóstico
+      velocidadeOrigem: maqData ? ((() => {
+        const e = Array.isArray(maqData.produtosCompativeis) ? maqData.produtosCompativeis.find(p => p.produto === proj.produto || p.produto === (ficha && ficha.descricao)) : null;
+        return e && e.velocidade ? 'produto' : (maqData.pcMin ? 'maquina' : 'catalogo');
+      })()) : 'catalogo'
     });
   });
 
+  // Alertas de produtos sem maquina / maquinas sem velocidade
+  if (alertEl) {
+    let alertHtml = alertEl.innerHTML || '';
+    if (prodSemMaquina.length > 0) {
+      alertHtml += '<div style="background:rgba(255,71,87,.08);border:1px solid rgba(255,71,87,.3);border-radius:8px;padding:10px 14px;font-size:12px;color:var(--red);margin-bottom:8px">'
+        + '\u26D4 <strong>Produtos sem maquina compativel cadastrada:</strong> '
+        + prodSemMaquina.slice(0,5).join(', ')
+        + (prodSemMaquina.length > 5 ? ' e mais ' + (prodSemMaquina.length-5) : '')
+        + '. Vincule em <strong>Configuracoes > Maquinas > Produtos Compativeis</strong>.</div>';
+    }
+    const maqSemVel = Object.values(window.MAQUINAS_DATA || {}).filter(m => !(m.pcMin > 0));
+    if (maqSemVel.length > 0) {
+      alertHtml += '<div style="background:rgba(255,179,0,.08);border:1px solid rgba(255,179,0,.25);border-radius:8px;padding:10px 14px;font-size:12px;color:var(--warn);margin-bottom:8px">'
+        + '\u26A0\uFE0F <strong>Maquinas sem velocidade configurada:</strong> '
+        + maqSemVel.map(m => m.nome).join(', ')
+        + '. Configure em <strong>Configuracoes > Maquinas > Capacidade</strong>.</div>';
+    }
+    alertEl.innerHTML = alertHtml;
+  }
+
   if(!candidates.length){
-    document.getElementById('pa-body').innerHTML = `<div class="empty"><div class="ei">✅</div>Nenhum produto precisa de produção urgente com os parâmetros atuais.<br><small style="color:var(--text3)">Verifique se importou estoque e projeção na aba Importação/API</small></div>`;
+    document.getElementById('pa-body').innerHTML = '<div class="empty"><div class="ei">✅</div>Nenhum produto precisa de produção urgente com os parâmetros atuais.<br><small style="color:var(--text3)">Verifique se importou estoque e projeção na aba Importação/API</small></div>';
     paResultados = [];
     renderProgAutomaticaStats();
     return;
@@ -6422,13 +6811,30 @@ function gerarProgAutomarica(){
 
   for(const maq of Object.keys(byMaq)){
     const items = byMaq[maq].sort((a,b) => b.prioridade - a.prioridade);
-    const maqWeekHrs = weekHrsForMachine(maq, monday);
+    const maqData2 = getMaquinaData(maq);
+
+    // Calcular capacidade semanal real respeitando hTurno, nTurnos e eficiência
+    let maqWeekHrs = weekHrsForMachine(maq, monday);
+    if (!maqWeekHrs || maqWeekHrs <= 0) {
+      if (maqData2 && parseFloat(maqData2.hTurno) > 0 && parseInt(maqData2.nTurnos) > 0) {
+        const hTurno = parseFloat(maqData2.hTurno);
+        const nTurnos = parseInt(maqData2.nTurnos);
+        const diasUteis = days.length || 5;
+        maqWeekHrs = hTurno * nTurnos * diasUteis;
+      } else {
+        maqWeekHrs = 44; // fallback padrão (8h × 1 turno × 5 dias + 1 hora extra)
+      }
+    }
+    // Aplicar eficiência da máquina na capacidade disponível
+    const efic = (maqData2 && parseFloat(maqData2.eficiencia) > 0) ? parseFloat(maqData2.eficiencia) / 100 : 1;
+    const maqCapacidadeEfetiva = maqWeekHrs * efic;
+
     const maqWorkDays = days.filter(d => hoursOnMachineDay(maq,d) > 0);
-    let maqHrsRestantes = maqWeekHrs;
+    let maqHrsRestantes = maqCapacidadeEfetiva;
     items.forEach(item => {
       const maxHrsItem = maqHrsRestantes * maxPctMaq;
       const hrsAlocar  = Math.min(item.tempoHrs, maxHrsItem);
-      const pctUsado   = maqWeekHrs > 0 ? (hrsAlocar / maqWeekHrs * 100) : 0;
+      const pctUsado   = maqCapacidadeEfetiva > 0 ? (hrsAlocar / maqCapacidadeEfetiva * 100) : 0;
       const cxAlocar   = item.pc_min > 0 && item.unid > 0
         ? Math.floor(hrsAlocar * 60 * item.pc_min / item.unid)
         : item.qntCaixasSugerida;
@@ -6474,7 +6880,7 @@ function gerarProgAutomarica(){
   renderProgAutomaticaResultado();
   renderProgAutomaticaStats();
   document.getElementById('pa-apply-btn').style.display = paResultados.length ? 'flex' : 'none';
-  toast(`Programação gerada: ${paResultados.length} sugestões`, 'ok');
+  toast('Programação gerada: ' + paResultados.length + ' sugestões', 'ok');
 }
 
 function calcPrioridade(cobAtual, demandaDiaria, riscoLim, cobMin){
@@ -6667,17 +7073,19 @@ async function aplicarProgAutomaticaNoGantt(){
   let criados = 0;
   for(const sug of paResultados){
     if(!sug.cxAlocadas) continue;
-    const ficha = PRODUTOS.find(p => String(p.cod)===String(sug.cod) || p.descricao===sug.prod);
-    if(!ficha) continue;
+    // Busca no catálogo real; se não achar, usa os dados já calculados na sugestão
+    const ficha = getAllProdutos().find(p => String(p.cod)===String(sug.cod) || p.descricao===sug.prod);
+    const pcMinUsar = (ficha && ficha.pc_min) || sug.pc_min || 0;
+    const unidUsar  = (ficha && ficha.unid)   || sug.unid   || 1;
     const startDate = sug.diasDist && sug.diasDist.length > 0 ? sug.diasDist[0].date : dateStr(monday);
     const obj = {
       produto: sug.prod,
       prodCod: parseInt(sug.cod)||0,
       maquina: sug.maquina,
-      pcMin: ficha.pc_min,
-      unidPorCx: ficha.unid,
+      pcMin: pcMinUsar,
+      unidPorCx: unidUsar,
       qntCaixas: sug.cxAlocadas,
-      qntUnid: sug.cxAlocadas * (ficha.unid||1),
+      qntUnid: sug.cxAlocadas * unidUsar,
       status: 'Pendente',
       dtSolicitacao: startDate,
       dtDesejada: startDate,
@@ -6697,7 +7105,56 @@ function simularCenario(){
   toast('Simulação: ajuste os parâmetros acima e clique em "Gerar Programação Automática" para ver o impacto.','ok');
 }
 
-function renderCalculos(){ paPopulaSemanas(); }
+function renderCalculos(){
+  paPopulaSemanas();
+  const alertEl = document.getElementById('pa-alerta');
+  if (!alertEl) return;
+  const temProjecao = (typeof projecaoCalculada !== 'undefined') && projecaoCalculada.length > 0;
+  const temMaquinas = MAQUINAS.length > 0;
+  const temProdutos = getAllProdutos().length > 0;
+  let html = '';
+
+  if (!temMaquinas) {
+    html += '<div style="background:rgba(255,71,87,.1);border:1px solid rgba(255,71,87,.3);border-radius:8px;padding:12px 14px;font-size:12px;color:var(--red);margin-bottom:8px">'
+      + '⛔ <strong>Nenhuma máquina cadastrada.</strong> Cadastre máquinas em <strong>Configurações → Máquinas</strong> para poder gerar a programação automática.'
+      + '</div>';
+  }
+  if (!temProdutos) {
+    html += '<div style="background:rgba(255,179,0,.1);border:1px solid rgba(255,179,0,.3);border-radius:8px;padding:12px 14px;font-size:12px;color:var(--warn);margin-bottom:8px">'
+      + '⚠️ <strong>Nenhum produto cadastrado.</strong> Importe produtos em <strong>Configurações → Produtos → Excel</strong>.'
+      + '</div>';
+  }
+  if (!temProjecao) {
+    html += '<div style="background:rgba(255,179,0,.08);border:1px solid rgba(255,179,0,.25);border-radius:8px;padding:12px 14px;font-size:12px;color:var(--warn);margin-bottom:8px">'
+      + '⚠️ <strong>Projeção de vendas não carregada.</strong> Importe estoque e projeção na aba <strong>Importação/API</strong>.'
+      + '</div>';
+  }
+  if (temMaquinas && temProdutos) {
+    // Verificar máquinas sem produtos vinculados
+    const maqSemProdutos = MAQUINAS.filter(m => {
+      const d = getMaquinaData(m);
+      return !d || !Array.isArray(d.produtosCompativeis) || d.produtosCompativeis.length === 0;
+    });
+    if (maqSemProdutos.length > 0) {
+      html += '<div style="background:rgba(0,212,255,.07);border:1px solid rgba(0,212,255,.2);border-radius:8px;padding:10px 14px;font-size:12px;color:var(--cyan);margin-bottom:8px">'
+        + 'ℹ️ <strong>Máquinas sem produtos vinculados:</strong> ' + maqSemProdutos.join(', ')
+        + '. Vincule em <strong>Configurações → Máquinas → Produtos Compatíveis</strong>.'
+        + '</div>';
+    }
+    // Verificar máquinas sem velocidade
+    const maqSemVel = MAQUINAS.filter(m => {
+      const d = getMaquinaData(m);
+      return !d || !(parseFloat(d.pcMin) > 0);
+    });
+    if (maqSemVel.length > 0) {
+      html += '<div style="background:rgba(255,179,0,.07);border:1px solid rgba(255,179,0,.2);border-radius:8px;padding:10px 14px;font-size:12px;color:var(--warn);margin-bottom:8px">'
+        + '⚠️ <strong>Máquinas sem velocidade configurada:</strong> ' + maqSemVel.join(', ')
+        + '. Configure em <strong>Configurações → Máquinas → Capacidade</strong>.'
+        + '</div>';
+    }
+  }
+  alertEl.innerHTML = html;
+}
 
 // init
 (function paInit(){
@@ -6765,8 +7222,179 @@ window.openReorderModal = openReorderModal;
 window.openSettings = openSettings;
 window.carregarMaquinasFirestore = carregarMaquinasFirestore;
 window.getMaquinaData = getMaquinaData;
+window.getAllMaquinas = getAllMaquinas;
+window.carregarSetupFirestore = carregarSetupFirestore;
+window.salvarSetupFirestore = salvarSetupFirestore;
+window.getSetupMin = getSetupMin;
 window.calcCapacidadeMaquina = calcCapacidadeMaquina;
 window.getPcMinMaquinaProduto = getPcMinMaquinaProduto;
+window.carregarProdutosFirestore = carregarProdutosFirestore;
+window.salvarProdutoFirestore = salvarProdutoFirestore;
+window.getAllProdutos = getAllProdutos;
+
+// ===== TELA DE GESTÃO DE SETUP (Configurações → Tempos de Setup) =====
+let _setupRegistros = [];
+
+async function recarregarSetup() {
+  await carregarSetupFirestore();
+  renderSetupMaquinas();
+  toast('Setup recarregado!', 'ok');
+}
+
+async function renderSetupMaquinas() {
+  try {
+    const snap = await getDocs(collection(firestoreDB, 'setup_maquinas'));
+    _setupRegistros = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  } catch(e) {
+    _setupRegistros = [];
+    toast('Erro ao carregar setup: ' + e.message, 'err');
+    return;
+  }
+  const maqSel = document.getElementById('setup-filter-maq');
+  if (maqSel) {
+    const cv = maqSel.value;
+    maqSel.innerHTML = '<option value="">Todas as máquinas</option>'
+      + MAQUINAS.map(m => `<option value="${m}"${m === cv ? ' selected' : ''}>${m}</option>`).join('');
+  }
+  const filterMaq = (maqSel && maqSel.value) || '';
+  const lista = filterMaq ? _setupRegistros.filter(r => r.maquina === filterMaq) : _setupRegistros;
+  const tbody = document.getElementById('setup-lista');
+  const empty = document.getElementById('setup-empty');
+  const cnt   = document.getElementById('setup-count');
+  if (cnt) cnt.textContent = _setupRegistros.length;
+  if (!lista.length) {
+    if (tbody) tbody.innerHTML = '';
+    if (empty) empty.style.display = 'block';
+    return;
+  }
+  if (empty) empty.style.display = 'none';
+  const sorted = [...lista].sort((a,b) =>
+    (a.maquina||'').localeCompare(b.maquina||'') ||
+    (a.produto_origem||'').localeCompare(b.produto_origem||'') ||
+    (a.produto_destino||'').localeCompare(b.produto_destino||''));
+  if (tbody) tbody.innerHTML = sorted.map(r => {
+    const tc = (r.tempo_setup === 0) ? 'var(--text3)' : (r.tempo_setup > 30) ? 'var(--red)' : (r.tempo_setup > 15) ? 'var(--warn)' : 'var(--cyan)';
+    return `<tr style="border-bottom:1px solid var(--border)" onmouseover="this.style.background='var(--s2)'" onmouseout="this.style.background=''">
+      <td style="padding:9px 14px;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--purple);font-weight:600">${r.maquina||'—'}</td>
+      <td style="padding:9px 10px;font-size:12px;color:var(--text2)">${r.produto_origem||'—'}</td>
+      <td style="padding:9px 10px;font-size:12px;color:var(--text2)">${r.produto_destino||'—'}</td>
+      <td style="padding:9px 10px;text-align:center;font-family:'JetBrains Mono',monospace;font-weight:700;font-size:13px;color:${tc}">${r.tempo_setup ?? '—'} min</td>
+      <td style="padding:9px 10px;text-align:right">
+        <div style="display:flex;gap:5px;justify-content:flex-end">
+          <button onclick="openEditSetup('${r.id}')" class="btn btn-ghost" style="padding:3px 9px;font-size:11px;color:var(--cyan)">✏</button>
+          <button onclick="excluirSetup('${r.id}')" class="btn btn-ghost" style="padding:3px 9px;font-size:11px;color:#ff6b6b">🗑</button>
+        </div>
+      </td></tr>`;
+  }).join('');
+}
+
+function _populateSetupSelects(maqVal, origemVal, destinoVal) {
+  const maqInp  = document.getElementById('setup-maq-inp');
+  const oriSel  = document.getElementById('setup-origem-inp');
+  const destSel = document.getElementById('setup-destino-inp');
+  if (!maqInp || !oriSel || !destSel) return;
+  maqInp.innerHTML = '<option value="">— Selecione a máquina —</option>'
+    + MAQUINAS.map(m => `<option value="${m}"${m === maqVal ? ' selected' : ''}>${m}</option>`).join('');
+  const maqAtual = maqInp.value || maqVal;
+  const maqData = getMaquinaData(maqAtual);
+  let prods = [];
+  if (maqData && Array.isArray(maqData.produtosCompativeis) && maqData.produtosCompativeis.length) {
+    prods = maqData.produtosCompativeis.map(p => p.produto);
+  } else if (maqAtual) {
+    prods = getAllProdutos().filter(p => p.maquina === maqAtual).map(p => p.descricao);
+  } else {
+    prods = [...new Set(getAllProdutos().map(p => p.descricao))].sort();
+  }
+  const opts = (sel) => prods.length
+    ? prods.map(p => `<option value="${p}"${p === sel ? ' selected' : ''}>${p}</option>`).join('')
+    : '<option value="">— nenhum produto compatível —</option>';
+  oriSel.innerHTML  = '<option value="">— Produto origem —</option>'  + opts(origemVal);
+  destSel.innerHTML = '<option value="">— Produto destino —</option>' + opts(destinoVal);
+}
+
+function openAddSetup() {
+  document.getElementById('setup-edit-id').value = '';
+  document.getElementById('setup-modal-title').textContent = 'Novo Tempo de Setup';
+  document.getElementById('setup-tempo-inp').value = '';
+  const alertEl = document.getElementById('setup-modal-alert');
+  if (alertEl) alertEl.style.display = 'none';
+  _populateSetupSelects('', '', '');
+  const maqInp = document.getElementById('setup-maq-inp');
+  if (maqInp) maqInp.onchange = () => _populateSetupSelects(maqInp.value, '', '');
+  document.getElementById('setup-modal').style.display = 'flex';
+}
+
+function openEditSetup(id) {
+  const r = _setupRegistros.find(x => x.id === id);
+  if (!r) return;
+  document.getElementById('setup-edit-id').value = id;
+  document.getElementById('setup-modal-title').textContent = 'Editar Setup';
+  document.getElementById('setup-tempo-inp').value = r.tempo_setup ?? '';
+  const alertEl = document.getElementById('setup-modal-alert');
+  if (alertEl) alertEl.style.display = 'none';
+  _populateSetupSelects(r.maquina, r.produto_origem, r.produto_destino);
+  const maqInp = document.getElementById('setup-maq-inp');
+  if (maqInp) maqInp.onchange = () => _populateSetupSelects(maqInp.value, '', '');
+  document.getElementById('setup-modal').style.display = 'flex';
+}
+
+function closeSetupModal() { document.getElementById('setup-modal').style.display = 'none'; }
+
+async function saveSetupModal() {
+  const editId  = document.getElementById('setup-edit-id').value;
+  const maquina = document.getElementById('setup-maq-inp').value;
+  const origem  = document.getElementById('setup-origem-inp').value;
+  const destino = document.getElementById('setup-destino-inp').value;
+  const tempo   = document.getElementById('setup-tempo-inp').value;
+  const alertEl = document.getElementById('setup-modal-alert');
+  const erros = [];
+  if (!maquina)  erros.push('Selecione a máquina.');
+  if (!origem)   erros.push('Selecione o produto origem.');
+  if (!destino)  erros.push('Selecione o produto destino.');
+  if (origem && destino && origem === destino) erros.push('Origem e destino não podem ser iguais.');
+  if (tempo === '' || isNaN(parseInt(tempo)) || parseInt(tempo) < 0) erros.push('Informe um tempo válido (0 ou mais minutos).');
+  if (maquina && !MAQUINAS.includes(maquina)) erros.push('Máquina "' + maquina + '" não está cadastrada.');
+  if (erros.length) {
+    if (alertEl) { alertEl.textContent = erros.join(' '); alertEl.style.display = 'block'; }
+    return;
+  }
+  if (alertEl) alertEl.style.display = 'none';
+  try {
+    const payload = { maquina, produto_origem: origem, produto_destino: destino, tempo_setup: parseInt(tempo), atualizadoEm: new Date().toISOString() };
+    if (editId) {
+      await setDoc(doc(firestoreDB, 'setup_maquinas', editId), payload);
+      toast('Setup atualizado!', 'ok');
+    } else {
+      payload.criadoEm = new Date().toISOString();
+      await addDoc(collection(firestoreDB, 'setup_maquinas'), payload);
+      toast('Setup cadastrado!', 'ok');
+    }
+    await carregarSetupFirestore();
+    closeSetupModal();
+    renderSetupMaquinas();
+  } catch(e) {
+    if (alertEl) { alertEl.textContent = 'Erro ao salvar: ' + e.message; alertEl.style.display = 'block'; }
+  }
+}
+
+async function excluirSetup(id) {
+  if (!confirm('Remover este tempo de setup?')) return;
+  try {
+    await deleteDoc(doc(firestoreDB, 'setup_maquinas', id));
+    await carregarSetupFirestore();
+    renderSetupMaquinas();
+    toast('Setup removido.', 'ok');
+  } catch(e) { toast('Erro ao remover: ' + e.message, 'err'); }
+}
+
+window.renderSetupMaquinas = renderSetupMaquinas;
+window.openAddSetup = openAddSetup;
+window.openEditSetup = openEditSetup;
+window.closeSetupModal = closeSetupModal;
+window.saveSetupModal = saveSetupModal;
+window.excluirSetup = excluirSetup;
+window.recarregarSetup = recarregarSetup;
+
 window.renderCadastroMaquinas = renderCadastroMaquinas;
 window.openAddMaquina = openAddMaquina;
 window.openEditMaquina = openEditMaquina;
@@ -6777,6 +7405,8 @@ window.addMaqProdCompat = addMaqProdCompat;
 window.removeMaqProdCompat = removeMaqProdCompat;
 window.saveMaquinaModal = saveMaquinaModal;
 window.excluirMaquinaFirestore = excluirMaquinaFirestore;
+window.toggleMaqDetail = toggleMaqDetail;
+window.toggleMaqCardDetail = toggleMaqCardDetail;
 window.renderFichaTecnicaCfg = renderFichaTecnicaCfg;
 window.ftCfgToggle = ftCfgToggle;
 window.importFichaTecnicaExcel = loadFichaTecnica;
