@@ -4532,7 +4532,7 @@ function renderFichaTecnicaCfg() {
       </div>
       <div class="ft-cfg-panel" style="display:none;padding:10px 16px 12px 36px;background:rgba(0,0,0,.15)">
         <div style="margin-bottom:8px">${insHtml}</div>
-        <button onclick="editFichaByDesc(this.dataset.desc)" data-desc="${safeDesc}"
+        <button onclick="event.stopPropagation();editFichaByDesc(this.dataset.desc)" data-desc="${safeDesc}"
                 style="background:rgba(0,212,255,.1);border:1px solid rgba(0,212,255,.25);border-radius:6px;padding:5px 12px;font-size:11px;color:var(--cyan);cursor:pointer;font-family:'Space Grotesk',sans-serif;display:inline-flex;align-items:center;gap:6px">
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
           Editar insumos e quantidades
@@ -4568,63 +4568,38 @@ function renderProdutosCfg() {
     el.innerHTML = '<div style="padding:20px;color:var(--text3);font-size:13px">Nenhum produto encontrado.</div>';
     return;
   }
-  // Deduplica por descrição para exibição (igual à ficha técnica)
-  const seen = new Set();
-  const deduped = [];
+  // Agrupa por descrição para listar todas as máquinas de cada produto
+  const byDesc = new Map();
   filtered.forEach(p => {
     const key = p.descricao.trim().toLowerCase();
-    if (seen.has(key)) return;
-    seen.add(key);
-    deduped.push(p);
+    if (!byDesc.has(key)) byDesc.set(key, { ...p, maquinas: [] });
+    byDesc.get(key).maquinas.push(p.maquina);
   });
-  el.innerHTML = deduped.slice(0, 200).map(p => {
-    const ft = fichaTecnicaData.find(f => f.desc && f.desc.trim().toLowerCase() === p.descricao.trim().toLowerCase());
-    const insCount = ft ? (ft.insumos||[]).length : 0;
-    const isExtra = PRODUTOS_EXTRA.findIndex(x => x.cod === p.cod && x.maquina === p.maquina && x.descricao === p.descricao) >= 0;
-    const safeDesc = p.descricao.replace(/"/g,'&quot;').replace(/'/g,'&#39;');
-    const insHtml = ft && insCount
-      ? ft.insumos.map(i => `
-          <div style="display:grid;grid-template-columns:90px 1fr;gap:6px;padding:4px 0;border-bottom:1px solid rgba(255,255,255,.04);align-items:center">
-            <span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--cyan)">${i.qty > 0 ? i.qty.toFixed(i.qty < 0.01 ? 6 : i.qty < 1 ? 4 : 2) : '—'}</span>
-            <span style="font-size:11px;color:var(--text2)">${i.insumo}</span>
-          </div>`).join('')
-      : '<div style="font-size:11px;color:var(--text3);padding:6px 0">Nenhum insumo na ficha técnica</div>';
+  const groups = [...byDesc.values()];
+
+  el.innerHTML = groups.slice(0, 200).map(p => {
+    const isExtra = PRODUTOS_EXTRA.findIndex(x => x.descricao === p.descricao) >= 0;
+    const maqTags = p.maquinas.map(m =>
+      `<span style="font-size:10px;background:rgba(0,212,255,.08);border:1px solid rgba(0,212,255,.2);color:var(--cyan);padding:2px 8px;border-radius:20px;white-space:nowrap">${m}</span>`
+    ).join('');
     return `
-    <div style="border-bottom:1px solid var(--border)">
-      <div onclick="prodCfgToggle(this)"
-           style="padding:9px 14px;display:flex;align-items:center;justify-content:space-between;cursor:pointer;transition:background .15s"
-           onmouseover="this.style.background='var(--s2)'" onmouseout="this.style.background=''">
-        <div style="display:flex;align-items:center;gap:10px;min-width:0">
-          <svg class="prod-cfg-chevron" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="flex-shrink:0;transition:transform .2s;color:var(--text3)"><polyline points="6 9 12 15 18 9"/></svg>
+    <div style="padding:9px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:10px">
+      <div style="min-width:0;flex:1">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
           <span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--cyan);flex-shrink:0">${p.cod}</span>
-          <span style="font-size:12px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.descricao}</span>
+          <span style="font-size:12px;color:var(--text)">${p.descricao}</span>
         </div>
-        <div style="display:flex;gap:10px;align-items:center;flex-shrink:0;margin-left:10px">
-          <span style="font-size:11px;color:var(--warn);font-family:'JetBrains Mono',monospace">${p.pc_min} pc/min</span>
-          <span style="font-size:11px;color:var(--text3);font-family:'JetBrains Mono',monospace">${p.unid}un/cx</span>
-          <span style="font-size:10px;background:${insCount?'rgba(0,212,255,.1)':'var(--s2)'};border:1px solid ${insCount?'rgba(0,212,255,.2)':'var(--border)'};color:${insCount?'var(--cyan)':'var(--text3)'};padding:1px 7px;border-radius:20px">${insCount} insumo${insCount!==1?'s':''}</span>
-          ${isExtra ? `<button onclick="event.stopPropagation();deleteExtraProduto(${p.cod},'${p.maquina.replace(/'/g,"\\'")}','${p.descricao.replace(/'/g,"\\'")}')" style="background:none;border:1px solid var(--border);border-radius:6px;padding:3px 8px;font-size:11px;color:#ff6b6b;cursor:pointer">🗑</button>` : '<span style="font-size:10px;color:var(--text3)">padrão</span>'}
+        <div style="display:flex;align-items:center;gap:6px;margin-top:5px;flex-wrap:wrap">
+          <span style="font-size:10px;color:var(--warn);font-family:'JetBrains Mono',monospace">${p.pc_min} pc/min</span>
+          <span style="font-size:10px;color:var(--text3);font-family:'JetBrains Mono',monospace">${p.unid}un/cx</span>
+          <span style="color:var(--text3);font-size:10px">·</span>
+          ${maqTags}
         </div>
       </div>
-      <div class="prod-cfg-panel" style="display:none;padding:10px 16px 12px 36px;background:rgba(0,0,0,.15)">
-        <div style="margin-bottom:8px">${insHtml}</div>
-        ${ft ? `<button onclick="editFichaByDesc(this.dataset.desc)" data-desc="${safeDesc}"
-                style="background:rgba(0,212,255,.1);border:1px solid rgba(0,212,255,.25);border-radius:6px;padding:5px 12px;font-size:11px;color:var(--cyan);cursor:pointer;font-family:'Space Grotesk',sans-serif;display:inline-flex;align-items:center;gap:6px">
-          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-          Editar insumos e quantidades
-        </button>` : ''}
-      </div>
+      ${isExtra ? `<button onclick="deleteExtraProduto(${p.cod},'${p.maquina.replace(/'/g,"\\'")}','${p.descricao.replace(/'/g,"\\'")}')" style="background:none;border:1px solid var(--border);border-radius:6px;padding:3px 8px;font-size:11px;color:#ff6b6b;cursor:pointer;flex-shrink:0">🗑</button>` : '<span style="font-size:10px;color:var(--text3);flex-shrink:0">padrão</span>'}
     </div>`;
   }).join('');
-  if (deduped.length > 200) el.innerHTML += `<div style="padding:12px;color:var(--text3);font-size:12px">... e mais ${deduped.length - 200} produtos.</div>`;
-}
-
-function prodCfgToggle(header) {
-  const panel = header.nextElementSibling;
-  const chevron = header.querySelector('.prod-cfg-chevron');
-  const isOpen = panel.style.display !== 'none';
-  panel.style.display = isOpen ? 'none' : 'block';
-  if (chevron) chevron.style.transform = isOpen ? '' : 'rotate(180deg)';
+  if (groups.length > 200) el.innerHTML += `<div style="padding:12px;color:var(--text3);font-size:12px">... e mais ${groups.length - 200} produtos.</div>`;
 }
 
 function openAddProduto() {
