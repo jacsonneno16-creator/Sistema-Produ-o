@@ -4000,7 +4000,8 @@ let userDayHrs = JSON.parse(localStorage.getItem('cfg_day_hrs')||'null') || [...
 
 function toggleHdMenu(){
   const dd=document.getElementById('hd-menu-dropdown');
-  dd.style.display=dd.style.display==='none'?'block':'none';
+  const isHidden=dd.style.display==='none'||dd.style.display==='';
+  dd.style.display=isHidden?'block':'none';
   if(dd.style.display==='block'){
     setTimeout(()=>document.addEventListener('click',closeHdMenuOutside,{once:true}),10);
   }
