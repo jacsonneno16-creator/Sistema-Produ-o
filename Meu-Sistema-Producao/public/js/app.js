@@ -532,7 +532,12 @@ async function appInit() {
 }
 
 async function reload() {
+  // Mostra feedback de carregamento na tabela
+  const tbodyEl = document.getElementById('tbody');
+  if(tbodyEl) tbodyEl.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:20px;color:var(--text3);font-size:12px">⏳ Carregando...</td></tr>';
+
   records = await dbAll();
+  if(!Array.isArray(records)) records = [];
   updateHeader();
   renderDashboard();
   renderTable();
@@ -1534,6 +1539,8 @@ function clearProd(){
   document.getElementById('p-search').style.display='block';
   document.getElementById('p-search').value='';
   document.getElementById('calc-panel').classList.remove('on');
+  const mrpEl = document.getElementById('mrp-insumos-panel');
+  if(mrpEl) mrpEl.style.display='none';
   const maq=document.getElementById('f-maq-form').value;
   if(maq) renderProdGrid(maq,'');
 }
@@ -1577,7 +1584,13 @@ async function saveForm(){
   };
   if(eid) obj.id=eid;
 
-  await dbPut(obj);
+  try {
+    await dbPut(obj);
+  } catch(err) {
+    toast('Erro ao salvar: ' + (err.message||err), 'err');
+    console.error('saveForm dbPut error:', err);
+    return;
+  }
   closeForm();
   await reload();
   toast(eid?'Solicitação atualizada!':'Solicitação criada!','ok');
@@ -1615,7 +1628,7 @@ function calcInfo(){
   const pcMin=parseFloat(document.getElementById('p-pcmin-val').value)||0;
   const unid=parseInt(document.getElementById('p-unid-val').value)||0;
   const panel=document.getElementById('calc-panel');
-  if(!qnt||!pcMin||!unid){panel.classList.remove('on');return;}
+  if(!qnt||!pcMin||!unid){panel.classList.remove('on');renderMrpPanel(0);return;}
   panel.classList.add('on');
   const totalUnid=qnt*unid;
   const totalMin=Math.round(totalUnid/pcMin);
@@ -1627,6 +1640,71 @@ function calcInfo(){
   const dEl=document.getElementById('c-dias');
   dEl.textContent=dias;
   dEl.className='ci-val'+(dias>5?' w':'');
+  renderMrpPanel(qnt);
+}
+
+// Painel MRP no modal: mostra insumos + estoque + saldo para qtd caixas
+function renderMrpPanel(qntCaixas){
+  const mrpEl = document.getElementById('mrp-insumos-panel');
+  if(!mrpEl) return;
+  const pCod = document.getElementById('p-cod').value;
+  const pNome = document.getElementById('sel-nome').textContent;
+  if(!pCod || pNome === '—' || !qntCaixas){ mrpEl.style.display='none'; return; }
+
+  impLoadFromStorage();
+  const insumos = findInsumosProduto(pNome, pCod);
+  if(!insumos.length){ mrpEl.style.display='none'; return; }
+
+  const fmt4 = n => n.toLocaleString('pt-BR',{maximumFractionDigits:4});
+
+  let algumSaldoNegativo = false;
+  const rows = insumos.map(ins => {
+    const necessario = ins.q * qntCaixas;
+    const estoqueAtual = getEstoqueInsumo(ins.n);
+    const saldo = estoqueAtual != null ? estoqueAtual - necessario : null;
+    if(saldo != null && saldo < 0) algumSaldoNegativo = true;
+    return { ins, necessario, estoqueAtual, saldo };
+  }).filter(r => r.necessario > 0);
+
+  if(!rows.length){ mrpEl.style.display='none'; return; }
+
+  const headerColor = algumSaldoNegativo ? 'var(--red)' : 'var(--green)';
+  const headerIcon  = algumSaldoNegativo ? '⚠️' : '✅';
+  const headerLabel = algumSaldoNegativo ? 'Insumos — estoque insuficiente' : 'Insumos — estoque suficiente';
+
+  let html = `<div style="margin-top:14px;border:1px solid ${algumSaldoNegativo?'rgba(255,71,87,.35)':'rgba(46,201,122,.25)'};border-radius:8px;overflow:hidden">
+    <div style="padding:7px 12px;background:${algumSaldoNegativo?'rgba(255,71,87,.08)':'rgba(46,201,122,.07)'};display:flex;align-items:center;gap:6px;border-bottom:1px solid ${algumSaldoNegativo?'rgba(255,71,87,.2)':'rgba(46,201,122,.15)'}">
+      <span style="font-size:11px;font-weight:700;color:${headerColor}">${headerIcon} ${headerLabel}</span>
+    </div>
+    <table style="width:100%;border-collapse:collapse;font-size:10px">
+      <thead><tr style="background:var(--s2)">
+        <th style="padding:5px 10px;text-align:left;color:var(--text3);font-size:9px">Insumo</th>
+        <th style="padding:5px 8px;text-align:right;color:var(--warn);font-size:9px">Necessário</th>
+        <th style="padding:5px 8px;text-align:right;color:var(--cyan);font-size:9px">Estoque</th>
+        <th style="padding:5px 8px;text-align:right;font-size:9px">Saldo</th>
+      </tr></thead>
+      <tbody>`;
+
+  rows.forEach(({ins, necessario, estoqueAtual, saldo}) => {
+    const semEstoque = estoqueAtual == null;
+    const negativo   = saldo != null && saldo < 0;
+    const saldoColor = negativo ? 'var(--red)' : semEstoque ? 'var(--text3)' : 'var(--green)';
+    const rowBg      = negativo ? 'background:rgba(255,71,87,.05)' : '';
+    const saldoStr   = semEstoque ? '<span style="color:var(--text4);font-size:9px">sem dados</span>'
+                                  : `<span style="font-weight:700;color:${saldoColor}">${fmt4(saldo)}${negativo?' ⚠️':''}</span>`;
+    const estoqueStr = semEstoque ? '<span style="color:var(--text4);font-size:9px">—</span>'
+                                  : `<span style="color:var(--cyan)">${fmt4(estoqueAtual)}</span>`;
+    html += `<tr style="${rowBg}">
+      <td style="padding:4px 10px;color:var(--text2)">${ins.n}</td>
+      <td style="padding:4px 8px;text-align:right;color:var(--warn);font-family:'JetBrains Mono',monospace">${fmt4(necessario)}</td>
+      <td style="padding:4px 8px;text-align:right;font-family:'JetBrains Mono',monospace">${estoqueStr}</td>
+      <td style="padding:4px 8px;text-align:right;font-family:'JetBrains Mono',monospace">${saldoStr}</td>
+    </tr>`;
+  });
+
+  html += `</tbody></table></div>`;
+  mrpEl.innerHTML = html;
+  mrpEl.style.display = 'block';
 }
 
 // ===== GANTT ENGINE =====
@@ -5675,6 +5753,20 @@ function importEstoqueInsumos(input){
 }
 
 // Calcula consumo total de insumos com base na programação ativa (registros do Gantt)
+// Retorna lista de insumos para um produto: [{n: nomeInsumo, q: qtdPorCaixa}]
+function findInsumosProduto(nomeProd, codProd){
+  const norm = s => (s||'').toUpperCase().trim().replace(/\s+/g,' ');
+  const src = (typeof fichaTecnicaData !== 'undefined' ? fichaTecnicaData : FICHA_TECNICA) || [];
+  // 1) por código exato
+  let ft = src.find(x => x.cod && String(x.cod) === String(codProd));
+  // 2) por descrição exata
+  if(!ft && nomeProd) ft = src.find(x => norm(x.desc) === norm(nomeProd));
+  // 3) por descrição parcial
+  if(!ft && nomeProd) ft = src.find(x => norm(nomeProd).includes(norm(x.desc).substring(0,18)) || norm(x.desc).includes(norm(nomeProd).substring(0,18)));
+  if(!ft || !ft.insumos || !ft.insumos.length) return [];
+  return ft.insumos.map(i => ({ n: i.insumo, q: i.qty || 0 }));
+}
+
 function calcConsumoInsumosPorProgramacao(){
   // Para cada registro programado (status Pendente/Em Andamento), soma o consumo de insumos
   const consumoMap = {}; // { nomeInsumo: { total, unidade } }
@@ -6700,6 +6792,7 @@ window.onMaqChange = onMaqChange;
 window.onACInput = onACInput;
 window.closeAC = closeAC;
 window.calcInfo = calcInfo;
+window.renderMrpPanel = renderMrpPanel;
 window.pickProdGrid = pickProdGrid;
 window.setProdSelected = setProdSelected;
 window.clearProd = clearProd;
