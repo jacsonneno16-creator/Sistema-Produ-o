@@ -2848,16 +2848,18 @@ function loadFichaTecnica(input){
         maquina:String(r[5]||'MANUAL').trim(),
         insumos:insByProd[String(r[1]).trim()]||[]
       }));
-      // Refresh machine filter
-      const sel=document.getElementById('ft-maq-filter');
-      const currentVal=sel.value;
-      while(sel.options.length>1) sel.remove(1);
-      [...new Set(fichaTecnicaData.map(p=>p.maquina))].sort().forEach(m=>{
-        const o=document.createElement('option');o.value=m;o.textContent=m;sel.appendChild(o);
-      });
-      sel.value=currentVal;
-      renderFichaTecnica();
-      toast(`Ficha técnica atualizada: ${fichaTecnicaData.length} produtos`,'ok');
+      // Refresh machine filter (element may not exist on current view)
+      const sel = document.getElementById('ft-maq-filter');
+      if (sel) {
+        const currentVal = sel.value;
+        while (sel.options.length > 1) sel.remove(1);
+        [...new Set(fichaTecnicaData.map(p => p.maquina))].sort().forEach(m => {
+          const o = document.createElement('option'); o.value = m; o.textContent = m; sel.appendChild(o);
+        });
+        sel.value = currentVal;
+      }
+      if (typeof renderFichaTecnica === 'function') renderFichaTecnica();
+      toast(`Ficha técnica atualizada: ${fichaTecnicaData.length} produtos`, 'ok');
     }catch(err){
       toast('Erro ao ler arquivo: '+err.message,'err');
     }
