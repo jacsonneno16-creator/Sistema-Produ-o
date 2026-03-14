@@ -4001,21 +4001,34 @@ let userDayHrs = JSON.parse(localStorage.getItem('cfg_day_hrs')||'null') || [...
 function toggleHdMenu(){
   const dd=document.getElementById('hd-menu-dropdown');
   const btn=document.getElementById('hd-menu-btn');
+  if(!dd||!btn) return;
   const isHidden=dd.style.display==='none'||dd.style.display==='';
+  // Remove handler pendente para evitar acúmulo
+  document.removeEventListener('click',closeHdMenuOutside);
   if(isHidden){
     const rect=btn.getBoundingClientRect();
     dd.style.top=(rect.bottom+4)+'px';
     dd.style.right=(window.innerWidth-rect.right)+'px';
     dd.style.left='auto';
     dd.style.display='block';
-    setTimeout(()=>document.addEventListener('click',closeHdMenuOutside,{once:true}),10);
+    // Dois requestAnimationFrame garantem que o click atual já passou
+    requestAnimationFrame(()=>{
+      requestAnimationFrame(()=>{
+        document.addEventListener('click',closeHdMenuOutside);
+      });
+    });
   } else {
     dd.style.display='none';
   }
 }
 function closeHdMenuOutside(e){
   const dd=document.getElementById('hd-menu-dropdown');
-  if(dd&&!dd.contains(e.target)) dd.style.display='none';
+  const btn=document.getElementById('hd-menu-btn');
+  if(!dd) return;
+  // Se clicou no próprio botão, deixa o toggleHdMenu tratar
+  if(btn&&(btn===e.target||btn.contains(e.target))) return;
+  dd.style.display='none';
+  document.removeEventListener('click',closeHdMenuOutside);
 }
 
 function openSettings(){
