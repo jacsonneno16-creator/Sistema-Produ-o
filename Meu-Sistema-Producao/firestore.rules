@@ -24,5 +24,11 @@ service cloud.firestore {
     match /Producao/{id}              { allow read: if isAny(); allow write: if isPlan(); }
     match /auditoria/{id}             { allow read: if isAdmin(); allow write: if isAuth(); }
     match /configuracoes/{id}         { allow read: if isAny(); allow write: if isPlan(); }
+
+    // ── Novas coleções ──
+    match /produtos/{id}              { allow read: if isAny(); allow write: if isPlan(); }
+    match /setup_maquinas/{id}        { allow read: if isAny(); allow write: if isPlan(); }
+    match /fichaTecnica/{id}          { allow read: if isAny(); allow write: if isPlan(); }
+    match /funcionarios/{id}          { allow read: if isAny(); allow write: if isPlan(); }
   }
 }
