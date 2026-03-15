@@ -4312,7 +4312,7 @@ function _renderRealizadoControlado(dateVal, body) {
         const val = todayData[h] || '';
         return `<td style="padding:3px 4px;text-align:center;border-left:1px solid rgba(255,255,255,.04)">
           <input type="number" min="0"
-                 data-rec="${rec.id}" data-hr="${h}"
+                 data-rec="${rec.id}" data-hr="${h}" data-date="${dateVal}"
                  value="${val}" placeholder="0"
                  oninput="realizadoInputChange(this)"
                  style="width:46px;padding:4px 2px;border:1px solid var(--border);border-radius:4px;text-align:center;font-size:11px;background:var(--s2);color:var(--text);font-family:'JetBrains Mono',monospace;-moz-appearance:textfield"
@@ -4968,18 +4968,7 @@ function adicionarEstilosControlados() {
       box-shadow: none !important;
     }
     
-    /* Indicador visual de item não arrastável */
-    .pd-card-readonly::after {
-      content: '';
-      position: absolute;
-      top: 0;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      background: rgba(0,0,0,0.01);
-      pointer-events: none;
-      border-radius: 8px;
-    }
+
     
     /* Alerta de modo operador */
     .modo-operador-alert {
@@ -9903,7 +9892,7 @@ function pdFecharObs() {
 }
 
 
-async function pdSalvarObs(recId, ds) {
+async async function pdSalvarObs(recId, ds) {
   if (!window._pdObsCache) window._pdObsCache = {};
   const textarea = document.getElementById(`obs-txt-${recId}-${ds}`);
   if (!textarea) { toast('Campo não encontrado.', 'err'); return; }
@@ -9944,8 +9933,9 @@ window.pdLimparObs       = pdLimparObs;
 
 // ── Realizado: atualiza totais em tempo real ao digitar ──────────────
 function realizadoInputChange(inp) {
-  const recId = inp.dataset.rec;
-  const all   = document.querySelectorAll(`[data-rec="${recId}"].apon-input-controlado`);
+  const recId   = inp.dataset.rec;
+  const dateVal = inp.dataset.date || prodSelectedDate;
+  const all     = document.querySelectorAll(`[data-rec="${recId}"].apon-input-controlado`);
   let dayTotal = 0;
   const data = {};
   all.forEach(i => {
@@ -9960,7 +9950,7 @@ function realizadoInputChange(inp) {
     dtEl.style.color = dayTotal > 0 ? 'var(--cyan)' : 'var(--text3)';
   }
   // Atualiza acumulado
-  const prevTotal = aponGetPrevTotal(recId, prodSelectedDate);
+  const prevTotal = aponGetPrevTotal(recId, dateVal);
   const acum = prevTotal + dayTotal;
   const rec  = records.find(r => String(r.id) === String(recId));
   const meta = rec ? (rec.qntCaixas || 0) : 0;
@@ -9970,7 +9960,7 @@ function realizadoInputChange(inp) {
     acEl.style.color = acum >= meta && meta > 0 ? 'var(--green)' : acum > 0 ? 'var(--text)' : 'var(--text3)';
   }
   // Auto-save no localStorage
-  aponStorageSet(aponKey(prodSelectedDate, recId), data);
+  aponStorageSet(aponKey(dateVal, recId), data);
 }
 
 // ── Salva linha individual ────────────────────────────────────────────
