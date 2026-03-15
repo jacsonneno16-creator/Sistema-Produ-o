@@ -7715,7 +7715,7 @@ function switchTabSidebar(name) {
   if(name==='api-sync') renderApiSync();
   if(name==='calculos'||name==='prog-auto') renderCalculos();
   if(name==='projecao') renderProjecao();
-  if(name==='usuarios') setTimeout(()=>renderUsuariosSistema(), 50);
+  if(name==='usuarios') { openSettings(); setTimeout(()=>settingsNav('usuarios'), 80); }
 }
 
 // Keep old switchTab for backward compatibility (called from tab buttons if any)
