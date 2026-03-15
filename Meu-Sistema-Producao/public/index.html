@@ -860,6 +860,7 @@
               <span style="font-size:13px;font-weight:700;color:var(--text)">Cadastro de Máquinas</span>
             </div>
             <div style="display:flex;gap:6px;align-items:center">
+              <a href="#" onclick="downloadMaqTemplate(event)" style="background:var(--s2);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:11px;color:var(--text);text-decoration:none">📄 Template</a>
               <label style="background:var(--s2);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:11px;color:var(--text);cursor:pointer">
                 📥 Excel
                 <input type="file" accept=".xlsx,.xls" style="display:none" onchange="importarMaquinasExcel(this.files[0]).then(()=>{this.value=''})">

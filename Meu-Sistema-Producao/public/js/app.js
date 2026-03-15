@@ -4801,21 +4801,75 @@ async function importarMaquinasExcel(file) {
     const wb = XLSX.read(data);
     const ws = wb.Sheets[wb.SheetNames[0]];
     const rows = XLSX.utils.sheet_to_json(ws, { header: 1 });
-    const nomes = rows.flat().map(v => String(v||'').trim().toUpperCase()).filter(v => v && !['MÁQUINA','MAQUINA','NOME','NAME'].includes(v));
-    if (!nomes.length) { toast('Nenhuma máquina encontrada!', 'err'); return; }
+    
+    if (rows.length < 2) {
+      toast('Arquivo deve ter pelo menos cabeçalho e uma linha de dados!', 'err');
+      return;
+    }
+    
+    const header = rows[0].map(h => String(h||'').trim().toLowerCase());
+    const dataRows = rows.slice(1).filter(r => r && r.length > 0);
+    
+    // Mapear colunas por nome
+    const colMap = {};
+    header.forEach((h, i) => {
+      if (/^nome$|^maquina$|^máquina$/i.test(h)) colMap.nome = i;
+      else if (/^codigo$|^código$|^cod$/i.test(h)) colMap.codigo = i;
+      else if (/^tipo$/i.test(h)) colMap.tipo = i;
+      else if (/^setor$/i.test(h)) colMap.setor = i;
+      else if (/^status$/i.test(h)) colMap.status = i;
+      else if (/^pc_?min$|^velocidade$/i.test(h)) colMap.pcMin = i;
+      else if (/^eficiencia$|^eficiência$/i.test(h)) colMap.eficiencia = i;
+      else if (/^h_?turno$|^horas$/i.test(h)) colMap.hTurno = i;
+      else if (/^n_?turnos$|^turnos$/i.test(h)) colMap.nTurnos = i;
+      else if (/^setup$/i.test(h)) colMap.setup = i;
+    });
+    
+    if (colMap.nome === undefined) {
+      toast('Coluna "nome" não encontrada! Cabeçalho deve ter: nome, codigo, tipo, setor, status, pcMin, eficiencia, hTurno, nTurnos, setup', 'err');
+      return;
+    }
+    
     const snap = await getDocs(lojaCol('maquinas'));
     const existentes = snap.docs.map(d => (d.data().nome||'').toUpperCase());
-    let adicionadas = 0;
-    for (const nome of nomes) {
-      if (!existentes.includes(nome)) {
-        await addDoc(lojaCol('maquinas'), { nome, status: 'ativa', pcMin: 0, eficiencia: 100, hTurno: 8, nTurnos: 1, produtosCompativeis: [], criadoEm: new Date().toISOString() });
+    let adicionadas = 0, atualizadas = 0;
+    
+    for (const row of dataRows) {
+      const nome = String(row[colMap.nome]||'').trim().toUpperCase();
+      if (!nome) continue;
+      
+      const maqData = {
+        nome: nome,
+        codigo: String(row[colMap.codigo]||'').trim(),
+        tipo: String(row[colMap.tipo]||'Empacotadeira').trim(),
+        setor: String(row[colMap.setor]||'').trim(),
+        status: String(row[colMap.status]||'ativa').trim(),
+        pcMin: parseFloat(row[colMap.pcMin]) || 0,
+        eficiencia: parseFloat(row[colMap.eficiencia]) || 100,
+        hTurno: parseFloat(row[colMap.hTurno]) || 8,
+        nTurnos: parseInt(row[colMap.nTurnos]) || 1,
+        tempoSetupPadrao: parseFloat(row[colMap.setup]) || 0,
+        produtosCompativeis: [],
+        atualizadoEm: new Date().toISOString()
+      };
+      
+      const existe = snap.docs.find(d => (d.data().nome||'').toUpperCase() === nome);
+      if (existe) {
+        await setDoc(lojaDoc('maquinas', existe.id), { ...maqData, criadoEm: existe.data().criadoEm || new Date().toISOString() });
+        atualizadas++;
+      } else {
+        await addDoc(lojaCol('maquinas'), { ...maqData, criadoEm: new Date().toISOString() });
         adicionadas++;
       }
     }
+    
     await carregarMaquinasFirestore();
     renderCadastroMaquinas();
-    toast(adicionadas + ' máquina(s) importada(s)!', 'ok');
-  } catch(e) { toast('Erro ao importar: ' + e.message, 'err'); }
+    toast(`${adicionadas} máquina(s) criada(s), ${atualizadas} atualizada(s)!`, 'ok');
+  } catch(e) { 
+    toast('Erro ao importar: ' + e.message, 'err'); 
+    console.error('Detalhe do erro:', e);
+  }
 }
 
 // Ficha Técnica no menu Configurações → Produtos
@@ -5126,6 +5180,18 @@ function downloadProdTemplate(e) {
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Produtos');
   XLSX.writeFile(wb, 'template_produtos.xlsx');
+}
+
+function downloadMaqTemplate(e) {
+  e.preventDefault();
+  const ws = XLSX.utils.aoa_to_sheet([
+    ['nome','codigo','tipo','setor','status','pcMin','eficiencia','hTurno','nTurnos','setup'],
+    ['SELGRON 01','SEL01','Empacotadeira','Embalagem','ativa',46.75,100,8,1,0],
+    ['ALFATECK 14','ALF14','Empacotadeira','Embalagem','ativa',28.05,100,8,1,0]
+  ]);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Maquinas');
+  XLSX.writeFile(wb, 'template_maquinas.xlsx');
 }
 
 // ── Funcionários ──
@@ -7438,6 +7504,7 @@ window.saveProdModal = saveProdModal;
 window.deleteExtraProduto = deleteExtraProduto;
 window.importProdutosExcel = importProdutosExcel;
 window.downloadProdTemplate = downloadProdTemplate;
+window.downloadMaqTemplate = downloadMaqTemplate;
 window.pdRestoreAll = pdRestoreAll;
 window.prodSaveAll = prodSaveAll;
 window.prodToday = prodToday;
