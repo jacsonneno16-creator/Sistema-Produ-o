@@ -9033,6 +9033,11 @@ window.confirmDeactivate = confirmDeactivate;
 window.doDelete = doDelete;
 window.exportGanttPDF = exportGanttPDF;
 window.exportGanttXLSX = exportGanttXLSX;
+// ── Reorder drag handlers (precisam estar no window por serem inline no HTML) ──
+window.riDragStart = riDragStart;
+window.riDragOver  = riDragOver;
+window.riDrop      = riDrop;
+window.riDragEnd   = riDragEnd;
 window.exportInsumosGeralPDF = exportInsumosGeralPDF;
 window.exportInsumosGeralXLSX = exportInsumosGeralXLSX;
 window.exportInsumosMaqPDF = exportInsumosMaqPDF;
