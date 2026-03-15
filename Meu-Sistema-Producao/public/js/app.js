@@ -243,7 +243,7 @@ function verificarProgramacaoValida(record, maquina, data) {
 function verificarSequenciaMaquina(record, maquina, data) {
   // Buscar todos os produtos programados para esta máquina nesta semana
   const weekStart = getWeekMonday(new Date(data + 'T12:00:00'));
-  const weekEnd = addDays(weekStart, 6);
+  const weekEnd = getWeekDays(weekStart)[6];
   
   const produtosMaquina = records.filter(r => 
     r.maquina === maquina &&
@@ -9165,7 +9165,7 @@ async function carregarApontamentosSemana(prodBaseMonday) {
   
   try {
     const weekStart = dateStr(prodBaseMonday);
-    const weekEnd = dateStr(addDays(prodBaseMonday, 6));
+    const weekEnd = dateStr(getWeekDays(prodBaseMonday)[6]);
     
     const q = query(
       lojaCol('apontamentos_producao'),
@@ -9586,7 +9586,7 @@ function renderDashboardIndicadores() {
     const dt = r.dtDesejada || r.dtSolicitacao;
     if (!prodBaseMonday) return false;
     const weekStart = dateStr(prodBaseMonday);
-    const weekEnd = dateStr(addDays(prodBaseMonday, 6));
+    const weekEnd = dateStr(getWeekDays(prodBaseMonday)[6]);
     return dt && dt >= weekStart && dt <= weekEnd;
   });
   
