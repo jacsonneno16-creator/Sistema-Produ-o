@@ -7125,7 +7125,13 @@ async function renderUsuariosSistema(){
     const dtReset = u.ultimoResetEnviadoEm ? new Date(u.ultimoResetEnviadoEm).toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit',year:'2-digit',hour:'2-digit',minute:'2-digit'}) : 'Nunca';
     const modLabel = tipo==='admin' ? 'Acesso total' : (() => {
       const perms = u.permissoes||{};
-      const ativos = MODULOS.filter(m=>perms[m.key]).map(m=>m.label);
+      const ativos = MODULOS.filter(m => {
+        const p = perms[m.key];
+        if (!p) return false;
+        if (p === true) return true;
+        if (typeof p === 'object') return Object.values(p).some(v => v === true);
+        return false;
+      }).map(m => m.label);
       return ativos.length ? ativos.join(', ') : 'Sem módulos liberados';
     })();
     return `<div style="padding:13px 22px;border-bottom:1px solid var(--border)">
@@ -7276,9 +7282,15 @@ const ACAO_COLOR = {
 };
 
 // Normaliza permissão (suporta formato legado true/false e novo {visualizar,editar,...})
-function _normPerm(raw) {
+// Normaliza permissão para o formato novo { acao: bool }
+// Recebe o modKey para saber quais ações existem nesse módulo
+function _normPerm(raw, modKey) {
   if (!raw) return {};
-  if (raw === true) return { visualizar: true, editar: true, criar: true, administrar: true };
+  // Formato legado: true = acesso total → marca todas as ações do módulo
+  if (raw === true) {
+    const acoes = (modKey && MODULO_ACOES[modKey]) || ['visualizar','editar','criar','administrar'];
+    return Object.fromEntries(acoes.map(a => [a, true]));
+  }
   if (typeof raw === 'object') return raw;
   return {};
 }
@@ -7290,7 +7302,7 @@ function _usuarioFormHTML(u={}){
   // Tabela de permissões granulares — uma seção por módulo
   const permSections = MODULOS.map(m => {
     const acoes   = MODULO_ACOES[m.key] || ['visualizar'];
-    const modPerm = _normPerm(perms[m.key]);
+    const modPerm = _normPerm(perms[m.key], m.key);
     const temAlgum = acoes.some(a => modPerm[a]);
     const descs = MODULO_ACOES_DESC[m.key] || {};
 
@@ -7468,8 +7480,9 @@ async function saveUsuarioModal(){
         const cb = document.getElementById(`perm-${m.key}-${acao}`);
         if(cb) modPerms[acao] = cb.checked;
       });
-      // Só salva o módulo se pelo menos uma ação estiver marcada
+      // Garantia: se qualquer ação está marcada, visualizar deve estar marcado também
       const temAlgum = Object.values(modPerms).some(v => v);
+      if(temAlgum && acoes.includes('visualizar')) modPerms['visualizar'] = true;
       permissoes[m.key] = temAlgum ? modPerms : false;
     });
   }
