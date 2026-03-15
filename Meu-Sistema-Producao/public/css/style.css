@@ -169,7 +169,7 @@ tr:hover td{background:rgba(255,255,255,.012)}
 .pg-info{text-align:center;margin-top:8px;font-size:11px;color:var(--text3);font-family:'JetBrains Mono',monospace}
 
 /* CONFIRM */
-.conf-overlay{display:none;position:fixed;inset:0;z-index:300;background:rgba(0,0,0,.85);backdrop-filter:blur(10px);align-items:center;justify-content:center}
+.conf-overlay{display:none;position:fixed;inset:0;z-index:600;background:rgba(0,0,0,.85);backdrop-filter:blur(10px);align-items:center;justify-content:center}
 .conf-overlay.on{display:flex}
 .conf-box{background:var(--s1);border:1px solid var(--border2);border-radius:16px;padding:32px 28px;max-width:360px;width:90%;text-align:center}
 .conf-ico{font-size:38px;margin-bottom:12px}
