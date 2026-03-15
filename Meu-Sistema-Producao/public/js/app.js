@@ -4091,438 +4091,269 @@ window._realizadoFiltros = window._realizadoFiltros || { maquina: '', status: ''
 
 function _renderRealizadoControlado(dateVal, body) {
   const isOperador = isOperadorLevel();
-  const isPCP = isPCPLevel();
+  const isPCP      = isPCPLevel();
+  const filtros    = window._realizadoFiltros;
 
-  // ── Filtros ──────────────────────────────────────────────
-  const filtros = window._realizadoFiltros;
-
-  // ── Garantir mapa do Gantt atualizado ──
+  // Garante mapa do Gantt atualizado
   pdBuildGanttMap(prodBaseMonday);
 
-  // ── Filtrar registros da semana ──
-  const weekDays = getWeekDays(prodBaseMonday);
+  const weekDays  = getWeekDays(prodBaseMonday);
   const weekStart = dateStr(weekDays[0]);
   const weekEnd   = dateStr(weekDays[6]);
 
-  // Inclui registros cujo dia efetivo (Gantt ou override) cai nesta semana
-  const weekRecs = records.filter(r => {
+  // Registros da semana com dia efetivo = dateVal
+  const dayRecs = records.filter(r => {
     if (r.status === 'Concluído') return false;
     const eff = pdGetEffectiveDay(r.id);
-    if (eff && eff >= weekStart && eff <= weekEnd) return true;
+    if (eff) return eff === dateVal;
     const dt = r.dtDesejada || r.dtSolicitacao;
-    return dt && dt >= weekStart && dt <= weekEnd;
+    return dt === dateVal;
   });
 
-  if (!weekRecs.length) {
-    body.innerHTML = `
-      <div class="empty" style="flex-direction:column;gap:12px">
-        <div class="ei">📋</div>
-        <div>Nenhum produto programado para esta semana.</div>
-        <div style="font-size:11px;color:var(--text3)">
-          Use <strong>Programação Semanal</strong> para criar a programação.
-        </div>
-      </div>`;
-    return;
-  }
-
-  // ── Montar grupos por máquina aplicando filtro de dia (Gantt) ──
-  const machineGroups = [];
-
-  for (const maq of MAQUINAS) {
-    if (filtros.maquina && filtros.maquina !== maq) continue;
-
-    let recs = weekRecs.filter(r => r.maquina === maq)
-      .sort((a, b) => {
-        if (a.prioridade !== b.prioridade) return a.prioridade - b.prioridade;
-        return (a.dtDesejada || a.dtSolicitacao).localeCompare(b.dtDesejada || b.dtSolicitacao);
-      });
-
-    if (!recs.length) continue;
-
-    // ── FILTRO DE DIA — usa pdGetEffectiveDay (Gantt + overrides Firestore) ──
-    recs = recs.filter(r => {
-      const eff = pdGetEffectiveDay(r.id);
-      if (eff) return eff === dateVal;
-      // fallback: se não tem dia definido no mapa, verifica dtDesejada
-      const dt = r.dtDesejada || r.dtSolicitacao;
-      return dt === dateVal;
-    });
-
-    if (!recs.length) continue;
-
-    // Operador: só vê produtos do dia / em andamento / próximo / liberado
-    if (isOperador) {
-      recs = recs.filter(r => {
-        const totalProduzido = calcularTotalProduzido(r.id);
-        return (r.dtDesejada || r.dtSolicitacao) === dateVal ||
-               totalProduzido > 0 ||
-               isProximoDaSequencia(r, recs) ||
-               temLiberacaoTemporaria(r.id);
-      });
-      if (!recs.length) continue;
-    }
-
-    // ── Filtro de busca ──
-    if (filtros.busca) {
-      const busca = filtros.busca.toLowerCase();
-      recs = recs.filter(r => r.produto.toLowerCase().includes(busca));
-      if (!recs.length) continue;
-    }
-
-    const items = recs.map((rec, seqIdx) => {
-      const status       = determinarStatusProgramacao(rec);
-      const validacao    = validarProducaoPermitida(rec, maq, dateVal);
-      const totalProduzido = calcularTotalProduzido(rec.id);
-      const necessario   = rec.qntCaixas || 0;
-      const restante     = Math.max(0, necessario - totalProduzido);
-      const pct          = necessario > 0 ? Math.min(100, Math.round(totalProduzido / necessario * 100)) : 0;
-      const temLiberacao = temLiberacaoTemporaria(rec.id);
-      const todayData    = aponStorageGet(aponKey(dateVal, rec.id)) || {};
-      let todayTotal = 0;
-      APON_HOURS.forEach(h => { todayTotal += parseInt(todayData[h]) || 0; });
-      return {
-        rec, seqIdx, status, validacao, totalProduzido, necessario, restante, pct,
-        todayData, todayTotal, temLiberacao,
-        bloqueado: !validacao.permitido && !temLiberacao && isOperador,
-        motivoBloqueio: validacao.motivo
-      };
-    });
-
-    // ── Filtro de status ──
-    const itemsFiltrados = filtros.status
-      ? items.filter(it => {
-          if (filtros.status === 'concluido')   return it.status === STATUS_PROGRAMACAO.CONCLUIDO;
-          if (filtros.status === 'andamento')   return it.status === STATUS_PROGRAMACAO.EM_PRODUCAO;
-          if (filtros.status === 'bloqueado')   return it.bloqueado;
-          if (filtros.status === 'pendente')    return it.status === STATUS_PROGRAMACAO.PENDENTE && !it.bloqueado;
-          return true;
-        })
-      : items;
-
-    if (itemsFiltrados.length > 0) machineGroups.push({ maq, items: itemsFiltrados });
-  }
-
-  // ── Header ──
   const dateLabel = fmtDate(new Date(dateVal + 'T12:00:00'));
   const isHoje    = dateVal === dateStr(new Date());
-  const maqsNaSemana = [...new Set(weekRecs.map(r => r.maquina))].filter(Boolean).sort();
+  const maqsNaSemana = [...new Set(
+    records
+      .filter(r => { const dt = r.dtDesejada||r.dtSolicitacao; return dt && dt >= weekStart && dt <= weekEnd; })
+      .map(r => r.maquina)
+  )].filter(Boolean).sort();
 
+  // ── Cabeçalho + filtros ───────────────────────────────────────────
   let html = `
-    ${renderDashboardIndicadores()}
-    ${renderPainelAlertas()}
-
-    <div style="margin-bottom:16px">
-      <!-- Linha 1: título + botões -->
-      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:12px">
-        <div>
-          <div style="font-family:'JetBrains Mono',monospace;font-size:12px;text-transform:uppercase;letter-spacing:1px;color:var(--text3)">
-            ${dateLabel} ${isHoje ? '(HOJE)' : ''}
-          </div>
-          <div style="font-size:13px;color:var(--text2);margin-top:4px;display:flex;align-items:center;gap:8px">
-            ${isOperador
-              ? '🔒 <span style="color:var(--warn)">Modo Operador</span> — Produção Controlada'
-              : '🔧 <span style="color:var(--cyan)">Modo PCP</span> — Gestão Completa'}
-            <button onclick="solicitarPermissaoNotificacoes()"
-                    style="background:none;border:1px solid var(--border);color:var(--text3);padding:2px 8px;border-radius:4px;font-size:10px;cursor:pointer"
-                    title="Ativar notificações">🔔</button>
-          </div>
-        </div>
-        ${isPCP ? `
-        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-          <button onclick="gerarRelatorioProducao()"
-                  style="background:var(--purple);color:#fff;border:none;border-radius:6px;padding:6px 12px;font-size:11px;cursor:pointer">
-            📊 Relatório
-          </button>
-          <button onclick="exportarApontamentos()"
-                  style="background:var(--s2);border:1px solid var(--border);border-radius:6px;padding:6px 12px;font-size:11px;cursor:pointer">
-            📤 Exportar
-          </button>
-          <button onclick="realizadoResetarDia('${dateVal}')"
-                  style="background:var(--red);color:#fff;border:none;border-radius:6px;padding:6px 12px;font-size:11px;cursor:pointer">
-            🗑 Reset Dia
-          </button>
-        </div>` : ''}
-      </div>
-
-      <!-- Linha 2: filtros -->
-      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;background:var(--s1);border:1px solid var(--border);border-radius:10px;padding:10px 14px">
-        <!-- Busca -->
-        <div style="display:flex;align-items:center;gap:6px;flex:1;min-width:160px">
-          <span style="font-size:14px">🔍</span>
-          <input type="text" id="realizado-busca"
-                 placeholder="Buscar produto..."
-                 value="${filtros.busca}"
-                 oninput="realizadoFiltrar()"
-                 style="background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px;padding:5px 10px;flex:1;min-width:0">
-        </div>
-
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:10px">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <span style="font-family:'JetBrains Mono',monospace;font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--text3)">
+          ${dateLabel}${isHoje ? ' <span style="color:var(--cyan)">(HOJE)</span>' : ''}
+        </span>
         <!-- Filtro máquina -->
-        <div style="display:flex;align-items:center;gap:6px">
-          <span style="font-size:11px;color:var(--text3)">Máquina:</span>
-          <select id="realizado-filtro-maq" onchange="realizadoFiltrar()"
-                  style="background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px;padding:5px 8px">
-            <option value="">Todas</option>
-            ${maqsNaSemana.map(m => `<option value="${m}" ${filtros.maquina === m ? 'selected' : ''}>${m}</option>`).join('')}
-          </select>
-        </div>
-
+        <select id="realizado-filtro-maq" onchange="realizadoFiltrar()"
+                style="background:var(--s1);border:1px solid var(--border);border-radius:6px;color:var(--text2);font-size:11px;padding:3px 8px;font-family:'Space Grotesk',sans-serif">
+          <option value="">Todas as máquinas</option>
+          ${maqsNaSemana.map(m=>`<option value="${m}" ${filtros.maquina===m?'selected':''}>${m}</option>`).join('')}
+        </select>
         <!-- Filtro status -->
-        <div style="display:flex;align-items:center;gap:6px">
-          <span style="font-size:11px;color:var(--text3)">Status:</span>
-          <select id="realizado-filtro-status" onchange="realizadoFiltrar()"
-                  style="background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px;padding:5px 8px">
-            <option value="">Todos</option>
-            <option value="pendente"  ${filtros.status === 'pendente'  ? 'selected' : ''}>⏳ Pendente</option>
-            <option value="andamento" ${filtros.status === 'andamento' ? 'selected' : ''}>🔄 Em andamento</option>
-            <option value="concluido" ${filtros.status === 'concluido' ? 'selected' : ''}>✅ Concluído</option>
-            <option value="bloqueado" ${filtros.status === 'bloqueado' ? 'selected' : ''}>🔒 Bloqueado</option>
-          </select>
-        </div>
-
-        <!-- Limpar filtros -->
-        ${(filtros.maquina || filtros.status || filtros.busca) ? `
-        <button onclick="realizadoLimparFiltros()"
-                style="background:var(--s2);border:1px solid var(--border);color:var(--text2);border-radius:6px;padding:5px 10px;font-size:11px;cursor:pointer;white-space:nowrap">
-          ✕ Limpar
-        </button>` : ''}
-
-        <!-- Contador -->
-        <div style="font-size:11px;color:var(--text3);margin-left:auto;white-space:nowrap">
-          ${machineGroups.reduce((s, g) => s + g.items.length, 0)} produto(s)
-        </div>
+        <select id="realizado-filtro-status" onchange="realizadoFiltrar()"
+                style="background:var(--s1);border:1px solid var(--border);border-radius:6px;color:var(--text2);font-size:11px;padding:3px 8px;font-family:'Space Grotesk',sans-serif">
+          <option value="">Todos os status</option>
+          <option value="pendente"  ${filtros.status==='pendente'?'selected':''}>Pendente</option>
+          <option value="andamento" ${filtros.status==='andamento'?'selected':''}>Em andamento</option>
+          <option value="concluido" ${filtros.status==='concluido'?'selected':''}>Concluído</option>
+        </select>
+        <!-- Busca -->
+        <input type="text" id="realizado-busca" placeholder="Buscar produto..." value="${filtros.busca}"
+               oninput="realizadoFiltrar()"
+               style="background:var(--s1);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:11px;padding:3px 8px;width:160px;font-family:'Space Grotesk',sans-serif">
+        ${(filtros.maquina||filtros.status||filtros.busca)?`<button onclick="realizadoLimparFiltros()" style="background:none;border:1px solid var(--border);color:var(--text3);border-radius:6px;padding:3px 8px;font-size:11px;cursor:pointer">✕</button>`:''}
       </div>
+      ${isPCP ? `
+      <div style="display:flex;gap:6px">
+        <button onclick="exportarApontamentos()" style="background:var(--s1);border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:11px;color:var(--text2);cursor:pointer">📤 Exportar</button>
+        <button onclick="realizadoResetarDia('${dateVal}')" style="background:rgba(255,71,87,.1);border:1px solid rgba(255,71,87,.3);border-radius:6px;padding:4px 10px;font-size:11px;color:var(--red);cursor:pointer">🗑 Reset</button>
+      </div>` : ''}
     </div>`;
 
-  // ── Sem resultados após filtros ──
-  if (!machineGroups.length) {
+  if (!dayRecs.length) {
     body.innerHTML = html + `
-      <div class="empty" style="flex-direction:column;gap:12px">
+      <div class="empty" style="flex-direction:column;gap:8px;padding:40px 0">
         <div class="ei">⏰</div>
-        <div>Nenhum produto para este dia${filtros.maquina || filtros.status || filtros.busca ? ' com os filtros selecionados' : ''}.</div>
-        <div style="font-size:11px;color:var(--text3)">
-          ${isOperador
-            ? 'Aguarde liberação da sequência ou consulte o PCP.'
-            : 'Verifique o Gantt Visual para confirmar a programação.'}
-        </div>
-        ${(filtros.maquina || filtros.status || filtros.busca)
-          ? `<button onclick="realizadoLimparFiltros()" style="margin-top:4px;background:var(--s2);border:1px solid var(--border);color:var(--text);padding:5px 14px;border-radius:6px;font-size:11px;cursor:pointer">✕ Limpar filtros</button>`
-          : ''}
+        <div style="font-size:13px">Nenhum produto programado para ${dateLabel}.</div>
+        <div style="font-size:11px;color:var(--text3)">Verifique o Gantt Visual ou a aba Produção Dia.</div>
       </div>`;
     return;
   }
 
-  // ── Cards por máquina ──
-  for (const grp of machineGroups) {
-    const items = grp.items;
-    const concluidos  = items.filter(it => it.status === STATUS_PROGRAMACAO.CONCLUIDO).length;
-    const emAndamento = items.filter(it => it.status === STATUS_PROGRAMACAO.EM_PRODUCAO).length;
-    const bloqueados  = items.filter(it => it.bloqueado).length;
-    const comLiberacao = items.filter(it => it.temLiberacao).length;
-    let metaTotal = 0, produzidoTotal = 0;
-    items.forEach(it => { metaTotal += it.necessario; produzidoTotal += it.totalProduzido; });
-    const eficiencia = metaTotal > 0 ? Math.round((produzidoTotal / metaTotal) * 100) : 0;
+  // Agrupar por máquina
+  const grupos = {};
+  dayRecs.forEach(r => {
+    if (!grupos[r.maquina]) grupos[r.maquina] = [];
+    grupos[r.maquina].push(r);
+  });
 
-    html += `
-      <div class="apon-section" style="margin-bottom:20px;background:var(--s1);border:1px solid var(--border);border-radius:12px;overflow:hidden">
-        <div class="apon-section-header" style="padding:14px 18px;border-bottom:1px solid var(--border);background:var(--s2)">
-          <div style="display:flex;align-items:center;justify-content:space-between">
-            <div style="display:flex;align-items:center;gap:16px">
-              <div style="display:flex;align-items:center;gap:10px">
-                <span style="font-weight:700;font-size:15px;color:var(--text)">🏭 ${grp.maq}</span>
-                <div style="background:var(--s1);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:11px;color:var(--text2)">
-                  ${eficiencia}% eficiência
-                </div>
-              </div>
-              <div style="display:flex;gap:8px;font-size:10px">
-                ${concluidos  > 0 ? `<span style="background:var(--green);color:#000;padding:3px 7px;border-radius:4px;font-weight:600">${concluidos} ✅</span>` : ''}
-                ${emAndamento > 0 ? `<span style="background:var(--cyan);color:#000;padding:3px 7px;border-radius:4px;font-weight:600">${emAndamento} 🔄</span>` : ''}
-                ${bloqueados  > 0 ? `<span style="background:var(--warn);color:#000;padding:3px 7px;border-radius:4px;font-weight:600">${bloqueados} 🔒</span>` : ''}
-                ${comLiberacao > 0 ? `<span style="background:var(--purple);color:#fff;padding:3px 7px;border-radius:4px;font-weight:600">${comLiberacao} 🔀</span>` : ''}
-              </div>
-            </div>
-            <div style="display:flex;align-items:center;gap:12px">
-              <div style="display:flex;align-items:center;gap:6px">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" stroke-width="2">
-                  <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>
-                </svg>
-                <select style="background:var(--s1);border:1px solid var(--border);border-radius:4px;color:var(--text2);font-size:11px;padding:4px 8px;max-width:140px">
-                  <option>Selecionar operador...</option>
-                </select>
-              </div>
-              <div style="font-size:11px;color:var(--text3);text-align:right">
-                <div>${items.length} produto(s)</div>
-                <div>${Math.round(produzidoTotal)} de ${Math.round(metaTotal)} cx</div>
-              </div>
-            </div>
-          </div>
-        </div>
-        <div style="padding:0">`;
-
-    for (let ii = 0; ii < items.length; ii++) {
-      const it = items[ii];
-      const statusInfo = getStatusInfo(it.status);
-      const isProximo  = ii === 0 || items.slice(0, ii).every(prev => prev.status === STATUS_PROGRAMACAO.CONCLUIDO);
-
-      let rowStyle = 'border-bottom:1px solid var(--border)';
-      if      (it.status === STATUS_PROGRAMACAO.CONCLUIDO) rowStyle += ';background:rgba(41,217,132,.06);border-left:3px solid var(--green)';
-      else if (it.temLiberacao)                            rowStyle += ';background:rgba(139,92,246,.06);border-left:3px solid var(--purple)';
-      else if (it.bloqueado)                               rowStyle += ';background:rgba(255,179,0,.06);border-left:3px solid var(--warn)';
-      else if (it.status === STATUS_PROGRAMACAO.EM_PRODUCAO) rowStyle += ';background:rgba(0,212,255,.06);border-left:3px solid var(--cyan)';
-      else if (isProximo)                                  rowStyle += ';background:rgba(0,255,204,.06);border-left:3px solid var(--green)';
-
-      html += `
-        <div class="produto-row" style="${rowStyle};padding:16px 18px" data-record-id="${it.rec.id}">
-          <div style="display:flex;align-items:center;gap:16px;margin-bottom:12px">
-            <div style="display:flex;align-items:center;gap:12px;min-width:60px">
-              <div style="background:var(--s2);border:1px solid var(--border);border-radius:6px;padding:4px 8px;text-align:center;min-width:32px">
-                <div style="font-size:10px;color:var(--text3)">SEQ</div>
-                <div style="font-weight:700;color:var(--text)">${ii + 1}</div>
-              </div>
-              <span style="color:${statusInfo.cor};font-size:18px">${statusInfo.icone}</span>
-            </div>
-            <div style="min-width:0;flex:1">
-              <div style="font-weight:600;font-size:13px;color:var(--text);margin-bottom:4px">${it.rec.produto}</div>
-              <div style="font-size:11px;color:var(--text3);display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-                <span>${statusInfo.label}</span>
-                <span>Pri. ${it.rec.prioridade || 'N/A'}</span>
-                ${it.temLiberacao ? '<span style="color:var(--purple)">🔀 LIBERAÇÃO ATIVA</span>' : ''}
-                ${isProximo && !it.bloqueado && it.status !== STATUS_PROGRAMACAO.CONCLUIDO ? '<span style="color:var(--green)">👉 PRÓXIMO</span>' : ''}
-              </div>
-            </div>
-            <div style="display:flex;align-items:center;gap:20px;flex-wrap:wrap">
-              <div style="text-align:center;min-width:80px">
-                <div style="font-size:10px;color:var(--text3);margin-bottom:4px">Progresso</div>
-                <div style="position:relative;width:50px;height:50px;margin:0 auto">
-                  <svg width="50" height="50" style="transform:rotate(-90deg)">
-                    <circle cx="25" cy="25" r="20" fill="none" stroke="var(--s2)" stroke-width="4"/>
-                    <circle cx="25" cy="25" r="20" fill="none" stroke="${statusInfo.cor}" stroke-width="4"
-                            stroke-dasharray="${(2 * Math.PI * 20).toFixed(2)}"
-                            stroke-dashoffset="${(2 * Math.PI * 20 * (1 - it.pct / 100)).toFixed(2)}"
-                            style="transition:stroke-dashoffset 0.5s"/>
-                  </svg>
-                  <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-size:11px;font-weight:700;color:${statusInfo.cor}">
-                    ${it.pct}%
-                  </div>
-                </div>
-              </div>
-              <div style="text-align:center;min-width:120px">
-                <div style="font-size:10px;color:var(--text3);margin-bottom:4px">Produzido / Meta</div>
-                <div style="font-weight:700;color:var(--text);font-size:14px">
-                  <span style="color:${it.status === STATUS_PROGRAMACAO.CONCLUIDO ? 'var(--green)' : 'var(--cyan)'}">${it.totalProduzido.toLocaleString()}</span>
-                  <span style="color:var(--text3)"> / </span>
-                  <span>${it.necessario.toLocaleString()}</span>
-                </div>
-                ${it.restante > 0 ? `<div style="font-size:10px;color:var(--warn);margin-top:2px">Faltam ${it.restante.toLocaleString()} caixas</div>` : ''}
-              </div>
-              ${isPCP && it.bloqueado ? `
-              <button onclick="abrirModalLiberacaoSequencia(${it.rec.id})"
-                      style="background:var(--purple);color:#fff;border:none;border-radius:6px;padding:6px 12px;font-size:11px;cursor:pointer;white-space:nowrap">
-                🔀 Liberar
-              </button>` : ''}
-            </div>
-          </div>`;
-
-      if (!it.bloqueado || it.temLiberacao) {
-        if (it.status !== STATUS_PROGRAMACAO.CONCLUIDO) {
-          html += `
-            <div class="apontamento-area" style="background:var(--s2);border-radius:8px;padding:14px;margin-top:12px">
-              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
-                <div style="display:flex;align-items:center;gap:8px">
-                  <span style="font-size:13px;font-weight:600;color:var(--text)">⏱ Apontamento ${dateLabel}</span>
-                  ${it.todayTotal > 0 ? `<span style="background:var(--cyan);color:#000;padding:2px 6px;border-radius:4px;font-size:10px;font-weight:600">${it.todayTotal} caixas hoje</span>` : ''}
-                </div>
-                <button onclick="salvarApontamentoCompleto(${it.rec.id})"
-                        style="background:var(--green);color:#000;border:none;border-radius:6px;padding:4px 10px;font-size:10px;font-weight:600;cursor:pointer">
-                  💾 Salvar
-                </button>
-              </div>
-              <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(70px,1fr));gap:10px">`;
-
-          APON_HOURS.forEach(h => {
-            const val = it.todayData[h] || '';
-            html += `
-              <div style="text-align:center">
-                <div style="font-size:10px;color:var(--text3);margin-bottom:4px;font-weight:600">${String(h).padStart(2,'0')}h</div>
-                <input class="apon-input-controlado" type="number" min="0" max="${Math.min(it.restante, 100)}"
-                       data-rec="${it.rec.id}" data-hr="${h}" value="${val}" placeholder="0"
-                       oninput="aponRecalcRowControlado('${it.rec.id}')"
-                       style="width:60px;padding:6px;border:1px solid var(--border);border-radius:6px;text-align:center;font-size:12px;background:var(--bg)">
-              </div>`;
-          });
-
-          html += `
-              </div>
-              <div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border)">
-                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-                  <label style="font-size:12px;font-weight:600;color:var(--text);display:flex;align-items:center;gap:6px">
-                    📝 Observações do Dia
-                    <span style="font-size:10px;color:var(--text3);font-weight:400">(opcional)</span>
-                  </label>
-                  <div class="auto-save-indicator" id="autosave-${it.rec.id}-${dateVal}">Auto-save</div>
-                </div>
-                <div style="position:relative">
-                  <textarea
-                    id="obs-${it.rec.id}-${dateVal}"
-                    class="observacao-input"
-                    data-rec="${it.rec.id}"
-                    data-date="${dateVal}"
-                    placeholder="Ex: Máquina com ruído no turno da manhã, setup demorou 20min extras..."
-                    oninput="handleObservacaoInput(this, '${dateVal}', ${it.rec.id})"
-                    maxlength="500"
-                    style="width:100%;min-height:60px;max-height:120px;padding:8px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:11px;resize:vertical;font-family:inherit;line-height:1.4">
-                  </textarea>
-                  <div class="obs-counter" id="counter-${it.rec.id}-${dateVal}">0/500</div>
-                </div>
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px">
-                  <div style="font-size:10px;color:var(--text3)">💡 Descreva problemas, setup, qualidade, etc.</div>
-                  <button onclick="salvarObservacaoManual(${it.rec.id}, '${dateVal}')"
-                          class="obs-save-btn" id="save-obs-${it.rec.id}-${dateVal}"
-                          style="background:var(--s2);border:1px solid var(--border);color:var(--text2);border-radius:4px;padding:3px 8px;font-size:10px;cursor:pointer">
-                    💾 Salvar Obs
-                  </button>
-                </div>
-              </div>
-              ${it.restante <= 20 ? `
-              <div style="background:rgba(255,179,0,.15);border:1px solid var(--warn);border-radius:6px;padding:10px;margin-top:12px;font-size:11px;color:var(--warn)">
-                ⚠️ <strong>Próximo da conclusão!</strong> Faltam apenas ${it.restante} caixas.
-              </div>` : ''}
-              ${it.temLiberacao ? `
-              <div style="background:rgba(139,92,246,.15);border:1px solid var(--purple);border-radius:6px;padding:10px;margin-top:12px;font-size:11px;color:var(--purple)">
-                🔀 <strong>Liberação ativa:</strong> Este produto foi liberado para produção fora de sequência.
-              </div>` : ''}
-            </div>`;
-        } else {
-          html += `
-            <div style="background:rgba(41,217,132,.1);border:1px solid var(--green);border-radius:8px;padding:12px;margin-top:12px;font-size:12px;color:var(--green)">
-              ✅ <strong>Produção concluída!</strong> Produto finalizado ao atingir ${it.necessario.toLocaleString()} caixas.
-              ${it.totalProduzido > it.necessario ? `<br>📈 Produção excedente: +${(it.totalProduzido - it.necessario).toLocaleString()} caixas` : ''}
-            </div>`;
-        }
-      } else {
-        html += `
-          <div style="background:rgba(255,179,0,.1);border:1px solid var(--warn);border-radius:6px;padding:12px;margin-top:12px;font-size:12px;color:var(--warn)">
-            🔒 <strong>Produção bloqueada:</strong> ${it.motivoBloqueio}
-            ${isPCP ? `<br><br><button onclick="abrirModalLiberacaoSequencia(${it.rec.id})" style="background:var(--purple);color:#fff;border:none;border-radius:4px;padding:4px 8px;font-size:10px;cursor:pointer">🔀 Liberar Exceção</button>` : ''}
-          </div>`;
-      }
-      html += '</div>';
+  // Aplicar filtros
+  Object.keys(grupos).forEach(maq => {
+    if (filtros.maquina && filtros.maquina !== maq) { delete grupos[maq]; return; }
+    if (filtros.busca) {
+      grupos[maq] = grupos[maq].filter(r => r.produto.toLowerCase().includes(filtros.busca.toLowerCase()));
     }
-    html += '</div></div>';
+    if (filtros.status) {
+      grupos[maq] = grupos[maq].filter(r => {
+        const total = calcularTotalProduzido(r.id);
+        const meta  = r.qntCaixas || 0;
+        if (filtros.status === 'concluido')  return total >= meta;
+        if (filtros.status === 'andamento')  return total > 0 && total < meta;
+        if (filtros.status === 'pendente')   return total === 0;
+        return true;
+      });
+    }
+    if (!grupos[maq] || !grupos[maq].length) delete grupos[maq];
+  });
+
+  const maqKeys = Object.keys(grupos).sort();
+
+  if (!maqKeys.length) {
+    body.innerHTML = html + `
+      <div class="empty" style="flex-direction:column;gap:8px;padding:40px 0">
+        <div class="ei">🔍</div>
+        <div>Nenhum resultado com os filtros aplicados.</div>
+        <button onclick="realizadoLimparFiltros()" style="margin-top:4px;background:var(--s2);border:1px solid var(--border);color:var(--text);padding:5px 14px;border-radius:6px;font-size:11px;cursor:pointer">✕ Limpar filtros</button>
+      </div>`;
+    return;
   }
 
+  // ── Tabela por máquina ───────────────────────────────────────────
+  maqKeys.forEach(maq => {
+    const recs = grupos[maq].sort((a, b) => {
+      const sa = a.sortOrder != null ? a.sortOrder : a.id;
+      const sb = b.sortOrder != null ? b.sortOrder : b.id;
+      return sa - sb;
+    });
+
+    const totalMeta     = recs.reduce((s, r) => s + (r.qntCaixas||0), 0);
+    const totalProdMaq  = recs.reduce((s, r) => s + calcularTotalProduzido(r.id), 0);
+    const pctMaq        = totalMeta > 0 ? Math.min(100, Math.round(totalProdMaq / totalMeta * 100)) : 0;
+    const concluidos    = recs.filter(r => calcularTotalProduzido(r.id) >= (r.qntCaixas||0)).length;
+
+    html += `
+      <div style="margin-bottom:14px">
+        <!-- Header da máquina -->
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:6px 10px;background:var(--s2);border:1px solid var(--border);border-radius:8px 8px 0 0;border-bottom:none">
+          <div style="display:flex;align-items:center;gap:10px">
+            <span style="font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:700;color:var(--cyan);text-transform:uppercase;letter-spacing:.5px">${maq}</span>
+            <span style="font-size:10px;color:var(--text3)">${dateLabel} · ${recs.length} produto(s) · ${concluidos}/${recs.length} concluídos</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <div style="width:80px;height:4px;background:var(--s1);border-radius:2px;overflow:hidden">
+              <div style="width:${pctMaq}%;height:100%;background:${pctMaq>=100?'var(--green)':pctMaq>0?'var(--cyan)':'var(--s1)'};border-radius:2px;transition:width .3s"></div>
+            </div>
+            <span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:${pctMaq>=100?'var(--green)':'var(--text3)'}">${pctMaq}%</span>
+          </div>
+        </div>
+
+        <!-- Tabela -->
+        <div style="overflow-x:auto;border:1px solid var(--border);border-radius:0 0 8px 8px;border-top:none">
+          <table style="width:100%;border-collapse:collapse;font-family:'JetBrains Mono',monospace;font-size:11px">
+            <thead>
+              <tr style="background:var(--s1);border-bottom:1px solid var(--border)">
+                <th style="padding:5px 8px;text-align:left;color:var(--text3);font-weight:600;font-size:10px;white-space:nowrap;min-width:28px">#</th>
+                <th style="padding:5px 8px;text-align:left;color:var(--text3);font-weight:600;font-size:10px;min-width:180px">PRODUTO</th>
+                ${APON_HOURS.map(h=>`<th style="padding:5px 6px;text-align:center;color:var(--text3);font-weight:600;font-size:10px;min-width:52px">${String(h).padStart(2,'0')}H</th>`).join('')}
+                <th style="padding:5px 8px;text-align:center;color:var(--text3);font-weight:600;font-size:10px;min-width:64px;border-left:1px solid var(--border)">TOTAL DIA</th>
+                <th style="padding:5px 8px;text-align:center;color:var(--text3);font-weight:600;font-size:10px;min-width:72px">ACUMULADO</th>
+                <th style="padding:5px 8px;text-align:center;color:var(--text3);font-weight:600;font-size:10px;min-width:48px">SOLIC.</th>
+                <th style="padding:5px 8px;text-align:center;color:var(--text3);font-weight:600;font-size:10px;min-width:40px"></th>
+              </tr>
+            </thead>
+            <tbody>`;
+
+    recs.forEach((rec, idx) => {
+      const totalProd  = calcularTotalProduzido(rec.id);
+      const meta       = rec.qntCaixas || 0;
+      const todayData  = aponStorageGet(aponKey(dateVal, rec.id)) || {};
+      const todayTotal = APON_HOURS.reduce((s,h) => s + (parseInt(todayData[h])||0), 0);
+      const isDone     = totalProd >= meta;
+      const isAndamento = totalProd > 0 && !isDone;
+      const prevTotal  = aponGetPrevTotal(rec.id, dateVal);
+
+      // Cor da linha
+      let rowBg = idx % 2 === 0 ? 'var(--bg)' : 'var(--s1)';
+      let leftBorder = '';
+      if (isDone)        leftBorder = 'border-left:2px solid var(--green)';
+      else if (isAndamento) leftBorder = 'border-left:2px solid var(--cyan)';
+
+      // Status badge compacto
+      const statusDot = isDone
+        ? `<span style="color:var(--green);font-size:9px">●</span>`
+        : isAndamento
+          ? `<span style="color:var(--cyan);font-size:9px">●</span>`
+          : `<span style="color:var(--text3);font-size:9px">○</span>`;
+
+      // Inputs por hora
+      const horaInputs = APON_HOURS.map(h => {
+        const val = todayData[h] || '';
+        return `<td style="padding:3px 4px;text-align:center;border-left:1px solid rgba(255,255,255,.04)">
+          <input type="number" min="0"
+                 data-rec="${rec.id}" data-hr="${h}"
+                 value="${val}" placeholder="0"
+                 oninput="realizadoInputChange(this)"
+                 style="width:46px;padding:4px 2px;border:1px solid var(--border);border-radius:4px;text-align:center;font-size:11px;background:var(--s2);color:var(--text);font-family:'JetBrains Mono',monospace;-moz-appearance:textfield"
+                 class="apon-input-controlado">
+        </td>`;
+      }).join('');
+
+      html += `
+              <tr style="background:${rowBg};${leftBorder};border-bottom:1px solid rgba(255,255,255,.04)" data-record-id="${rec.id}">
+                <td style="padding:6px 8px;color:var(--text3);text-align:center">${statusDot}</td>
+                <td style="padding:6px 8px">
+                  <div style="font-size:11px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:220px" title="${rec.produto}">
+                    ${rec.produto}
+                  </div>
+                  ${rec.obs_dia ? `<div style="font-size:9px;color:var(--text3);margin-top:1px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${rec.obs_dia}</div>` : ''}
+                </td>
+                ${horaInputs}
+                <td style="padding:6px 8px;text-align:center;border-left:1px solid var(--border)">
+                  <span id="realizado-daytotal-${rec.id}" style="font-weight:700;color:${todayTotal>0?'var(--cyan)':'var(--text3)'}">
+                    ${todayTotal > 0 ? todayTotal : '—'}
+                  </span>
+                </td>
+                <td style="padding:6px 8px;text-align:center">
+                  <span id="realizado-acum-${rec.id}" style="font-weight:700;color:${isDone?'var(--green)':totalProd>0?'var(--text)':'var(--text3)'}">
+                    ${totalProd > 0 ? totalProd : '—'}
+                  </span>
+                </td>
+                <td style="padding:6px 8px;text-align:center;color:var(--text2)">${meta}</td>
+                <td style="padding:6px 4px;text-align:center">
+                  <button onclick="realizadoSalvarLinha(${rec.id},'${dateVal}')"
+                          title="Salvar" style="background:var(--green);color:#000;border:none;border-radius:4px;padding:3px 7px;font-size:10px;font-weight:700;cursor:pointer;font-family:'Space Grotesk',sans-serif">
+                    ✓
+                  </button>
+                </td>
+              </tr>
+              <!-- Linha de observação (expansível) -->
+              <tr id="obs-row-${rec.id}" style="display:none;background:${rowBg}">
+                <td colspan="${APON_HOURS.length + 5}" style="padding:6px 12px 8px 36px;border-bottom:1px solid var(--border)">
+                  <div style="display:flex;align-items:center;gap:8px">
+                    <textarea id="obs-${rec.id}-${dateVal}"
+                              placeholder="Observação do dia (opcional)..."
+                              oninput="handleObservacaoInput(this,'${dateVal}',${rec.id})"
+                              maxlength="500"
+                              style="flex:1;min-height:40px;max-height:80px;padding:6px 10px;border:1px solid var(--border);border-radius:6px;background:var(--s2);color:var(--text);font-size:11px;resize:vertical;font-family:'Space Grotesk',sans-serif"></textarea>
+                    <button onclick="salvarObservacaoManual(${rec.id},'${dateVal}')"
+                            style="background:var(--s2);border:1px solid var(--border);color:var(--text2);border-radius:4px;padding:4px 8px;font-size:10px;cursor:pointer;white-space:nowrap">💾 Obs</button>
+                  </div>
+                </td>
+              </tr>`;
+    });
+
+    html += `
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Rodapé: salvar todos + obs toggle -->
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:6px 10px;background:var(--s1);border:1px solid var(--border);border-top:none;border-radius:0 0 8px 8px;margin-top:-1px">
+          <div style="display:flex;gap:6px;flex-wrap:wrap">
+            ${recs.map(r=>`
+              <button onclick="realizadoToggleObs(${r.id})"
+                      style="background:var(--s2);border:1px solid var(--border);border-radius:4px;padding:2px 7px;font-size:10px;color:var(--text3);cursor:pointer"
+                      title="Observação: ${r.produto.substring(0,30)}">
+                📝 ${r.produto.substring(0,15)}…
+              </button>`).join('')}
+          </div>
+          <button onclick="realizadoSalvarMaquina('${maq}','${dateVal}')"
+                  style="background:var(--green);color:#000;border:none;border-radius:6px;padding:5px 14px;font-size:11px;font-weight:700;cursor:pointer;font-family:'Space Grotesk',sans-serif">
+            💾 Salvar ${maq}
+          </button>
+        </div>
+      </div>`;
+  });
+
   body.innerHTML = html;
-  body._machineGroups = machineGroups;
+  body._machineGroups = maqKeys.map(m => ({ maq: m, items: grupos[m].map(r => ({ rec: r })) }));
   body._dateVal = dateVal;
 
   setTimeout(() => { carregarObservacoesExistentes(dateVal); }, 100);
-
-  if (typeof _notificacoesInicializadas === 'undefined') {
-    iniciarNotificacoesTempoReal();
-    window._notificacoesInicializadas = true;
-  }
 }
 
-// Verifica se é o próximo da sequência liberada
 function isProximoDaSequencia(record, todosRecords) {
   const index = todosRecords.findIndex(r => r.id === record.id);
   if (index === 0) return true; // Primeiro da lista
@@ -4557,10 +4388,7 @@ function aponRecalcRowControlado(recordId) {
   const necessario = record.qntCaixas || 0;
   const totalGlobal = totalProduzido + total;
   
-  // VALIDAÇÃO: Não permitir exceder muito a meta
-  if (totalGlobal > necessario + 10) { // Margem de 10 caixas
-    toast('⚠️ Quantidade muito acima da meta! Verifique se está correto.', 'warn');
-  }
+  // Sem bloqueio por meta — operador pode continuar apontando além da meta se necessário
   
   // Salvar apontamento
   const data = {};
@@ -7006,12 +6834,7 @@ async function renderUsuariosSistema(){
     const dtReset = u.ultimoResetEnviadoEm ? new Date(u.ultimoResetEnviadoEm).toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit',year:'2-digit',hour:'2-digit',minute:'2-digit'}) : 'Nunca';
     const modLabel = tipo==='admin' ? 'Acesso total' : (() => {
       const perms = u.permissoes||{};
-      const ativos = MODULOS.filter(m=>{
-        const p = perms[m.key];
-        if(!p) return false;
-        if(typeof p==='object') return Object.values(p).some(v=>v===true);
-        return p===true;
-      }).map(m=>m.label);
+      const ativos = MODULOS.filter(m=>perms[m.key]).map(m=>m.label);
       return ativos.length ? ativos.join(', ') : 'Sem módulos liberados';
     })();
     return `<div style="padding:13px 22px;border-bottom:1px solid var(--border)">
@@ -7041,130 +6864,17 @@ async function renderUsuariosSistema(){
 }
 
 
-function _usuarioFormHTML(u={}) {
-  const tipo  = u.tipo  || 'usuario';
+function _usuarioFormHTML(u={}){
+  const tipo = u.tipo || 'usuario';
   const perms = u.permissoes || {};
-  const isAdmin = tipo === 'admin';
-
-  // Definição detalhada de cada módulo com suas ações possíveis
-  const MODULOS_DETALHADOS = [
-    {
-      grupo: 'Produção',
-      icon: '🏭',
-      itens: [
-        { key:'dashboard',     label:'Dashboard',          desc:'Visão geral de indicadores e KPIs de produção',
-          acoes:['visualizar'] },
-        { key:'programacao',   label:'Programação',        desc:'Criar e gerenciar ordens de produção semanais',
-          acoes:['visualizar','criar','editar','excluir'] },
-        { key:'gantt',         label:'Prog. Visual (Gantt)',desc:'Visualizar o Gantt de programação por máquina e turno',
-          acoes:['visualizar'] },
-        { key:'realizado',     label:'Realizado',          desc:'Apontamento de produção por hora e dia; liberação de sequência',
-          acoes:['visualizar','editar'] },
-        { key:'calculos',      label:'Prog. Automática',   desc:'Gerar programação automática por capacidade e demanda',
-          acoes:['visualizar','criar'] },
-      ]
-    },
-    {
-      grupo: 'Máquinas & Insumos',
-      icon: '🔧',
-      itens: [
-        { key:'maquinas',      label:'Máquinas',           desc:'Cadastro de máquinas, turnos, setup e disponibilidade',
-          acoes:['visualizar','criar','editar','excluir'] },
-        { key:'insumos_maq',   label:'Insumos / Máq.',     desc:'Insumos consumidos por máquina e por produto na semana',
-          acoes:['visualizar'] },
-        { key:'insumos_geral', label:'Insumos Geral',      desc:'Visão consolidada de todos os insumos e estoque',
-          acoes:['visualizar'] },
-        { key:'ficha_tecnica', label:'Ficha Técnica',      desc:'Composição de insumos por produto (BOM)',
-          acoes:['visualizar','criar','editar','excluir'] },
-      ]
-    },
-    {
-      grupo: 'Produtos & Análises',
-      icon: '📦',
-      itens: [
-        { key:'projecao',      label:'Projeção de Vendas', desc:'Projeção de demanda e análise de vendas futuras',
-          acoes:['visualizar'] },
-        { key:'importacao',    label:'Importação / API',   desc:'Importar produtos, insumos e configurações via Excel ou API',
-          acoes:['visualizar','criar'] },
-      ]
-    },
-    {
-      grupo: 'Administração',
-      icon: '⚙️',
-      itens: [
-        { key:'configuracoes', label:'Configurações',      desc:'Jornada de trabalho, turnos gerais e parâmetros do sistema',
-          acoes:['visualizar','editar'] },
-        { key:'funcionarios',  label:'Funcionários',       desc:'Cadastro de operadores e equipe de produção',
-          acoes:['visualizar','criar','editar','excluir'] },
-        { key:'usuarios',      label:'Usuários do Sistema',desc:'Criar e gerenciar usuários, permissões e acessos',
-          acoes:['visualizar','criar','editar','administrar'] },
-      ]
-    },
-  ];
-
-  const ACAO_LABEL = {
-    visualizar:   { label:'Ver',        icon:'👁',  color:'var(--cyan)',   bg:'rgba(0,212,255,.1)'    },
-    criar:        { label:'Criar',      icon:'➕',  color:'var(--green)',  bg:'rgba(41,217,132,.1)'   },
-    editar:       { label:'Editar',     icon:'✏️',  color:'var(--warn)',   bg:'rgba(255,179,0,.1)'    },
-    excluir:      { label:'Excluir',    icon:'🗑',  color:'var(--red)',    bg:'rgba(255,71,87,.1)'    },
-    administrar:  { label:'Administrar',icon:'🔑',  color:'var(--purple)', bg:'rgba(139,92,246,.1)'  },
-  };
-
-  // Monta os checkboxes de módulos agrupados
-  let modulosHtml = '';
-  MODULOS_DETALHADOS.forEach(grupo => {
-    modulosHtml += `
-      <div style="margin-bottom:16px">
-        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--text3);margin-bottom:8px;display:flex;align-items:center;gap:6px">
-          <span>${grupo.icon}</span> ${grupo.grupo}
-        </div>
-        <div style="display:flex;flex-direction:column;gap:6px">`;
-
-    grupo.itens.forEach(mod => {
-      const modKey = mod.key;
-      // permissoes pode ser objeto simples (true/false) ou objeto com acoes
-      const modPerms = typeof perms[modKey] === 'object' ? perms[modKey] : 
-                       (perms[modKey] === true ? { visualizar:true } : {});
-
-      const acoesHtml = mod.acoes.map(acao => {
-        const info = ACAO_LABEL[acao] || { label:acao, icon:'•', color:'var(--text2)', bg:'var(--s2)' };
-        const checked = modPerms[acao] ? 'checked' : '';
-        return `<label id="albl-${modKey}-${acao}" style="display:flex;align-items:center;gap:4px;padding:4px 8px;border-radius:6px;background:${checked ? info.bg : 'var(--s2)'};border:1px solid ${checked ? info.color : 'var(--border)'};cursor:pointer;transition:all .15s;white-space:nowrap" title="${info.label}">
-          <input type="checkbox" id="aperm-${modKey}-${acao}" data-mod="${modKey}" data-acao="${acao}" ${checked}
-                 onchange="_onPermChange(this)"
-                 style="accent-color:${info.color};width:12px;height:12px">
-          <span style="font-size:10px">${info.icon}</span>
-          <span style="font-size:11px;color:var(--text)">${info.label}</span>
-        </label>`;
-      }).join('');
-
-      // Checkbox mestre do módulo (habilita "visualizar" automaticamente)
-      const anyEnabled = mod.acoes.some(a => modPerms[a]);
-      modulosHtml += `
-        <div style="background:var(--s1);border:1px solid ${anyEnabled ? 'rgba(0,212,255,.25)':'var(--border)'};border-radius:10px;padding:10px 14px;transition:border-color .2s" id="modrow-${modKey}">
-          <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px">
-            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;flex:1;min-width:0">
-              <input type="checkbox" id="perm-${modKey}" data-mod="${modKey}" data-acao="__master"
-                     ${anyEnabled ? 'checked' : ''}
-                     onchange="_onMasterPermChange(this)"
-                     style="accent-color:var(--cyan);width:14px;height:14px;flex-shrink:0">
-              <div style="min-width:0">
-                <div style="font-size:12px;font-weight:600;color:var(--text)">${mod.label}</div>
-                <div style="font-size:10px;color:var(--text3);margin-top:1px">${mod.desc}</div>
-              </div>
-            </label>
-            <div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end" id="acoes-${modKey}">
-              ${acoesHtml}
-            </div>
-          </div>
-        </div>`;
-    });
-
-    modulosHtml += `</div></div>`;
-  });
+  const checkboxes = MODULOS.map(m => `
+    <label style="display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:7px;background:var(--s2);border:1px solid ${perms[m.key]?'var(--cyan)':'var(--border)'};cursor:pointer;transition:border .15s" id="perm-lbl-${m.key}">
+      <input type="checkbox" id="perm-${m.key}" ${perms[m.key]?'checked':''} onchange="_togglePermBorder(this,'perm-lbl-${m.key}')" style="accent-color:var(--cyan);width:14px;height:14px">
+      <span style="font-size:12px;color:var(--text)">${m.label}</span>
+    </label>`).join('');
 
   return `
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
       <div>
         <label class="flbl">Nome completo *</label>
         <input class="finp" id="us-nome" value="${u.nome||''}" placeholder="Ex: Maria Santos" style="width:100%;box-sizing:border-box;margin-top:6px">
@@ -7173,55 +6883,36 @@ function _usuarioFormHTML(u={}) {
         <label class="flbl">Cargo / Função</label>
         <input class="finp" id="us-cargo" value="${u.cargo||''}" placeholder="Ex: Supervisora" style="width:100%;box-sizing:border-box;margin-top:6px">
       </div>
-      ${!u.uid ? `
-      <div>
+      ${!u.uid?`<div>
         <label class="flbl">E-mail *</label>
         <input class="finp" id="us-email" type="email" value="${u.email||''}" placeholder="maria@empresa.com" style="width:100%;box-sizing:border-box;margin-top:6px">
       </div>
       <div>
         <label class="flbl">Senha *</label>
         <input class="finp" id="us-senha" type="password" placeholder="Mínimo 6 caracteres" style="width:100%;box-sizing:border-box;margin-top:6px">
-      </div>` : `
-      <div style="grid-column:1/-1">
+      </div>`:`<div style="grid-column:1/-1">
         <label class="flbl">E-mail</label>
         <input class="finp" value="${u.email||''}" disabled style="width:100%;box-sizing:border-box;margin-top:6px;opacity:.5">
       </div>`}
       <div style="grid-column:1/-1">
         <label class="flbl">Tipo de Acesso *</label>
         <select class="finp" id="us-tipo" onchange="_togglePermsWrap(this.value)" style="width:100%;box-sizing:border-box;margin-top:6px">
-          <option value="usuario" ${tipo !== 'admin' ? 'selected' : ''}>Usuário — permissões configuráveis por módulo</option>
-          <option value="admin"   ${tipo === 'admin' ? 'selected' : ''}>Admin — acesso total automático a tudo</option>
+          <option value="usuario" ${tipo!=='admin'?'selected':''}>Usuário — acesso manual por módulo</option>
+          <option value="admin" ${tipo==='admin'?'selected':''}>Admin — acesso total automático</option>
         </select>
       </div>
-      ${u.uid ? `
-      <div style="grid-column:1/-1">
+      ${u.uid?`<div style="grid-column:1/-1">
         <label class="flbl">Status</label>
         <select class="finp" id="us-ativo" style="width:100%;box-sizing:border-box;margin-top:6px">
-          <option value="true"  ${u.ativo !== false ? 'selected' : ''}>Ativo</option>
-          <option value="false" ${u.ativo === false  ? 'selected' : ''}>Inativo</option>
+          <option value="true" ${u.ativo!==false?'selected':''}>Ativo</option>
+          <option value="false" ${u.ativo===false?'selected':''}>Inativo</option>
         </select>
-      </div>` : ''}
+      </div>`:''}
     </div>
-
-    <div id="us-perms-wrap" style="display:${isAdmin ? 'none' : 'block'}">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
-        <label class="flbl" style="margin:0">Permissões por Módulo</label>
-        <div style="display:flex;gap:6px">
-          <button type="button" onclick="_permsSelectAll(true)"
-                  style="background:rgba(0,212,255,.1);border:1px solid rgba(0,212,255,.3);color:var(--cyan);border-radius:6px;padding:4px 10px;font-size:11px;cursor:pointer">
-            ✅ Marcar tudo
-          </button>
-          <button type="button" onclick="_permsSelectAll(false)"
-                  style="background:var(--s2);border:1px solid var(--border);color:var(--text2);border-radius:6px;padding:4px 10px;font-size:11px;cursor:pointer">
-            ✕ Desmarcar tudo
-          </button>
-        </div>
-      </div>
-      <div style="display:flex;flex-direction:column;gap:0">
-        ${modulosHtml}
-      </div>
-      <div style="background:rgba(255,179,0,.08);border:1px solid rgba(255,179,0,.25);border-radius:8px;padding:10px 14px;margin-top:12px;font-size:11px;color:var(--warn)">
-        ⚠️ <strong>Ver</strong> libera o acesso ao módulo. As demais ações controlam o que o usuário pode fazer dentro dele.
+    <div id="us-perms-wrap" style="display:${tipo==='admin'?'none':'block'}">
+      <label class="flbl" style="margin-bottom:8px;display:block">Módulos com acesso</label>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+        ${checkboxes}
       </div>
     </div>`;
 }
@@ -7236,67 +6927,8 @@ function _togglePermBorder(cb, lblId){
   const lbl=document.getElementById(lblId);
   if(lbl) lbl.style.borderColor = cb.checked?'var(--cyan)':'var(--border)';
 }
-
-// Quando uma ação específica muda — atualiza visual do label e do row
-function _onPermChange(cb) {
-  const mod  = cb.dataset.mod;
-  const acao = cb.dataset.acao;
-  const lblId = `albl-${mod}-${acao}`;
-  const lbl = document.getElementById(lblId);
-  const ACAO_COLOR = { visualizar:'var(--cyan)', criar:'var(--green)', editar:'var(--warn)', excluir:'var(--red)', administrar:'var(--purple)' };
-  const ACAO_BG    = { visualizar:'rgba(0,212,255,.1)', criar:'rgba(41,217,132,.1)', editar:'rgba(255,179,0,.1)', excluir:'rgba(255,71,87,.1)', administrar:'rgba(139,92,246,.1)' };
-  if (lbl) {
-    lbl.style.borderColor = cb.checked ? (ACAO_COLOR[acao]||'var(--cyan)') : 'var(--border)';
-    lbl.style.background  = cb.checked ? (ACAO_BG[acao]||'var(--s2)') : 'var(--s2)';
-  }
-  // Se marcou qualquer ação, marca o master também; se desmarcou tudo, desmarca master
-  const rowAcoes = document.querySelectorAll(`[data-mod="${mod}"][data-acao]:not([data-acao="__master"])`);
-  const anyChecked = Array.from(rowAcoes).some(c => c.checked);
-  const master = document.getElementById(`perm-${mod}`);
-  if (master) master.checked = anyChecked;
-  _updateModRow(mod, anyChecked);
-}
-
-// Quando o checkbox mestre do módulo muda — liga/desliga "visualizar"
-function _onMasterPermChange(cb) {
-  const mod = cb.dataset.mod;
-  const visualizarCb = document.getElementById(`aperm-${mod}-visualizar`);
-  if (visualizarCb) {
-    visualizarCb.checked = cb.checked;
-    _onPermChange(visualizarCb);
-  }
-  // Se desmarcou o master, desmarcar todas as ações
-  if (!cb.checked) {
-    document.querySelectorAll(`[data-mod="${mod}"][data-acao]:not([data-acao="__master"])`).forEach(c => {
-      c.checked = false;
-      _onPermChange(c);
-    });
-  }
-  _updateModRow(mod, cb.checked);
-}
-
-function _updateModRow(mod, active) {
-  const row = document.getElementById(`modrow-${mod}`);
-  if (row) row.style.borderColor = active ? 'rgba(0,212,255,.25)' : 'var(--border)';
-}
-
-// Marcar/desmarcar todos os módulos
-function _permsSelectAll(val) {
-  document.querySelectorAll('[data-acao]:not([data-acao="__master"])').forEach(cb => {
-    cb.checked = val;
-    _onPermChange(cb);
-  });
-  document.querySelectorAll('[data-acao="__master"]').forEach(cb => {
-    cb.checked = val;
-    _updateModRow(cb.dataset.mod, val);
-  });
-}
-
-window._togglePermsWrap    = _togglePermsWrap;
-window._togglePermBorder   = _togglePermBorder;
-window._onPermChange       = _onPermChange;
-window._onMasterPermChange = _onMasterPermChange;
-window._permsSelectAll     = _permsSelectAll;
+window._togglePermsWrap = _togglePermsWrap;
+window._togglePermBorder = _togglePermBorder;
 
 function openAddUsuario(){
   if(!can('usuarios','criar')){toast('Sem permissão para criar usuário.','err');return;}
@@ -7324,19 +6956,12 @@ async function saveUsuarioModal(){
   const tipo=document.getElementById('us-tipo')?.value||'usuario';
   const cargo=(document.getElementById('us-cargo')?.value||'').trim();
   if(!nome){alert('Informe o nome.');return;}
-  // Coleta permissões granulares (por módulo + por ação)
+  // Coleta permissões manuais (só relevante se tipo=usuario)
   const permissoes={};
   if(tipo!=='admin'){
-    // Para cada módulo, coleta cada ação marcada
-    document.querySelectorAll('[data-mod][data-acao]:not([data-acao="__master"])').forEach(cb=>{
-      const mod  = cb.dataset.mod;
-      const acao = cb.dataset.acao;
-      if(!permissoes[mod]) permissoes[mod]={};
-      if(cb.checked) permissoes[mod][acao]=true;
-    });
-    // Compatibilidade: se tem visualizar, marca também o topo como true
-    Object.keys(permissoes).forEach(mod=>{
-      if(Object.keys(permissoes[mod]).length===0) delete permissoes[mod];
+    MODULOS.forEach(m=>{
+      const cb=document.getElementById('perm-'+m.key);
+      if(cb) permissoes[m.key]=cb.checked;
     });
   }
   try{
@@ -9997,169 +9622,6 @@ window.solicitarPermissaoNotificacoes = solicitarPermissaoNotificacoes;
 window.salvarApontamentoCompleto = salvarApontamentoCompleto;
 window.gerarRelatorioProducao = gerarRelatorioProducao;
 window.exportarApontamentos = exportarApontamentos;
-
-// ═══════════════════════════════════════════════════════════════════
-// MEU PERFIL
-// ═══════════════════════════════════════════════════════════════════
-
-function openMeuPerfil() {
-  const user = getCurrentUserSafe();
-  if (!user) { toast('Usuário não identificado.', 'err'); return; }
-
-  const nome    = user.nome || user.email || '?';
-  const email   = user.email || '—';
-  const cargo   = user.cargo || '—';
-  const tipo    = user.tipo || 'usuario';
-  const isAdmin = tipo === 'admin';
-  const perms   = user.permissoes || {};
-  const inicial = nome[0].toUpperCase();
-  const avatarBg = isAdmin ? '#e74c3c' : 'var(--cyan)';
-  const avatarColor = '#000';
-
-  // Módulos que o usuário tem acesso
-  const modulosAcesso = isAdmin
-    ? MODULOS.map(m => m.label)
-    : MODULOS.filter(m => perms[m.key]).map(m => m.label);
-
-  // Liberações ativas
-  const libs = _getLiberacoes ? _getLiberacoes() : {};
-  const libAtivas = Object.entries(libs).filter(([,v]) => Date.now() < v.expira);
-
-  const html = `
-  <div id="modal-meu-perfil" onclick="if(event.target===this)closeMeuPerfil()"
-       style="position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px">
-    <div style="background:var(--bg);border:1px solid var(--border);border-radius:16px;width:100%;max-width:560px;max-height:90vh;overflow-y:auto;box-shadow:0 24px 64px rgba(0,0,0,.6)">
-
-      <!-- Header com avatar -->
-      <div style="background:var(--s1);border-bottom:1px solid var(--border);border-radius:16px 16px 0 0;padding:28px 28px 20px">
-        <div style="display:flex;align-items:center;gap:18px">
-          <div style="width:64px;height:64px;border-radius:50%;background:${avatarBg};color:${avatarColor};display:flex;align-items:center;justify-content:center;font-size:26px;font-weight:800;font-family:'Space Grotesk',sans-serif;flex-shrink:0;border:3px solid var(--border)">
-            ${inicial}
-          </div>
-          <div style="flex:1;min-width:0">
-            <div style="font-size:18px;font-weight:700;color:var(--text);font-family:'Space Grotesk',sans-serif">${nome}</div>
-            <div style="font-size:12px;color:var(--text3);margin-top:2px">${email}</div>
-            <div style="margin-top:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-              ${perfilBadge(tipo)}
-              ${cargo !== '—' ? `<span style="background:var(--s2);border:1px solid var(--border);border-radius:20px;padding:2px 10px;font-size:11px;color:var(--text2)">${cargo}</span>` : ''}
-              <span style="background:var(--s2);border:1px solid var(--border);border-radius:20px;padding:2px 10px;font-size:11px;color:var(--text3)">
-                ${isAdmin ? 'Acesso total' : modulosAcesso.length + ' módulo(s)'}
-              </span>
-            </div>
-          </div>
-          <button onclick="closeMeuPerfil()" style="background:var(--s2);border:1px solid var(--border);border-radius:8px;width:32px;height:32px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--text2);font-size:16px;flex-shrink:0">✕</button>
-        </div>
-      </div>
-
-      <div style="padding:24px 28px;display:flex;flex-direction:column;gap:20px">
-
-        <!-- Dados pessoais -->
-        <section>
-          <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--text3);margin-bottom:12px">Dados Pessoais</div>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-            ${_perfilInfoCard('👤 Nome', nome)}
-            ${_perfilInfoCard('📧 E-mail', email)}
-            ${_perfilInfoCard('💼 Cargo', cargo)}
-            ${_perfilInfoCard('🔑 Tipo de Acesso', isAdmin ? 'Administrador' : 'Usuário')}
-          </div>
-        </section>
-
-        <!-- Alterar senha -->
-        <section>
-          <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--text3);margin-bottom:12px">Segurança</div>
-          <div style="background:var(--s1);border:1px solid var(--border);border-radius:10px;padding:16px">
-            <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:4px">🔒 Alterar Senha</div>
-            <div style="font-size:11px;color:var(--text3);margin-bottom:12px">Um e-mail de redefinição será enviado para ${email}</div>
-            <button onclick="perfilEnviarResetSenha()" id="perfil-reset-btn"
-                    style="background:var(--s2);border:1px solid var(--border);border-radius:7px;padding:8px 16px;font-size:12px;color:var(--text);cursor:pointer;font-family:'Space Grotesk',sans-serif;transition:all .15s"
-                    onmouseover="this.style.borderColor='var(--cyan)'" onmouseout="this.style.borderColor='var(--border)'">
-              📧 Enviar Link de Redefinição
-            </button>
-            <div id="perfil-reset-msg" style="display:none;margin-top:10px;font-size:11px;padding:8px 12px;border-radius:6px"></div>
-          </div>
-        </section>
-
-        <!-- Módulos com acesso -->
-        <section>
-          <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--text3);margin-bottom:12px">
-            Módulos com Acesso ${isAdmin ? '' : `<span style="color:var(--cyan)">(${modulosAcesso.length}/${MODULOS.length})</span>`}
-          </div>
-          <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:6px">
-            ${MODULOS.map(m => {
-              const tem = isAdmin || !!perms[m.key];
-              return `<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;background:var(--s1);border:1px solid ${tem ? 'rgba(0,229,204,.3)' : 'var(--border)'}">
-                <span style="font-size:14px">${tem ? '✅' : '🔒'}</span>
-                <span style="font-size:11px;color:${tem ? 'var(--text)' : 'var(--text3)'}">${m.label}</span>
-              </div>`;
-            }).join('')}
-          </div>
-        </section>
-
-        <!-- Liberações ativas -->
-        ${libAtivas.length > 0 ? `
-        <section>
-          <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--text3);margin-bottom:12px">Liberações de Sequência Ativas</div>
-          <div style="display:flex;flex-direction:column;gap:6px">
-            ${libAtivas.map(([id, v]) => {
-              const rec = records.find(r => String(r.id) === id);
-              const expStr = new Date(v.expira).toLocaleString('pt-BR');
-              return `<div style="background:rgba(139,92,246,.08);border:1px solid rgba(139,92,246,.3);border-radius:8px;padding:10px 14px;font-size:12px">
-                <div style="font-weight:600;color:var(--text)">${rec ? rec.produto : 'ID ' + id}</div>
-                <div style="color:var(--text3);margin-top:2px">Motivo: ${v.motivo} · Expira: ${expStr}</div>
-              </div>`;
-            }).join('')}
-          </div>
-        </section>` : ''}
-
-      </div>
-    </div>
-  </div>`;
-
-  document.body.insertAdjacentHTML('beforeend', html);
-}
-
-function _perfilInfoCard(label, value) {
-  return `<div style="background:var(--s1);border:1px solid var(--border);border-radius:8px;padding:10px 14px">
-    <div style="font-size:10px;color:var(--text3);margin-bottom:3px">${label}</div>
-    <div style="font-size:13px;color:var(--text);font-weight:500">${value}</div>
-  </div>`;
-}
-
-function closeMeuPerfil() {
-  document.getElementById('modal-meu-perfil')?.remove();
-}
-
-async function perfilEnviarResetSenha() {
-  const user = getCurrentUserSafe();
-  if (!user?.email) return;
-  const btn = document.getElementById('perfil-reset-btn');
-  const msg = document.getElementById('perfil-reset-msg');
-  if (btn) { btn.disabled = true; btn.textContent = 'Enviando...'; }
-  try {
-    await enviarResetSenha(user.email);
-    if (msg) {
-      msg.style.display = 'block';
-      msg.style.background = 'rgba(41,217,132,.1)';
-      msg.style.border = '1px solid var(--green)';
-      msg.style.color = 'var(--green)';
-      msg.textContent = '✅ Link enviado para ' + user.email;
-    }
-  } catch(e) {
-    if (msg) {
-      msg.style.display = 'block';
-      msg.style.background = 'rgba(255,71,87,.1)';
-      msg.style.border = '1px solid var(--red)';
-      msg.style.color = 'var(--red)';
-      msg.textContent = '❌ Erro: ' + e.message;
-    }
-    if (btn) { btn.disabled = false; btn.textContent = '📧 Enviar Link de Redefinição'; }
-  }
-}
-
-window.openMeuPerfil  = openMeuPerfil;
-window.closeMeuPerfil = closeMeuPerfil;
-window.perfilEnviarResetSenha = perfilEnviarResetSenha;
-
 window.renderProducaoDiaControlado = renderProducaoDiaControlado;
 // Funções de filtro do Realizado
 function realizadoFiltrar() {
@@ -10174,6 +9636,78 @@ function realizadoLimparFiltros() {
   renderApontamento();
 }
 window.realizadoFiltrar      = realizadoFiltrar;
+// ── Realizado: atualiza totais em tempo real ao digitar ──────────────
+function realizadoInputChange(inp) {
+  const recId = inp.dataset.rec;
+  const all   = document.querySelectorAll(`[data-rec="${recId}"].apon-input-controlado`);
+  let dayTotal = 0;
+  const data = {};
+  all.forEach(i => {
+    const v = parseInt(i.value) || 0;
+    dayTotal += v;
+    data[i.dataset.hr] = v || '';
+  });
+  // Atualiza total dia
+  const dtEl = document.getElementById(`realizado-daytotal-${recId}`);
+  if (dtEl) {
+    dtEl.textContent = dayTotal > 0 ? dayTotal : '—';
+    dtEl.style.color = dayTotal > 0 ? 'var(--cyan)' : 'var(--text3)';
+  }
+  // Atualiza acumulado
+  const prevTotal = aponGetPrevTotal(recId, prodSelectedDate);
+  const acum = prevTotal + dayTotal;
+  const rec  = records.find(r => String(r.id) === String(recId));
+  const meta = rec ? (rec.qntCaixas || 0) : 0;
+  const acEl = document.getElementById(`realizado-acum-${recId}`);
+  if (acEl) {
+    acEl.textContent = acum > 0 ? acum : '—';
+    acEl.style.color = acum >= meta && meta > 0 ? 'var(--green)' : acum > 0 ? 'var(--text)' : 'var(--text3)';
+  }
+  // Auto-save no localStorage
+  aponStorageSet(aponKey(prodSelectedDate, recId), data);
+}
+
+// ── Salva linha individual ────────────────────────────────────────────
+function realizadoSalvarLinha(recId, dateVal) {
+  const all  = document.querySelectorAll(`[data-rec="${recId}"].apon-input-controlado`);
+  const data = {};
+  all.forEach(i => { data[i.dataset.hr] = parseInt(i.value) || 0; });
+  aponStorageSet(aponKey(dateVal, recId), data);
+  const btn = document.querySelector(`button[onclick="realizadoSalvarLinha(${recId},'${dateVal}')"]`);
+  if (btn) {
+    const orig = btn.innerHTML;
+    btn.innerHTML = '✓✓';
+    btn.style.background = 'var(--cyan)';
+    setTimeout(() => { btn.innerHTML = orig; btn.style.background = 'var(--green)'; }, 800);
+  }
+  toast('Apontamento salvo.', 'ok');
+}
+
+// ── Salva todos os produtos de uma máquina ────────────────────────────
+function realizadoSalvarMaquina(maq, dateVal) {
+  const body = document.getElementById('apon-body');
+  if (!body || !body._machineGroups) return;
+  const grp = body._machineGroups.find(g => g.maq === maq);
+  if (!grp) return;
+  grp.items.forEach(it => realizadoSalvarLinha(it.rec.id, dateVal));
+  toast(`Apontamentos de ${maq} salvos!`, 'ok');
+}
+
+// ── Toggle linha de observação ────────────────────────────────────────
+function realizadoToggleObs(recId) {
+  const row = document.getElementById(`obs-row-${recId}`);
+  if (!row) return;
+  row.style.display = row.style.display === 'none' ? 'table-row' : 'none';
+  if (row.style.display !== 'none') {
+    row.querySelector('textarea')?.focus();
+  }
+}
+
+window.realizadoInputChange   = realizadoInputChange;
+window.realizadoSalvarLinha   = realizadoSalvarLinha;
+window.realizadoSalvarMaquina = realizadoSalvarMaquina;
+window.realizadoToggleObs     = realizadoToggleObs;
+
 window.realizadoLimparFiltros = realizadoLimparFiltros;
 
 window.pdCardControlado = pdCardControlado;
