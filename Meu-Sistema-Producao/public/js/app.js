@@ -7006,7 +7006,12 @@ async function renderUsuariosSistema(){
     const dtReset = u.ultimoResetEnviadoEm ? new Date(u.ultimoResetEnviadoEm).toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit',year:'2-digit',hour:'2-digit',minute:'2-digit'}) : 'Nunca';
     const modLabel = tipo==='admin' ? 'Acesso total' : (() => {
       const perms = u.permissoes||{};
-      const ativos = MODULOS.filter(m=>perms[m.key]).map(m=>m.label);
+      const ativos = MODULOS.filter(m=>{
+        const p = perms[m.key];
+        if(!p) return false;
+        if(typeof p==='object') return Object.values(p).some(v=>v===true);
+        return p===true;
+      }).map(m=>m.label);
       return ativos.length ? ativos.join(', ') : 'Sem módulos liberados';
     })();
     return `<div style="padding:13px 22px;border-bottom:1px solid var(--border)">
@@ -7036,17 +7041,130 @@ async function renderUsuariosSistema(){
 }
 
 
-function _usuarioFormHTML(u={}){
-  const tipo = u.tipo || 'usuario';
+function _usuarioFormHTML(u={}) {
+  const tipo  = u.tipo  || 'usuario';
   const perms = u.permissoes || {};
-  const checkboxes = MODULOS.map(m => `
-    <label style="display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:7px;background:var(--s2);border:1px solid ${perms[m.key]?'var(--cyan)':'var(--border)'};cursor:pointer;transition:border .15s" id="perm-lbl-${m.key}">
-      <input type="checkbox" id="perm-${m.key}" ${perms[m.key]?'checked':''} onchange="_togglePermBorder(this,'perm-lbl-${m.key}')" style="accent-color:var(--cyan);width:14px;height:14px">
-      <span style="font-size:12px;color:var(--text)">${m.label}</span>
-    </label>`).join('');
+  const isAdmin = tipo === 'admin';
+
+  // Definição detalhada de cada módulo com suas ações possíveis
+  const MODULOS_DETALHADOS = [
+    {
+      grupo: 'Produção',
+      icon: '🏭',
+      itens: [
+        { key:'dashboard',     label:'Dashboard',          desc:'Visão geral de indicadores e KPIs de produção',
+          acoes:['visualizar'] },
+        { key:'programacao',   label:'Programação',        desc:'Criar e gerenciar ordens de produção semanais',
+          acoes:['visualizar','criar','editar','excluir'] },
+        { key:'gantt',         label:'Prog. Visual (Gantt)',desc:'Visualizar o Gantt de programação por máquina e turno',
+          acoes:['visualizar'] },
+        { key:'realizado',     label:'Realizado',          desc:'Apontamento de produção por hora e dia; liberação de sequência',
+          acoes:['visualizar','editar'] },
+        { key:'calculos',      label:'Prog. Automática',   desc:'Gerar programação automática por capacidade e demanda',
+          acoes:['visualizar','criar'] },
+      ]
+    },
+    {
+      grupo: 'Máquinas & Insumos',
+      icon: '🔧',
+      itens: [
+        { key:'maquinas',      label:'Máquinas',           desc:'Cadastro de máquinas, turnos, setup e disponibilidade',
+          acoes:['visualizar','criar','editar','excluir'] },
+        { key:'insumos_maq',   label:'Insumos / Máq.',     desc:'Insumos consumidos por máquina e por produto na semana',
+          acoes:['visualizar'] },
+        { key:'insumos_geral', label:'Insumos Geral',      desc:'Visão consolidada de todos os insumos e estoque',
+          acoes:['visualizar'] },
+        { key:'ficha_tecnica', label:'Ficha Técnica',      desc:'Composição de insumos por produto (BOM)',
+          acoes:['visualizar','criar','editar','excluir'] },
+      ]
+    },
+    {
+      grupo: 'Produtos & Análises',
+      icon: '📦',
+      itens: [
+        { key:'projecao',      label:'Projeção de Vendas', desc:'Projeção de demanda e análise de vendas futuras',
+          acoes:['visualizar'] },
+        { key:'importacao',    label:'Importação / API',   desc:'Importar produtos, insumos e configurações via Excel ou API',
+          acoes:['visualizar','criar'] },
+      ]
+    },
+    {
+      grupo: 'Administração',
+      icon: '⚙️',
+      itens: [
+        { key:'configuracoes', label:'Configurações',      desc:'Jornada de trabalho, turnos gerais e parâmetros do sistema',
+          acoes:['visualizar','editar'] },
+        { key:'funcionarios',  label:'Funcionários',       desc:'Cadastro de operadores e equipe de produção',
+          acoes:['visualizar','criar','editar','excluir'] },
+        { key:'usuarios',      label:'Usuários do Sistema',desc:'Criar e gerenciar usuários, permissões e acessos',
+          acoes:['visualizar','criar','editar','administrar'] },
+      ]
+    },
+  ];
+
+  const ACAO_LABEL = {
+    visualizar:   { label:'Ver',        icon:'👁',  color:'var(--cyan)',   bg:'rgba(0,212,255,.1)'    },
+    criar:        { label:'Criar',      icon:'➕',  color:'var(--green)',  bg:'rgba(41,217,132,.1)'   },
+    editar:       { label:'Editar',     icon:'✏️',  color:'var(--warn)',   bg:'rgba(255,179,0,.1)'    },
+    excluir:      { label:'Excluir',    icon:'🗑',  color:'var(--red)',    bg:'rgba(255,71,87,.1)'    },
+    administrar:  { label:'Administrar',icon:'🔑',  color:'var(--purple)', bg:'rgba(139,92,246,.1)'  },
+  };
+
+  // Monta os checkboxes de módulos agrupados
+  let modulosHtml = '';
+  MODULOS_DETALHADOS.forEach(grupo => {
+    modulosHtml += `
+      <div style="margin-bottom:16px">
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--text3);margin-bottom:8px;display:flex;align-items:center;gap:6px">
+          <span>${grupo.icon}</span> ${grupo.grupo}
+        </div>
+        <div style="display:flex;flex-direction:column;gap:6px">`;
+
+    grupo.itens.forEach(mod => {
+      const modKey = mod.key;
+      // permissoes pode ser objeto simples (true/false) ou objeto com acoes
+      const modPerms = typeof perms[modKey] === 'object' ? perms[modKey] : 
+                       (perms[modKey] === true ? { visualizar:true } : {});
+
+      const acoesHtml = mod.acoes.map(acao => {
+        const info = ACAO_LABEL[acao] || { label:acao, icon:'•', color:'var(--text2)', bg:'var(--s2)' };
+        const checked = modPerms[acao] ? 'checked' : '';
+        return `<label id="albl-${modKey}-${acao}" style="display:flex;align-items:center;gap:4px;padding:4px 8px;border-radius:6px;background:${checked ? info.bg : 'var(--s2)'};border:1px solid ${checked ? info.color : 'var(--border)'};cursor:pointer;transition:all .15s;white-space:nowrap" title="${info.label}">
+          <input type="checkbox" id="aperm-${modKey}-${acao}" data-mod="${modKey}" data-acao="${acao}" ${checked}
+                 onchange="_onPermChange(this)"
+                 style="accent-color:${info.color};width:12px;height:12px">
+          <span style="font-size:10px">${info.icon}</span>
+          <span style="font-size:11px;color:var(--text)">${info.label}</span>
+        </label>`;
+      }).join('');
+
+      // Checkbox mestre do módulo (habilita "visualizar" automaticamente)
+      const anyEnabled = mod.acoes.some(a => modPerms[a]);
+      modulosHtml += `
+        <div style="background:var(--s1);border:1px solid ${anyEnabled ? 'rgba(0,212,255,.25)':'var(--border)'};border-radius:10px;padding:10px 14px;transition:border-color .2s" id="modrow-${modKey}">
+          <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px">
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;flex:1;min-width:0">
+              <input type="checkbox" id="perm-${modKey}" data-mod="${modKey}" data-acao="__master"
+                     ${anyEnabled ? 'checked' : ''}
+                     onchange="_onMasterPermChange(this)"
+                     style="accent-color:var(--cyan);width:14px;height:14px;flex-shrink:0">
+              <div style="min-width:0">
+                <div style="font-size:12px;font-weight:600;color:var(--text)">${mod.label}</div>
+                <div style="font-size:10px;color:var(--text3);margin-top:1px">${mod.desc}</div>
+              </div>
+            </label>
+            <div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end" id="acoes-${modKey}">
+              ${acoesHtml}
+            </div>
+          </div>
+        </div>`;
+    });
+
+    modulosHtml += `</div></div>`;
+  });
 
   return `
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">
       <div>
         <label class="flbl">Nome completo *</label>
         <input class="finp" id="us-nome" value="${u.nome||''}" placeholder="Ex: Maria Santos" style="width:100%;box-sizing:border-box;margin-top:6px">
@@ -7055,36 +7173,55 @@ function _usuarioFormHTML(u={}){
         <label class="flbl">Cargo / Função</label>
         <input class="finp" id="us-cargo" value="${u.cargo||''}" placeholder="Ex: Supervisora" style="width:100%;box-sizing:border-box;margin-top:6px">
       </div>
-      ${!u.uid?`<div>
+      ${!u.uid ? `
+      <div>
         <label class="flbl">E-mail *</label>
         <input class="finp" id="us-email" type="email" value="${u.email||''}" placeholder="maria@empresa.com" style="width:100%;box-sizing:border-box;margin-top:6px">
       </div>
       <div>
         <label class="flbl">Senha *</label>
         <input class="finp" id="us-senha" type="password" placeholder="Mínimo 6 caracteres" style="width:100%;box-sizing:border-box;margin-top:6px">
-      </div>`:`<div style="grid-column:1/-1">
+      </div>` : `
+      <div style="grid-column:1/-1">
         <label class="flbl">E-mail</label>
         <input class="finp" value="${u.email||''}" disabled style="width:100%;box-sizing:border-box;margin-top:6px;opacity:.5">
       </div>`}
       <div style="grid-column:1/-1">
         <label class="flbl">Tipo de Acesso *</label>
         <select class="finp" id="us-tipo" onchange="_togglePermsWrap(this.value)" style="width:100%;box-sizing:border-box;margin-top:6px">
-          <option value="usuario" ${tipo!=='admin'?'selected':''}>Usuário — acesso manual por módulo</option>
-          <option value="admin" ${tipo==='admin'?'selected':''}>Admin — acesso total automático</option>
+          <option value="usuario" ${tipo !== 'admin' ? 'selected' : ''}>Usuário — permissões configuráveis por módulo</option>
+          <option value="admin"   ${tipo === 'admin' ? 'selected' : ''}>Admin — acesso total automático a tudo</option>
         </select>
       </div>
-      ${u.uid?`<div style="grid-column:1/-1">
+      ${u.uid ? `
+      <div style="grid-column:1/-1">
         <label class="flbl">Status</label>
         <select class="finp" id="us-ativo" style="width:100%;box-sizing:border-box;margin-top:6px">
-          <option value="true" ${u.ativo!==false?'selected':''}>Ativo</option>
-          <option value="false" ${u.ativo===false?'selected':''}>Inativo</option>
+          <option value="true"  ${u.ativo !== false ? 'selected' : ''}>Ativo</option>
+          <option value="false" ${u.ativo === false  ? 'selected' : ''}>Inativo</option>
         </select>
-      </div>`:''}
+      </div>` : ''}
     </div>
-    <div id="us-perms-wrap" style="display:${tipo==='admin'?'none':'block'}">
-      <label class="flbl" style="margin-bottom:8px;display:block">Módulos com acesso</label>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
-        ${checkboxes}
+
+    <div id="us-perms-wrap" style="display:${isAdmin ? 'none' : 'block'}">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+        <label class="flbl" style="margin:0">Permissões por Módulo</label>
+        <div style="display:flex;gap:6px">
+          <button type="button" onclick="_permsSelectAll(true)"
+                  style="background:rgba(0,212,255,.1);border:1px solid rgba(0,212,255,.3);color:var(--cyan);border-radius:6px;padding:4px 10px;font-size:11px;cursor:pointer">
+            ✅ Marcar tudo
+          </button>
+          <button type="button" onclick="_permsSelectAll(false)"
+                  style="background:var(--s2);border:1px solid var(--border);color:var(--text2);border-radius:6px;padding:4px 10px;font-size:11px;cursor:pointer">
+            ✕ Desmarcar tudo
+          </button>
+        </div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:0">
+        ${modulosHtml}
+      </div>
+      <div style="background:rgba(255,179,0,.08);border:1px solid rgba(255,179,0,.25);border-radius:8px;padding:10px 14px;margin-top:12px;font-size:11px;color:var(--warn)">
+        ⚠️ <strong>Ver</strong> libera o acesso ao módulo. As demais ações controlam o que o usuário pode fazer dentro dele.
       </div>
     </div>`;
 }
@@ -7099,8 +7236,67 @@ function _togglePermBorder(cb, lblId){
   const lbl=document.getElementById(lblId);
   if(lbl) lbl.style.borderColor = cb.checked?'var(--cyan)':'var(--border)';
 }
-window._togglePermsWrap = _togglePermsWrap;
-window._togglePermBorder = _togglePermBorder;
+
+// Quando uma ação específica muda — atualiza visual do label e do row
+function _onPermChange(cb) {
+  const mod  = cb.dataset.mod;
+  const acao = cb.dataset.acao;
+  const lblId = `albl-${mod}-${acao}`;
+  const lbl = document.getElementById(lblId);
+  const ACAO_COLOR = { visualizar:'var(--cyan)', criar:'var(--green)', editar:'var(--warn)', excluir:'var(--red)', administrar:'var(--purple)' };
+  const ACAO_BG    = { visualizar:'rgba(0,212,255,.1)', criar:'rgba(41,217,132,.1)', editar:'rgba(255,179,0,.1)', excluir:'rgba(255,71,87,.1)', administrar:'rgba(139,92,246,.1)' };
+  if (lbl) {
+    lbl.style.borderColor = cb.checked ? (ACAO_COLOR[acao]||'var(--cyan)') : 'var(--border)';
+    lbl.style.background  = cb.checked ? (ACAO_BG[acao]||'var(--s2)') : 'var(--s2)';
+  }
+  // Se marcou qualquer ação, marca o master também; se desmarcou tudo, desmarca master
+  const rowAcoes = document.querySelectorAll(`[data-mod="${mod}"][data-acao]:not([data-acao="__master"])`);
+  const anyChecked = Array.from(rowAcoes).some(c => c.checked);
+  const master = document.getElementById(`perm-${mod}`);
+  if (master) master.checked = anyChecked;
+  _updateModRow(mod, anyChecked);
+}
+
+// Quando o checkbox mestre do módulo muda — liga/desliga "visualizar"
+function _onMasterPermChange(cb) {
+  const mod = cb.dataset.mod;
+  const visualizarCb = document.getElementById(`aperm-${mod}-visualizar`);
+  if (visualizarCb) {
+    visualizarCb.checked = cb.checked;
+    _onPermChange(visualizarCb);
+  }
+  // Se desmarcou o master, desmarcar todas as ações
+  if (!cb.checked) {
+    document.querySelectorAll(`[data-mod="${mod}"][data-acao]:not([data-acao="__master"])`).forEach(c => {
+      c.checked = false;
+      _onPermChange(c);
+    });
+  }
+  _updateModRow(mod, cb.checked);
+}
+
+function _updateModRow(mod, active) {
+  const row = document.getElementById(`modrow-${mod}`);
+  if (row) row.style.borderColor = active ? 'rgba(0,212,255,.25)' : 'var(--border)';
+}
+
+// Marcar/desmarcar todos os módulos
+function _permsSelectAll(val) {
+  document.querySelectorAll('[data-acao]:not([data-acao="__master"])').forEach(cb => {
+    cb.checked = val;
+    _onPermChange(cb);
+  });
+  document.querySelectorAll('[data-acao="__master"]').forEach(cb => {
+    cb.checked = val;
+    _updateModRow(cb.dataset.mod, val);
+  });
+}
+
+window._togglePermsWrap    = _togglePermsWrap;
+window._togglePermBorder   = _togglePermBorder;
+window._onPermChange       = _onPermChange;
+window._onMasterPermChange = _onMasterPermChange;
+window._permsSelectAll     = _permsSelectAll;
 
 function openAddUsuario(){
   if(!can('usuarios','criar')){toast('Sem permissão para criar usuário.','err');return;}
@@ -7128,12 +7324,19 @@ async function saveUsuarioModal(){
   const tipo=document.getElementById('us-tipo')?.value||'usuario';
   const cargo=(document.getElementById('us-cargo')?.value||'').trim();
   if(!nome){alert('Informe o nome.');return;}
-  // Coleta permissões manuais (só relevante se tipo=usuario)
+  // Coleta permissões granulares (por módulo + por ação)
   const permissoes={};
   if(tipo!=='admin'){
-    MODULOS.forEach(m=>{
-      const cb=document.getElementById('perm-'+m.key);
-      if(cb) permissoes[m.key]=cb.checked;
+    // Para cada módulo, coleta cada ação marcada
+    document.querySelectorAll('[data-mod][data-acao]:not([data-acao="__master"])').forEach(cb=>{
+      const mod  = cb.dataset.mod;
+      const acao = cb.dataset.acao;
+      if(!permissoes[mod]) permissoes[mod]={};
+      if(cb.checked) permissoes[mod][acao]=true;
+    });
+    // Compatibilidade: se tem visualizar, marca também o topo como true
+    Object.keys(permissoes).forEach(mod=>{
+      if(Object.keys(permissoes[mod]).length===0) delete permissoes[mod];
     });
   }
   try{
@@ -9794,6 +9997,169 @@ window.solicitarPermissaoNotificacoes = solicitarPermissaoNotificacoes;
 window.salvarApontamentoCompleto = salvarApontamentoCompleto;
 window.gerarRelatorioProducao = gerarRelatorioProducao;
 window.exportarApontamentos = exportarApontamentos;
+
+// ═══════════════════════════════════════════════════════════════════
+// MEU PERFIL
+// ═══════════════════════════════════════════════════════════════════
+
+function openMeuPerfil() {
+  const user = getCurrentUserSafe();
+  if (!user) { toast('Usuário não identificado.', 'err'); return; }
+
+  const nome    = user.nome || user.email || '?';
+  const email   = user.email || '—';
+  const cargo   = user.cargo || '—';
+  const tipo    = user.tipo || 'usuario';
+  const isAdmin = tipo === 'admin';
+  const perms   = user.permissoes || {};
+  const inicial = nome[0].toUpperCase();
+  const avatarBg = isAdmin ? '#e74c3c' : 'var(--cyan)';
+  const avatarColor = '#000';
+
+  // Módulos que o usuário tem acesso
+  const modulosAcesso = isAdmin
+    ? MODULOS.map(m => m.label)
+    : MODULOS.filter(m => perms[m.key]).map(m => m.label);
+
+  // Liberações ativas
+  const libs = _getLiberacoes ? _getLiberacoes() : {};
+  const libAtivas = Object.entries(libs).filter(([,v]) => Date.now() < v.expira);
+
+  const html = `
+  <div id="modal-meu-perfil" onclick="if(event.target===this)closeMeuPerfil()"
+       style="position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px">
+    <div style="background:var(--bg);border:1px solid var(--border);border-radius:16px;width:100%;max-width:560px;max-height:90vh;overflow-y:auto;box-shadow:0 24px 64px rgba(0,0,0,.6)">
+
+      <!-- Header com avatar -->
+      <div style="background:var(--s1);border-bottom:1px solid var(--border);border-radius:16px 16px 0 0;padding:28px 28px 20px">
+        <div style="display:flex;align-items:center;gap:18px">
+          <div style="width:64px;height:64px;border-radius:50%;background:${avatarBg};color:${avatarColor};display:flex;align-items:center;justify-content:center;font-size:26px;font-weight:800;font-family:'Space Grotesk',sans-serif;flex-shrink:0;border:3px solid var(--border)">
+            ${inicial}
+          </div>
+          <div style="flex:1;min-width:0">
+            <div style="font-size:18px;font-weight:700;color:var(--text);font-family:'Space Grotesk',sans-serif">${nome}</div>
+            <div style="font-size:12px;color:var(--text3);margin-top:2px">${email}</div>
+            <div style="margin-top:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+              ${perfilBadge(tipo)}
+              ${cargo !== '—' ? `<span style="background:var(--s2);border:1px solid var(--border);border-radius:20px;padding:2px 10px;font-size:11px;color:var(--text2)">${cargo}</span>` : ''}
+              <span style="background:var(--s2);border:1px solid var(--border);border-radius:20px;padding:2px 10px;font-size:11px;color:var(--text3)">
+                ${isAdmin ? 'Acesso total' : modulosAcesso.length + ' módulo(s)'}
+              </span>
+            </div>
+          </div>
+          <button onclick="closeMeuPerfil()" style="background:var(--s2);border:1px solid var(--border);border-radius:8px;width:32px;height:32px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--text2);font-size:16px;flex-shrink:0">✕</button>
+        </div>
+      </div>
+
+      <div style="padding:24px 28px;display:flex;flex-direction:column;gap:20px">
+
+        <!-- Dados pessoais -->
+        <section>
+          <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--text3);margin-bottom:12px">Dados Pessoais</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+            ${_perfilInfoCard('👤 Nome', nome)}
+            ${_perfilInfoCard('📧 E-mail', email)}
+            ${_perfilInfoCard('💼 Cargo', cargo)}
+            ${_perfilInfoCard('🔑 Tipo de Acesso', isAdmin ? 'Administrador' : 'Usuário')}
+          </div>
+        </section>
+
+        <!-- Alterar senha -->
+        <section>
+          <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--text3);margin-bottom:12px">Segurança</div>
+          <div style="background:var(--s1);border:1px solid var(--border);border-radius:10px;padding:16px">
+            <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:4px">🔒 Alterar Senha</div>
+            <div style="font-size:11px;color:var(--text3);margin-bottom:12px">Um e-mail de redefinição será enviado para ${email}</div>
+            <button onclick="perfilEnviarResetSenha()" id="perfil-reset-btn"
+                    style="background:var(--s2);border:1px solid var(--border);border-radius:7px;padding:8px 16px;font-size:12px;color:var(--text);cursor:pointer;font-family:'Space Grotesk',sans-serif;transition:all .15s"
+                    onmouseover="this.style.borderColor='var(--cyan)'" onmouseout="this.style.borderColor='var(--border)'">
+              📧 Enviar Link de Redefinição
+            </button>
+            <div id="perfil-reset-msg" style="display:none;margin-top:10px;font-size:11px;padding:8px 12px;border-radius:6px"></div>
+          </div>
+        </section>
+
+        <!-- Módulos com acesso -->
+        <section>
+          <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--text3);margin-bottom:12px">
+            Módulos com Acesso ${isAdmin ? '' : `<span style="color:var(--cyan)">(${modulosAcesso.length}/${MODULOS.length})</span>`}
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:6px">
+            ${MODULOS.map(m => {
+              const tem = isAdmin || !!perms[m.key];
+              return `<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;background:var(--s1);border:1px solid ${tem ? 'rgba(0,229,204,.3)' : 'var(--border)'}">
+                <span style="font-size:14px">${tem ? '✅' : '🔒'}</span>
+                <span style="font-size:11px;color:${tem ? 'var(--text)' : 'var(--text3)'}">${m.label}</span>
+              </div>`;
+            }).join('')}
+          </div>
+        </section>
+
+        <!-- Liberações ativas -->
+        ${libAtivas.length > 0 ? `
+        <section>
+          <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--text3);margin-bottom:12px">Liberações de Sequência Ativas</div>
+          <div style="display:flex;flex-direction:column;gap:6px">
+            ${libAtivas.map(([id, v]) => {
+              const rec = records.find(r => String(r.id) === id);
+              const expStr = new Date(v.expira).toLocaleString('pt-BR');
+              return `<div style="background:rgba(139,92,246,.08);border:1px solid rgba(139,92,246,.3);border-radius:8px;padding:10px 14px;font-size:12px">
+                <div style="font-weight:600;color:var(--text)">${rec ? rec.produto : 'ID ' + id}</div>
+                <div style="color:var(--text3);margin-top:2px">Motivo: ${v.motivo} · Expira: ${expStr}</div>
+              </div>`;
+            }).join('')}
+          </div>
+        </section>` : ''}
+
+      </div>
+    </div>
+  </div>`;
+
+  document.body.insertAdjacentHTML('beforeend', html);
+}
+
+function _perfilInfoCard(label, value) {
+  return `<div style="background:var(--s1);border:1px solid var(--border);border-radius:8px;padding:10px 14px">
+    <div style="font-size:10px;color:var(--text3);margin-bottom:3px">${label}</div>
+    <div style="font-size:13px;color:var(--text);font-weight:500">${value}</div>
+  </div>`;
+}
+
+function closeMeuPerfil() {
+  document.getElementById('modal-meu-perfil')?.remove();
+}
+
+async function perfilEnviarResetSenha() {
+  const user = getCurrentUserSafe();
+  if (!user?.email) return;
+  const btn = document.getElementById('perfil-reset-btn');
+  const msg = document.getElementById('perfil-reset-msg');
+  if (btn) { btn.disabled = true; btn.textContent = 'Enviando...'; }
+  try {
+    await enviarResetSenha(user.email);
+    if (msg) {
+      msg.style.display = 'block';
+      msg.style.background = 'rgba(41,217,132,.1)';
+      msg.style.border = '1px solid var(--green)';
+      msg.style.color = 'var(--green)';
+      msg.textContent = '✅ Link enviado para ' + user.email;
+    }
+  } catch(e) {
+    if (msg) {
+      msg.style.display = 'block';
+      msg.style.background = 'rgba(255,71,87,.1)';
+      msg.style.border = '1px solid var(--red)';
+      msg.style.color = 'var(--red)';
+      msg.textContent = '❌ Erro: ' + e.message;
+    }
+    if (btn) { btn.disabled = false; btn.textContent = '📧 Enviar Link de Redefinição'; }
+  }
+}
+
+window.openMeuPerfil  = openMeuPerfil;
+window.closeMeuPerfil = closeMeuPerfil;
+window.perfilEnviarResetSenha = perfilEnviarResetSenha;
+
 window.renderProducaoDiaControlado = renderProducaoDiaControlado;
 // Funções de filtro do Realizado
 function realizadoFiltrar() {

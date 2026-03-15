@@ -52,7 +52,12 @@ export function can(modulo, acao="visualizar") {
   if (!currentUser || !currentUser.ativo) return false;
   if (currentUser.tipo === "admin") return true;
   const perms = currentUser.permissoes || {};
-  return perms[modulo] === true;
+  const modPerm = perms[modulo];
+  if (!modPerm) return false;
+  // Formato novo: objeto com ações { visualizar: true, editar: true, ... }
+  if (typeof modPerm === "object") return modPerm[acao] === true;
+  // Formato legado: true/false (acesso total ao módulo)
+  return modPerm === true;
 }
 
 export function canAccess(modulo) { return can(modulo, "visualizar"); }
