@@ -813,9 +813,10 @@ async function appInit() {
     if(!e.target.closest('.ac-rel')) closeAC();
   });
   // Pre-carrega mapa do Gantt + overrides Firestore assim que dados estão prontos
-  // Resolve problema de Produção Dia / Realizado ficarem em branco na primeira abertura
   const _bootMonday = getWeekMonday(new Date());
   pdLoadWeek(_bootMonday).catch(e => console.warn('pdLoadWeek boot:', e));
+  // Pre-carrega funcionários para seletor de operador
+  listarFuncionariosProducao().then(f => { _funcProd = f; }).catch(() => {});
   // Start clock
   updateClock();
   setInterval(updateClock, 1000);
@@ -4250,24 +4251,21 @@ function _renderRealizadoControlado(dateVal, body) {
             </div>
           </div>
           <!-- Seletor de funcionário -->
-          ${(()=>{ 
-            const savedFunc = (window._pdFuncSel||{})[dateVal+'_'+maq]||'';
-            const funcOpts = (_funcProd||[])
-              .filter(f=>!f.deactivatedUntil||new Date(f.deactivatedUntil).getTime()<Date.now())
-              .filter(f=>!f.maquinas||!f.maquinas.length||f.maquinas.includes(maq))
-              .map(f=>`<option value="${f.nome}" ${savedFunc===f.nome?'selected':''}>${f.nome}</option>`)
-              .join('');
-            if(!funcOpts) return '';
-            return `<div style="padding:4px 10px 6px;border-top:1px solid rgba(255,255,255,.06);display:flex;align-items:center;gap:8px">
-              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-              <span style="font-size:10px;color:var(--text3);white-space:nowrap">Operador:</span>
-              <select onchange="pdSelecionarFunc(this,'${dateVal}','${maq}')"
-                      style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:5px;color:var(--text);font-size:11px;padding:2px 6px">
-                <option value="">— selecionar funcionário —</option>
-                ${funcOpts}
-              </select>
-            </div>`;
-          })()}
+          <div style="padding:4px 10px 6px;border-top:1px solid rgba(255,255,255,.06);display:flex;align-items:center;gap:8px">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+            <span style="font-size:10px;color:var(--text3);white-space:nowrap">Operador:</span>
+            <select id="func-sel-${dateVal}-${maq.replace(/ /g,'-')}"
+                    onchange="pdSelecionarFunc(this,'${dateVal}','${maq}')"
+                    style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:5px;color:var(--text);font-size:11px;padding:2px 6px">
+              <option value="">— selecionar operador —</option>
+              ${(_funcProd||[])
+                .filter(f=>!f.deactivatedUntil||new Date(f.deactivatedUntil).getTime()<Date.now())
+                .filter(f=>!f.maquinas||!f.maquinas.length||f.maquinas.includes(maq))
+                .map(f=>{const sv=(window._pdFuncSel||{})[dateVal+'_'+maq]||'';return `<option value="${f.nome}" ${sv===f.nome?'selected':''}>${f.nome}</option>`;})
+                .join('')}
+            </select>
+            ${(_funcProd||[]).length===0?'<span style="font-size:10px;color:var(--text3);font-style:italic">Cadastre funcionários em Configurações</span>':''}
+          </div>
         </div>
 
         <!-- Tabela -->
@@ -4368,7 +4366,7 @@ function _renderRealizadoControlado(dateVal, body) {
 
         <!-- Rodapé: salvar todos + obs toggle -->
         <div style="display:flex;align-items:center;justify-content:space-between;padding:6px 10px;background:var(--s1);border:1px solid var(--border);border-top:none;border-radius:0 0 8px 8px;margin-top:-1px">
-          <div style="font-size:10px;color:var(--text3)">📝 clique na coluna OBS por produto</div>
+          <div></div>
           <button onclick="realizadoSalvarMaquina('${maq}','${dateVal}')"
                   style="background:var(--green);color:#000;border:none;border-radius:6px;padding:5px 14px;font-size:11px;font-weight:700;cursor:pointer;font-family:'Space Grotesk',sans-serif">
             💾 Salvar ${maq}
@@ -9880,8 +9878,8 @@ function pdSelecionarFunc(sel, ds, maq) {
 
 // ── Modal de Observação do Produto ──────────────────────────────────
 async function pdAbrirObs(recId, ds) {
-  const rec = records.find(r => r.id === recId);
-  if (!rec) return;
+  const rec = records.find(r => String(r.id) === String(recId));
+  if (!rec) { toast('Produto não encontrado.', 'err'); return; }
 
   const dateLabel = ds ? fmtDate(new Date(ds + 'T12:00:00')) : 'sem data';
 
