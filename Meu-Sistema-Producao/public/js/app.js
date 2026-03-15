@@ -41,24 +41,6 @@ const STATUS_PROGRAMACAO = {
   FORA_SEQUENCIA: 'fora_sequencia'
 };
 
-// Salva apontamento no Firestore (não mais localStorage)
-async function salvarApontamentoFirestore(data) {
-  try {
-    const payload = {
-      ...data,
-      criadoEm: serverTimestamp(),
-      usuario: currentUser()?.email || 'sistema',
-      lojaId: getLojaAtiva()
-    };
-    await addDoc(lojaCol('apontamentos_producao'), payload);
-    return true;
-  } catch(e) {
-    console.error('Erro ao salvar apontamento:', e);
-    toast('Erro ao salvar apontamento: ' + e.message, 'err');
-    return false;
-  }
-}
-
 // Carrega apontamentos do Firestore
 async function carregarApontamentosFirestore(dataInicio, dataFim) {
   try {
