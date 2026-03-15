@@ -4363,14 +4363,6 @@ function _renderRealizadoControlado(dateVal, body) {
           </table>
         </div>
 
-        <!-- Rodapé: salvar todos + obs toggle -->
-        <div style="display:flex;align-items:center;justify-content:space-between;padding:6px 10px;background:var(--s1);border:1px solid var(--border);border-top:none;border-radius:0 0 8px 8px;margin-top:-1px">
-          <div></div>
-          <button onclick="realizadoSalvarMaquina('${maq}','${dateVal}')"
-                  style="background:var(--green);color:#000;border:none;border-radius:6px;padding:5px 14px;font-size:11px;font-weight:700;cursor:pointer;font-family:'Space Grotesk',sans-serif">
-            💾 Salvar ${maq}
-          </button>
-        </div>
       </div>`;
   });
 
