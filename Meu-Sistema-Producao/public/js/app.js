@@ -4345,8 +4345,7 @@ function _renderRealizadoControlado(dateVal, body) {
                   <button id="obs-btn-${rec.id}-${dateVal}"
                           onclick="pdAbrirObs(${rec.id},'${dateVal}')"
                           title="Observação"
-                          style="background:var(--s2);border:1px solid ${(window._pdObsCache&&window._pdObsCache[rec.id+'_'+dateVal])?'var(--warn)':'var(--border)'};border-radius:4px;padding:3px 7px;font-size:12px;cursor:pointer;transition:all .15s"
-                          onmouseover="this.style.borderColor='var(--warn)'" onmouseout="if(!((window._pdObsCache||{})[${rec.id}+'_'+'${dateVal}']))this.style.borderColor='var(--border)'">
+                          style="background:var(--s2);border:1px solid var(--border);border-radius:4px;padding:3px 7px;font-size:12px;cursor:pointer;transition:all .15s">
                     📝
                   </button>
                 </td>
@@ -4965,13 +4964,7 @@ function pdCardControlado(r, ds, isOperador, isPCP) {
       </div>
       
       ${finBtn}
-      <!-- Botão de observação -->
-      <button onclick="pdAbrirObs(${r.id},'${ds||''}')" title="Adicionar observação"
-              style="width:100%;margin-top:6px;background:var(--s1);border:1px solid var(--border);border-radius:5px;padding:3px 0;font-size:10px;color:var(--text3);cursor:pointer;transition:all .15s"
-              onmouseover="this.style.borderColor='var(--warn)';this.style.color='var(--warn)'"
-              onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--text3)'">
-        📝 Observação
-      </button>
+
     </div>`;
 }
 
@@ -9880,6 +9873,9 @@ function pdSelecionarFunc(sel, ds, maq) {
 async function pdAbrirObs(recId, ds) {
   const rec = records.find(r => String(r.id) === String(recId));
   if (!rec) { toast('Produto não encontrado.', 'err'); return; }
+
+  // Garante cache inicializado
+  if (!window._pdObsCache) window._pdObsCache = {};
 
   const dateLabel = ds ? fmtDate(new Date(ds + 'T12:00:00')) : 'sem data';
 
