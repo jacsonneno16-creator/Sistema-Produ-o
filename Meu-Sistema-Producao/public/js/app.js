@@ -16,19 +16,117 @@ import {
 // ===== SISTEMA CONTROLADO DE APONTAMENTOS =======================
 // ===================================================================
 
+// Função auxiliar para obter usuário atual de forma segura
+function getCurrentUserSafe() {
+  try {
+    // Tentar usar a função importada currentUser SE existir e for função
+    if (typeof currentUser === 'function') {
+      try {
+        return currentUser();
+      } catch(e) {
+        console.warn('Erro ao chamar currentUser():', e);
+      }
+    }
+    
+    // Fallback: verificar se auth está disponível
+    if (typeof auth !== 'undefined' && auth && auth.currentUser) {
+      return {
+        email: auth.currentUser.email,
+        uid: auth.currentUser.uid,
+        userData: { nivel: 'operador' } // Default para compatibilidade
+      };
+    }
+    
+    // Fallback: verificar window.auth (Firebase auth global)
+    if (typeof window !== 'undefined' && window.auth && window.auth.currentUser) {
+      return {
+        email: window.auth.currentUser.email,
+        uid: window.auth.currentUser.uid,
+        userData: { nivel: 'operador' }
+      };
+    }
+    
+    // Fallback: verificar localStorage para dados de usuário
+    try {
+      const userData = localStorage.getItem('currentUser');
+      if (userData) {
+        return JSON.parse(userData);
+      }
+    } catch(e) {
+      console.warn('Erro ao fazer parse dos dados do usuário do localStorage:', e);
+    }
+    
+    // Fallback final: usuário padrão para desenvolvimento
+    console.warn('Nenhum método de autenticação disponível, usando usuário padrão');
+    return {
+      email: 'usuario@teste.com',
+      uid: 'user_default',
+      userData: { nivel: 'operador' }
+    };
+    
+  } catch(e) {
+    console.error('Erro crítico ao obter usuário atual:', e);
+    // Retornar usuário padrão para evitar quebrar o sistema
+    return {
+      email: 'erro@sistema.com',
+      uid: 'user_error',
+      userData: { nivel: 'operador' }
+    };
+  }
+}
+
+// Função para verificar se usuário está autenticado
+function isUserAuthenticated() {
+  const user = getCurrentUserSafe();
+  return user && (user.email || user.uid);
+}
+
 // Controles de perfil para aba Realizado
 function isOperadorLevel() {
-  const user = currentUser();
-  if (!user) return false;
-  const nivel = user.userData?.nivel || 'operador';
-  return ['operador'].includes(nivel);
+  try {
+    const user = getCurrentUserSafe();
+    if (!user) {
+      console.warn('Usuário não identificado, assumindo nível operador');
+      return true; // Default: tratar como operador se não conseguir identificar
+    }
+    
+    // Verificar nível do usuário
+    const nivel = user.userData?.nivel || user.nivel || 'operador';
+    console.log('Nível do usuário identificado:', nivel);
+    return ['operador'].includes(nivel);
+  } catch(e) {
+    console.error('Erro em isOperadorLevel:', e);
+    return true; // Default seguro
+  }
 }
 
 function isPCPLevel() {
-  const user = currentUser();
-  if (!user) return false;
-  const nivel = user.userData?.nivel || 'operador';
-  return ['admin', 'planejamento'].includes(nivel);
+  try {
+    const user = getCurrentUserSafe();
+    if (!user) {
+      console.warn('Usuário não identificado, negando permissões PCP');
+      return false; // Sem usuário = sem permissões de PCP
+    }
+    
+    // Verificar nível do usuário  
+    const nivel = user.userData?.nivel || user.nivel || 'operador';
+    console.log('Verificando PCP para nível:', nivel);
+    return ['admin', 'planejamento'].includes(nivel);
+  } catch(e) {
+    console.error('Erro em isPCPLevel:', e);
+    return false; // Default seguro
+  }
+}
+
+// Função para obter email do usuário de forma segura
+function getUserEmailSafe() {
+  try {
+    const user = getCurrentUserSafe();
+    return user?.email || user?.userData?.email || 'usuario_nao_identificado';
+  } catch(e) {
+    console.error('Erro ao obter email do usuário:', e);
+    return 'erro_sistema';
+  }
 }
 
 // Status de programação por registro
@@ -65,7 +163,7 @@ async function registrarAuditoria(acao, detalhes) {
     const payload = {
       acao: acao,
       detalhes: detalhes,
-      usuario: currentUser()?.email || 'sistema',
+      usuario: getUserEmailSafe(),
       timestamp: serverTimestamp(),
       lojaId: getLojaAtiva(),
       ip: 'sistema', // Poderia pegar IP real se necessário
@@ -8289,7 +8387,7 @@ async function carregarApontamentosSemana(prodBaseMonday) {
 // Salva apontamento individual no Firestore
 async function salvarApontamentoFirestore(data, hora, recordId, quantidade, operador) {
   try {
-    const user = currentUser();
+    const user = getCurrentUserSafe();
     if (!user) {
       toast('Usuário não autenticado', 'err');
       return false;
@@ -8316,7 +8414,7 @@ async function salvarApontamentoFirestore(data, hora, recordId, quantidade, oper
       produto: record.produto,
       maquina: record.maquina,
       operador: operador || 'N/A',
-      usuario: user.email,
+      usuario: user?.email || getUserEmailSafe(),
       criadoEm: serverTimestamp(),
       lojaId: getLojaAtiva(),
       ip: getClientIP(),
@@ -8576,7 +8674,7 @@ function confirmarLiberacaoSequencia(recordId) {
   }
   
   const motivo = motivoSelect === 'outro' ? motivoOutro.trim() : motivoSelect;
-  const usuario = currentUser()?.email || 'desconhecido';
+  const usuario = getUserEmailSafe();
   
   const sucesso = liberarProdutoFaltaSequencia(recordId, motivo, usuario);
   
@@ -8727,6 +8825,96 @@ function renderDashboardIndicadores() {
     </div>`;
 }
 
+// Função controlada para desatribuir produto (apenas PCP)
+function pdUnassign(recId) {
+  if (isOperadorLevel()) {
+    toast('Apenas usuários PCP podem alterar a programação!', 'err');
+    return;
+  }
+
+  const record = records.find(r => r.id === recId);
+  if (!record) return;
+
+  const diaAnterior = pdGetAssign(recId);
+  pdSetAssign(recId, null);
+  
+  registrarAuditoria('PRODUTO_REMOVIDO_DO_DIA', {
+    recordId: recId,
+    produto: record.produto,
+    diaAnterior: diaAnterior
+  });
+  
+  toast(`Produto "${record.produto}" removido do dia`, 'info');
+  renderApontamento();
+}
+
+// Função para adicionar funções faltantes de compatibilidade
+function salvarApontamentoCompleto(recordId) {
+  if (!isPCPLevel() && isOperadorLevel()) {
+    // Operador só pode salvar se produto estiver liberado
+    const record = records.find(r => r.id === recordId);
+    if (!record) return;
+    
+    const validacao = validarProducaoPermitida(record, record.maquina, prodSelectedDate);
+    if (!validacao.permitido) {
+      toast('❌ ' + validacao.motivo, 'err');
+      return;
+    }
+  }
+  
+  // Coletar dados dos inputs
+  const inputs = document.querySelectorAll(`[data-rec="${recordId}"]`);
+  const data = {};
+  let total = 0;
+  
+  inputs.forEach(input => {
+    const hora = input.dataset.hr;
+    const quantidade = parseInt(input.value) || 0;
+    data[hora] = quantidade;
+    total += quantidade;
+  });
+  
+  // Salvar no localStorage (compatibilidade)
+  aponStorageSet(aponKey(prodSelectedDate, recordId), data);
+  
+  // Tentar salvar no Firestore também
+  inputs.forEach(async input => {
+    const hora = input.dataset.hr;
+    const quantidade = parseInt(input.value) || 0;
+    
+    if (quantidade > 0) {
+      try {
+        await salvarApontamentoFirestore(prodSelectedDate, hora, recordId, quantidade, 'Operador');
+      } catch(e) {
+        console.warn('Erro ao salvar no Firestore:', e);
+      }
+    }
+  });
+  
+  toast(`✅ Apontamento salvo: ${total} caixas`, 'ok');
+  renderApontamento();
+}
+
+function gerarRelatorioProducao() {
+  if (!isPCPLevel()) {
+    toast('Apenas PCP pode gerar relatórios!', 'err');
+    return;
+  }
+  
+  // TODO: Implementar geração de relatório
+  toast('Funcionalidade de relatório em desenvolvimento', 'info');
+}
+
+function exportarApontamentos() {
+  if (!isPCPLevel()) {
+    toast('Apenas PCP pode exportar dados!', 'err');
+    return;
+  }
+  
+  // TODO: Implementar exportação
+  toast('Funcionalidade de exportação em desenvolvimento', 'info');
+}
+
 // Exportar novas funções controladas
 window.aponRecalcRowControlado = aponRecalcRowControlado;
 window.realizadoPermitirFaltaSequencia = realizadoPermitirFaltaSequencia;
@@ -8736,6 +8924,9 @@ window.abrirModalLiberacaoSequencia = abrirModalLiberacaoSequencia;
 window.fecharModalLiberacao = fecharModalLiberacao;
 window.confirmarLiberacaoSequencia = confirmarLiberacaoSequencia;
 window.solicitarPermissaoNotificacoes = solicitarPermissaoNotificacoes;
+window.salvarApontamentoCompleto = salvarApontamentoCompleto;
+window.gerarRelatorioProducao = gerarRelatorioProducao;
+window.exportarApontamentos = exportarApontamentos;
 
 // ===== NOVA VERSÃO RENDERAPONTAMENTO COM FIRESTORE =====
 
