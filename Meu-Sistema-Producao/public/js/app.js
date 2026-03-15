@@ -4236,17 +4236,38 @@ function _renderRealizadoControlado(dateVal, body) {
     html += `
       <div style="margin-bottom:14px">
         <!-- Header da máquina -->
-        <div style="display:flex;align-items:center;justify-content:space-between;padding:6px 10px;background:var(--s2);border:1px solid var(--border);border-radius:8px 8px 0 0;border-bottom:none">
-          <div style="display:flex;align-items:center;gap:10px">
-            <span style="font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:700;color:var(--cyan);text-transform:uppercase;letter-spacing:.5px">${maq}</span>
-            <span style="font-size:10px;color:var(--text3)">${dateLabel} · ${recs.length} produto(s) · ${concluidos}/${recs.length} concluídos</span>
-          </div>
-          <div style="display:flex;align-items:center;gap:8px">
-            <div style="width:80px;height:4px;background:var(--s1);border-radius:2px;overflow:hidden">
-              <div style="width:${pctMaq}%;height:100%;background:${pctMaq>=100?'var(--green)':pctMaq>0?'var(--cyan)':'var(--s1)'};border-radius:2px;transition:width .3s"></div>
+        <div style="background:var(--s2);border:1px solid var(--border);border-radius:8px 8px 0 0;border-bottom:none">
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:6px 10px">
+            <div style="display:flex;align-items:center;gap:10px">
+              <span style="font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:700;color:var(--cyan);text-transform:uppercase;letter-spacing:.5px">${maq}</span>
+              <span style="font-size:10px;color:var(--text3)">${dateLabel} · ${recs.length} produto(s) · ${concluidos}/${recs.length} concluídos</span>
             </div>
-            <span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:${pctMaq>=100?'var(--green)':'var(--text3)'}">${pctMaq}%</span>
+            <div style="display:flex;align-items:center;gap:8px">
+              <div style="width:80px;height:4px;background:var(--s1);border-radius:2px;overflow:hidden">
+                <div style="width:${pctMaq}%;height:100%;background:${pctMaq>=100?'var(--green)':pctMaq>0?'var(--cyan)':'var(--s1)'};border-radius:2px;transition:width .3s"></div>
+              </div>
+              <span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:${pctMaq>=100?'var(--green)':'var(--text3)'}">${pctMaq}%</span>
+            </div>
           </div>
+          <!-- Seletor de funcionário -->
+          ${(()=>{ 
+            const savedFunc = (window._pdFuncSel||{})[dateVal+'_'+maq]||'';
+            const funcOpts = (_funcProd||[])
+              .filter(f=>!f.deactivatedUntil||new Date(f.deactivatedUntil).getTime()<Date.now())
+              .filter(f=>!f.maquinas||!f.maquinas.length||f.maquinas.includes(maq))
+              .map(f=>`<option value="${f.nome}" ${savedFunc===f.nome?'selected':''}>${f.nome}</option>`)
+              .join('');
+            if(!funcOpts) return '';
+            return `<div style="padding:4px 10px 6px;border-top:1px solid rgba(255,255,255,.06);display:flex;align-items:center;gap:8px">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+              <span style="font-size:10px;color:var(--text3);white-space:nowrap">Operador:</span>
+              <select onchange="pdSelecionarFunc(this,'${dateVal}','${maq}')"
+                      style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:5px;color:var(--text);font-size:11px;padding:2px 6px">
+                <option value="">— selecionar funcionário —</option>
+                ${funcOpts}
+              </select>
+            </div>`;
+          })()}
         </div>
 
         <!-- Tabela -->
@@ -4351,13 +4372,17 @@ function _renderRealizadoControlado(dateVal, body) {
 
         <!-- Rodapé: salvar todos + obs toggle -->
         <div style="display:flex;align-items:center;justify-content:space-between;padding:6px 10px;background:var(--s1);border:1px solid var(--border);border-top:none;border-radius:0 0 8px 8px;margin-top:-1px">
-          <div style="display:flex;gap:6px;flex-wrap:wrap">
-            ${recs.map(r=>`
-              <button onclick="realizadoToggleObs(${r.id})"
-                      style="background:var(--s2);border:1px solid var(--border);border-radius:4px;padding:2px 7px;font-size:10px;color:var(--text3);cursor:pointer"
-                      title="Observação: ${r.produto.substring(0,30)}">
-                📝 ${r.produto.substring(0,15)}…
-              </button>`).join('')}
+          <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+            <span style="font-size:10px;color:var(--text3)">Obs:</span>
+            ${recs.map(r=>{
+              const hasObs = !!(window._pdObsCache&&window._pdObsCache[r.id+'_'+dateVal]);
+              return `<button id="obs-btn-${r.id}-${dateVal}"
+                      onclick="pdAbrirObs(${r.id},'${dateVal}')"
+                      style="background:var(--s2);border:1px solid ${hasObs?'var(--warn)':'var(--border)'};border-radius:4px;padding:2px 7px;font-size:10px;color:${hasObs?'var(--warn)':'var(--text3)'};cursor:pointer;transition:all .15s"
+                      title="${r.produto}">
+                📝 ${r.produto.substring(0,14)}${r.produto.length>14?'…':''}
+              </button>`;
+            }).join('')}
           </div>
           <button onclick="realizadoSalvarMaquina('${maq}','${dateVal}')"
                   style="background:var(--green);color:#000;border:none;border-radius:6px;padding:5px 14px;font-size:11px;font-weight:700;cursor:pointer;font-family:'Space Grotesk',sans-serif">
@@ -4371,7 +4396,26 @@ function _renderRealizadoControlado(dateVal, body) {
   body._machineGroups = maqKeys.map(m => ({ maq: m, items: grupos[m].map(r => ({ rec: r })) }));
   body._dateVal = dateVal;
 
-  setTimeout(() => { carregarObservacoesExistentes(dateVal); }, 100);
+  // Carrega badges de observação para o dia (atualiza botões no rodapé)
+  setTimeout(() => {
+    carregarObservacoesExistentes(dateVal);
+    _realizadoCarregarBadgesObs(dayRecs, dateVal);
+  }, 100);
+}
+
+async function _realizadoCarregarBadgesObs(recs, dateVal) {
+  if (!recs || !recs.length) return;
+  try {
+    const obsMap = await carregarObservacoes(dateVal, dateVal);
+    recs.forEach(r => {
+      const obs = obsMap[`${dateVal}_${r.id}`];
+      if (obs && obs.observacao) {
+        window._pdObsCache = window._pdObsCache || {};
+        window._pdObsCache[`${r.id}_${dateVal}`] = obs.observacao;
+        _pdAtualizarBadgeObs(r.id, dateVal, obs.observacao);
+      }
+    });
+  } catch(e) { /* silencioso */ }
 }
 
 function isProximoDaSequencia(record, todosRecords) {
@@ -9984,14 +10028,28 @@ async function pdLimparObs(recId, ds) {
 }
 
 function _pdAtualizarBadgeObs(recId, ds, texto) {
-  // Atualiza visual do botão de obs no card sem re-renderizar tudo
+  const hasObs = !!texto;
+  // 1. Botão no card do Produção Dia
   const card = document.getElementById(`pd-card-${recId}`);
-  if (!card) return;
-  const obsBtn = card.querySelector(`button[onclick*="pdAbrirObs"]`);
-  if (obsBtn) {
-    obsBtn.style.borderColor = texto ? 'var(--warn)' : 'var(--border)';
-    obsBtn.style.color       = texto ? 'var(--warn)' : 'var(--text3)';
-    obsBtn.textContent       = texto ? '📝 Ver obs.' : '📝 Observação';
+  if (card) {
+    const obsBtn = card.querySelector(`button[onclick*="pdAbrirObs"]`);
+    if (obsBtn) {
+      obsBtn.style.borderColor = hasObs ? 'var(--warn)' : 'var(--border)';
+      obsBtn.style.color       = hasObs ? 'var(--warn)' : 'var(--text3)';
+      obsBtn.textContent       = hasObs ? '📝 Ver obs.' : '📝 Observação';
+    }
+  }
+  // 2. Botão no rodapé do Realizado
+  const footerBtn = document.getElementById(`obs-btn-${recId}-${ds}`);
+  if (footerBtn) {
+    footerBtn.style.borderColor = hasObs ? 'var(--warn)' : 'var(--border)';
+    footerBtn.style.color       = hasObs ? 'var(--warn)' : 'var(--text3)';
+  }
+  // Atualiza cache
+  if (hasObs) {
+    window._pdObsCache[`${recId}_${ds}`] = texto;
+  } else {
+    delete window._pdObsCache[`${recId}_${ds}`];
   }
 }
 
