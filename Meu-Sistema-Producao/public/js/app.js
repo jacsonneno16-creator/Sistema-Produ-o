@@ -4056,7 +4056,10 @@ function renderApontamento(){
   }
   // Se a aba "Total da Semana" estiver selecionada
   if(dateVal === 'semana'){
-    renderWeeklySummary(body);
+    renderWeeklySummary(body).catch(e => {
+      console.error('Erro renderWeeklySummary:', e);
+      body.innerHTML = '<div class="empty"><div class="ei">⚠️</div>Erro ao carregar resumo da semana.</div>';
+    });
     return;
   }
 
@@ -4101,13 +4104,30 @@ function _renderRealizadoControlado(dateVal, body) {
   const weekStart = dateStr(weekDays[0]);
   const weekEnd   = dateStr(weekDays[6]);
 
-  // Registros da semana com dia efetivo = dateVal
+  // Registros que devem aparecer neste dia:
+  //   1. Dia programado == dateVal (início normal), OU
+  //   2. Dia programado < dateVal E produto ainda não concluído (overflow para dias seguintes)
+  // Nunca aparece antes do dia programado.
   const dayRecs = records.filter(r => {
     if (r.status === 'Concluído') return false;
-    const eff = pdGetEffectiveDay(r.id);
-    if (eff) return eff === dateVal;
-    const dt = r.dtDesejada || r.dtSolicitacao;
-    return dt === dateVal;
+    const produzido = calcularTotalProduzido(r.id);
+    const meta      = r.qntCaixas || 0;
+    // Se já atingiu a meta, não mostra mais
+    if (produzido >= meta && meta > 0) return false;
+
+    const eff = pdGetEffectiveDay(r.id) || r.dtDesejada || r.dtSolicitacao;
+    if (!eff) return false;
+
+    // Não aparece antes do dia programado
+    if (eff > dateVal) return false;
+
+    // Aparece no dia programado
+    if (eff === dateVal) return true;
+
+    // Overflow: dia programado já passou e produto ainda não concluído
+    // Só mostra em dias úteis (hoursOnDay > 0) após o dia programado
+    const dateValDate = new Date(dateVal + 'T12:00:00');
+    return eff < dateVal && hoursOnDay(dateValDate) > 0;
   });
 
   const dateLabel = fmtDate(new Date(dateVal + 'T12:00:00'));
@@ -4623,13 +4643,21 @@ function renderProducaoDiaControlado() {
   const weekEnd = dateStr(weekDays[6]);
   const workDays = weekDays.filter(function(d) { return hoursOnDay(d) > 0; });
 
-  // Inclui todos os registros que têm segmento nesta semana (via Gantt) OU dtDesejada na semana
+  // Inclui registros desta semana + overflow de semanas anteriores não concluídos
   const weekRecs = records.filter(function(r) {
     if (r.status === 'Concluído') return false;
-    const effectiveDay = pdGetEffectiveDay(r.id);
-    if (effectiveDay && effectiveDay >= weekStart && effectiveDay <= weekEnd) return true;
-    const dt = r.dtDesejada || r.dtSolicitacao;
-    return dt && dt >= weekStart && dt <= weekEnd;
+    const produzido = calcularTotalProduzido(r.id);
+    const meta      = r.qntCaixas || 0;
+    if (produzido >= meta && meta > 0) return false;
+
+    const eff = pdGetEffectiveDay(r.id) || r.dtDesejada || r.dtSolicitacao;
+    if (!eff) return false;
+
+    // Programado para esta semana
+    if (eff >= weekStart && eff <= weekEnd) return true;
+    // Overflow: programado antes desta semana e ainda não concluído
+    if (eff < weekStart) return true;
+    return false;
   });
 
   const finCount = weekRecs.filter(function(r) { return pdIsFin(r.id); }).length;
@@ -4689,7 +4717,13 @@ function renderProducaoDiaControlado() {
     const isToday = ds === dateStr(new Date());
 
     const dayRecs = weekRecs.filter(function(r) {
-      return pdGetEffectiveDay(r.id) === ds && !pdIsFin(r.id);
+      if (pdIsFin(r.id)) return false;
+      const eff = pdGetEffectiveDay(r.id) || r.dtDesejada || r.dtSolicitacao;
+      if (!eff) return false;
+      // Dia programado: mostra normalmente
+      if (eff === ds) return true;
+      // Overflow: dia programado já passou, produto não concluído → mostra neste dia
+      return eff < ds;
     });
 
     const borderColor = isToday ? 'var(--cyan)' : 'var(--border)';
@@ -4729,9 +4763,13 @@ function renderProducaoDiaControlado() {
 
   // Produtos não atribuídos (só PCP pode ver e mover)
   const unassigned = weekRecs.filter(function(r) {
-    const eff = pdGetEffectiveDay(r.id);
+    const eff = pdGetEffectiveDay(r.id) || r.dtDesejada || r.dtSolicitacao;
+    if (pdIsFin(r.id)) return false;
+    // Overflow (dia no passado) → não é "sem dia", aparece nas colunas
+    if (eff && eff < weekStart) return false;
+    // Sem dia ou dia fora dos dias úteis desta semana → sem dia
     const isWD = workDays.some(function(wd) { return dateStr(wd) === eff; });
-    return !pdIsFin(r.id) && (!eff || !isWD);
+    return !eff || !isWD;
   });
 
   if (unassigned.length > 0 && isPCP) {
@@ -4991,10 +5029,14 @@ function renderProducaoDia(){
 
   const weekRecs = records.filter(function(r){
     if(r.status==='Concluído') return false;
-    const effectiveDay = pdGetEffectiveDay(r.id);
-    if(effectiveDay && effectiveDay>=weekStart && effectiveDay<=weekEnd) return true;
-    const dt = r.dtDesejada||r.dtSolicitacao;
-    return dt && dt>=weekStart && dt<=weekEnd;
+    const produzido = calcularTotalProduzido(r.id);
+    const meta = r.qntCaixas || 0;
+    if(produzido >= meta && meta > 0) return false;
+    const eff = pdGetEffectiveDay(r.id) || r.dtDesejada || r.dtSolicitacao;
+    if(!eff) return false;
+    if(eff >= weekStart && eff <= weekEnd) return true;
+    if(eff < weekStart) return true; // overflow
+    return false;
   });
 
   const finCount = weekRecs.filter(function(r){ return pdIsFin(r.id); }).length;
@@ -5017,7 +5059,11 @@ function renderProducaoDia(){
     const isToday = ds===dateStr(new Date());
 
     const dayRecs = weekRecs.filter(function(r){
-      return pdGetEffectiveDay(r.id)===ds && !pdIsFin(r.id);
+      if(pdIsFin(r.id)) return false;
+      const eff = pdGetEffectiveDay(r.id) || r.dtDesejada || r.dtSolicitacao;
+      if(!eff) return false;
+      if(eff === ds) return true;
+      return eff < ds; // overflow
     });
 
     const borderColor = isToday?'var(--cyan)':'var(--border)';
@@ -5135,18 +5181,32 @@ function pdRestoreAll(){
 }
 
 
-function renderWeeklySummary(body){
+async function renderWeeklySummary(body){
   if(!prodBaseMonday){ body.innerHTML=''; return; }
-  const days = getWeekDays(prodBaseMonday);
-  const workDays = days.filter(function(d){ return hoursOnDay(d)>0; });
+  const days     = getWeekDays(prodBaseMonday);
+  const workDays = days.filter(d => hoursOnDay(d) > 0);
   const weekLabel = fmtDate(workDays[0]) + ' – ' + fmtDate(workDays[workDays.length-1]);
-
-  // Filtra somente registros programados para esta semana
   const weekStart = dateStr(days[0]);
   const weekEnd   = dateStr(days[6]);
-  const weekRecords = records.filter(function(r){
-    const dt = r.dtDesejada || r.dtSolicitacao;
-    return dt && dt >= weekStart && dt <= weekEnd;
+
+  // Registros da semana — inclui produtos em overflow (não concluídos de semanas anteriores)
+  pdBuildGanttMap(prodBaseMonday);
+  const weekRecords = records.filter(r => {
+    if (r.status === 'Concluído') return false;
+    const produzido = calcularTotalProduzido(r.id);
+    const meta      = r.qntCaixas || 0;
+    if (produzido >= meta && meta > 0) return false; // já concluído, não mostra
+
+    const eff = pdGetEffectiveDay(r.id) || r.dtDesejada || r.dtSolicitacao;
+    if (!eff) return false;
+
+    // Programado para esta semana
+    if (eff >= weekStart && eff <= weekEnd) return true;
+
+    // Overflow de semana anterior: não concluído e dia programado já passou
+    if (eff < weekStart) return true;
+
+    return false;
   });
 
   if(!weekRecords.length){
@@ -5155,9 +5215,13 @@ function renderWeeklySummary(body){
     return;
   }
 
+  // Carregar TODAS as observações da semana de uma vez (1 query só)
+  body.innerHTML = '<div class="empty"><div class="ei">⏳</div>Carregando...</div>';
+  const obsMap = await carregarObservacoes(weekStart, weekEnd); // { "YYYY-MM-DD_recId": {observacao,...} }
+
   // Agrupar por máquina
   const machineMap = {};
-  weekRecords.forEach(function(rec){
+  weekRecords.forEach(rec => {
     if(!machineMap[rec.maquina]) machineMap[rec.maquina] = [];
     machineMap[rec.maquina].push(rec);
   });
@@ -5165,85 +5229,107 @@ function renderWeeklySummary(body){
   let totalNeeded=0, totalProduced=0;
   let allSections = '';
 
-  MAQUINAS.forEach(function(maq){
+  MAQUINAS.forEach(maq => {
     const recs = machineMap[maq];
     if(!recs || !recs.length) return;
 
     let rows = '';
-    recs.forEach(function(rec){
-      const needed = rec.qntCaixas;
+    recs.forEach(rec => {
+      const needed   = rec.qntCaixas;
       const produced = aponGetTotalProduced(rec.id);
-      totalNeeded += needed;
+      totalNeeded   += needed;
       totalProduced += produced;
 
-      const pct = needed>0 ? Math.min(100, Math.round(produced/needed*100)) : 0;
-      const realPct = needed>0 ? Math.round(produced/needed*100) : 0;
-      const isDone = produced >= needed;
-      const hasAny = produced > 0;
-
-      // Cores por status
+      const pct     = needed > 0 ? Math.min(100, Math.round(produced/needed*100)) : 0;
+      const realPct = needed > 0 ? Math.round(produced/needed*100) : 0;
+      const isDone  = produced >= needed;
+      const hasAny  = produced > 0;
       const pctColor = isDone ? 'var(--green)' : pct>=60 ? 'var(--cyan)' : hasAny ? 'var(--warn)' : 'var(--text3)';
 
-      // Badge de status
+      // Badge status
       let statusBadge;
-      if(isDone){
-        statusBadge = '<span style="display:inline-block;font-size:9px;font-weight:700;color:var(--green);background:rgba(41,217,132,.12);border:1px solid rgba(41,217,132,.28);border-radius:10px;padding:2px 9px;white-space:nowrap">✓ Finalizado</span>';
-      } else if(hasAny){
-        statusBadge = '<span style="display:inline-block;font-size:9px;font-weight:700;color:var(--warn);background:rgba(255,179,0,.12);border:1px solid rgba(255,179,0,.28);border-radius:10px;padding:2px 9px;white-space:nowrap">⚡ Finalizado Parcialmente</span>';
-      } else {
-        statusBadge = '<span style="display:inline-block;font-size:9px;font-weight:700;color:var(--text3);background:rgba(58,79,99,.18);border:1px solid rgba(58,79,99,.4);border-radius:10px;padding:2px 9px;white-space:nowrap">— Não iniciado</span>';
-      }
+      if(isDone)
+        statusBadge = '<span style="font-size:9px;font-weight:700;color:var(--green);background:rgba(41,217,132,.12);border:1px solid rgba(41,217,132,.28);border-radius:10px;padding:2px 9px;white-space:nowrap">✓ Finalizado</span>';
+      else if(hasAny)
+        statusBadge = '<span style="font-size:9px;font-weight:700;color:var(--warn);background:rgba(255,179,0,.12);border:1px solid rgba(255,179,0,.28);border-radius:10px;padding:2px 9px;white-space:nowrap">⚡ Parcial</span>';
+      else
+        statusBadge = '<span style="font-size:9px;font-weight:700;color:var(--text3);background:rgba(58,79,99,.18);border:1px solid rgba(58,79,99,.4);border-radius:10px;padding:2px 9px;white-space:nowrap">— Não iniciado</span>';
 
       // Dia de finalização
-      let finDayCell = '<span style="color:var(--text4);font-family:\'JetBrains Mono\',monospace;font-size:11px">—</span>';
+      let finDayCell = '<span style="color:var(--text3);font-family:\'JetBrains Mono\',monospace;font-size:11px">—</span>';
       if(isDone){
         const finDay = aponGetFinalizationDay(rec.id, needed);
         if(finDay){
           const finDate = new Date(finDay+'T12:00:00');
-          const dayName = DAY_NAMES[finDate.getDay()];
-          finDayCell = '<span style="font-family:\'JetBrains Mono\',monospace;font-size:11px;color:var(--green);font-weight:600">'+dayName+' '+fmtDate(finDate)+'</span>';
+          finDayCell = '<span style="font-family:\'JetBrains Mono\',monospace;font-size:11px;color:var(--green);font-weight:600">'+DAY_NAMES[finDate.getDay()]+' '+fmtDate(finDate)+'</span>';
         }
       }
 
-      const rowBg = isDone ? 'background:rgba(41,217,132,.05);border-left:3px solid var(--green)' : hasAny ? 'border-left:3px solid rgba(255,179,0,.5)' : '';
+      // ── Observações por dia ──────────────────────────────────────
+      // Coleta todas as observações desta semana para este produto
+      const obsLinhas = workDays.map(d => {
+        const ds  = dateStr(d);
+        const key = `${ds}_${rec.id}`;
+        const obs = obsMap[key];
+        if (!obs || !obs.observacao) return null;
+        const dayName = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'][d.getDay()];
+        return { dayName, ds, texto: obs.observacao, operador: obs.operador };
+      }).filter(Boolean);
 
-      rows += '<tr style="'+rowBg+'">'
-        + '<td style="text-align:left;padding:9px 14px;max-width:280px;word-break:break-word;line-height:1.4">'
-        +   '<div style="font-size:11px;font-weight:600;color:'+(isDone?'var(--green)':hasAny?'var(--text)':'var(--text2)')+'">'+rec.produto+'</div>'
-        + '</td>'
-        + '<td style="text-align:center;font-family:\'JetBrains Mono\',monospace;font-size:11px;color:var(--text2);padding:9px 10px">'+needed+'</td>'
-        + '<td style="text-align:center;font-family:\'JetBrains Mono\',monospace;font-size:12px;font-weight:600;color:'+(isDone?'var(--green)':hasAny?'var(--text)':'var(--text3)')+';padding:9px 10px">'+produced+'</td>'
-        + '<td style="text-align:center;padding:9px 10px;min-width:120px">'
-        +   '<div style="font-family:\'JetBrains Mono\',monospace;font-size:12px;font-weight:700;color:'+pctColor+'">'+realPct+'%</div>'
-        +   '<div class="apon-progress" style="margin-top:4px;min-width:70px"><div class="apon-progress-bar" style="width:'+pct+'%;background:'+pctColor+'"></div></div>'
-        + '</td>'
-        + '<td style="text-align:center;padding:9px 10px">'+statusBadge+'</td>'
-        + '<td style="text-align:center;padding:9px 10px">'+finDayCell+'</td>'
-        + '</tr>';
+      const obsHTML = obsLinhas.length > 0
+        ? `<div style="margin-top:6px;display:flex;flex-direction:column;gap:3px">
+            ${obsLinhas.map(o => `
+              <div style="display:flex;align-items:flex-start;gap:6px;background:rgba(255,179,0,.06);border:1px solid rgba(255,179,0,.18);border-radius:5px;padding:4px 8px">
+                <span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:var(--warn);font-weight:700;white-space:nowrap;padding-top:1px">${o.dayName}</span>
+                <span style="font-size:10px;color:var(--text2);line-height:1.4;flex:1">${o.texto}</span>
+                ${o.operador ? `<span style="font-size:9px;color:var(--text3);white-space:nowrap;padding-top:1px">${o.operador.split('@')[0]}</span>` : ''}
+              </div>`).join('')}
+          </div>`
+        : '';
+
+      const rowBg = isDone
+        ? 'background:rgba(41,217,132,.05);border-left:3px solid var(--green)'
+        : hasAny ? 'border-left:3px solid rgba(255,179,0,.5)' : '';
+
+      rows += `<tr style="${rowBg}">
+        <td style="text-align:left;padding:9px 14px;max-width:280px;word-break:break-word;line-height:1.4">
+          <div style="font-size:11px;font-weight:600;color:${isDone?'var(--green)':hasAny?'var(--text)':'var(--text2)'}">${rec.produto}</div>
+          ${obsHTML}
+        </td>
+        <td style="text-align:center;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text2);padding:9px 10px">${needed}</td>
+        <td style="text-align:center;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:600;color:${isDone?'var(--green)':hasAny?'var(--text)':'var(--text3)'};padding:9px 10px">${produced}</td>
+        <td style="text-align:center;padding:9px 10px;min-width:120px">
+          <div style="font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:${pctColor}">${realPct}%</div>
+          <div class="apon-progress" style="margin-top:4px;min-width:70px"><div class="apon-progress-bar" style="width:${pct}%;background:${pctColor}"></div></div>
+        </td>
+        <td style="text-align:center;padding:9px 10px">${statusBadge}</td>
+        <td style="text-align:center;padding:9px 10px">${finDayCell}</td>
+      </tr>`;
     });
 
-    // Totais da máquina
-    const maqNeeded = recs.reduce(function(a,r){ return a+r.qntCaixas; },0);
-    const maqProduced = recs.reduce(function(a,r){ return a+aponGetTotalProduced(r.id); },0);
-    const maqPct = maqNeeded>0 ? Math.round(maqProduced/maqNeeded*100) : 0;
-    const maqColor = maqProduced>=maqNeeded?'var(--green)':maqPct>=60?'var(--cyan)':'var(--warn)';
+    const maqNeeded   = recs.reduce((a,r) => a+r.qntCaixas, 0);
+    const maqProduced = recs.reduce((a,r) => a+aponGetTotalProduced(r.id), 0);
+    const maqPct      = maqNeeded > 0 ? Math.round(maqProduced/maqNeeded*100) : 0;
+    const maqColor    = maqProduced>=maqNeeded ? 'var(--green)' : maqPct>=60 ? 'var(--cyan)' : 'var(--warn)';
 
-    allSections += '<div class="apon-section" style="margin-bottom:16px">'
-      + '<div class="apon-section-header">'
-      + '<span class="ins-maq-title">🏭 '+maq+'</span>'
-      + '<span style="font-family:\'JetBrains Mono\',monospace;font-size:11px;color:'+maqColor+';font-weight:700">'+maqProduced+' / '+maqNeeded+' ('+maqPct+'%)</span>'
-      + '</div>'
-      + '<div style="overflow-x:auto">'
-      + '<table class="apon-table"><thead><tr>'
-      + '<th class="col-prod" style="text-align:left;min-width:220px">Produto</th>'
-      + '<th style="text-align:center;min-width:80px">Solicitado</th>'
-      + '<th style="text-align:center;min-width:80px">Realizado</th>'
-      + '<th style="text-align:center;min-width:120px">Taxa / Progresso</th>'
-      + '<th style="text-align:center;min-width:160px">Status</th>'
-      + '<th style="text-align:center;min-width:130px">Dia Finalizado</th>'
-      + '</tr></thead>'
-      + '<tbody>'+rows+'</tbody>'
-      + '</table></div></div>';
+    allSections += `<div class="apon-section" style="margin-bottom:16px">
+      <div class="apon-section-header">
+        <span class="ins-maq-title">🏭 ${maq}</span>
+        <span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:${maqColor};font-weight:700">${maqProduced} / ${maqNeeded} (${maqPct}%)</span>
+      </div>
+      <div style="overflow-x:auto">
+        <table class="apon-table"><thead><tr>
+          <th class="col-prod" style="text-align:left;min-width:220px">Produto + Observações</th>
+          <th style="text-align:center;min-width:80px">Solicitado</th>
+          <th style="text-align:center;min-width:80px">Realizado</th>
+          <th style="text-align:center;min-width:120px">Taxa / Progresso</th>
+          <th style="text-align:center;min-width:120px">Status</th>
+          <th style="text-align:center;min-width:130px">Dia Finalizado</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </div>`;
   });
 
   if(!allSections){
@@ -5252,29 +5338,37 @@ function renderWeeklySummary(body){
     return;
   }
 
-  const totalPct = totalNeeded>0 ? Math.round(totalProduced/totalNeeded*100) : 0;
-  const totalDone = totalProduced >= totalNeeded;
-  const totalColor = totalDone?'var(--green)':totalPct>=60?'var(--cyan)':'var(--warn)';
+  const totalPct   = totalNeeded > 0 ? Math.round(totalProduced/totalNeeded*100) : 0;
+  const totalDone  = totalProduced >= totalNeeded;
+  const totalColor = totalDone ? 'var(--green)' : totalPct>=60 ? 'var(--cyan)' : 'var(--warn)';
 
-  let html = '<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:16px">'
-    + '<div style="font-family:\'JetBrains Mono\',monospace;font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--text3)">📊 Total da Semana · '+weekLabel+'</div>'
-    + '<div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">'
-    +   '<div style="background:var(--s2);border:1px solid var(--border);border-radius:8px;padding:8px 14px;text-align:center">'
-    +     '<div style="font-size:9px;color:var(--text3);font-family:\'JetBrains Mono\',monospace;text-transform:uppercase;letter-spacing:.8px;margin-bottom:3px">Solicitado</div>'
-    +     '<div style="font-family:\'JetBrains Mono\',monospace;font-size:18px;font-weight:600;color:var(--cyan)">'+totalNeeded+'</div>'
-    +   '</div>'
-    +   '<div style="background:var(--s2);border:1px solid var(--border);border-radius:8px;padding:8px 14px;text-align:center">'
-    +     '<div style="font-size:9px;color:var(--text3);font-family:\'JetBrains Mono\',monospace;text-transform:uppercase;letter-spacing:.8px;margin-bottom:3px">Realizado</div>'
-    +     '<div style="font-family:\'JetBrains Mono\',monospace;font-size:18px;font-weight:600;color:'+totalColor+'">'+totalProduced+'</div>'
-    +   '</div>'
-    +   '<div style="background:var(--s2);border:1px solid var(--border);border-radius:8px;padding:8px 14px;text-align:center">'
-    +     '<div style="font-size:9px;color:var(--text3);font-family:\'JetBrains Mono\',monospace;text-transform:uppercase;letter-spacing:.8px;margin-bottom:3px">Taxa Geral</div>'
-    +     '<div style="font-family:\'JetBrains Mono\',monospace;font-size:18px;font-weight:600;color:'+totalColor+'">'+totalPct+'%</div>'
-    +   '</div>'
-    + '</div>'
-    + '</div>';
+  // Contar produtos com observação nesta semana
+  const totalObs = weekRecords.filter(r =>
+    workDays.some(d => obsMap[`${dateStr(d)}_${r.id}`]?.observacao)
+  ).length;
 
-  html += allSections;
+  let html = `
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:16px">
+      <div style="font-family:'JetBrains Mono',monospace;font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--text3)">
+        📊 Total da Semana · ${weekLabel}
+        ${totalObs > 0 ? `<span style="margin-left:8px;color:var(--warn);font-size:10px">📝 ${totalObs} produto(s) com observações</span>` : ''}
+      </div>
+      <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+        <div style="background:var(--s2);border:1px solid var(--border);border-radius:8px;padding:8px 14px;text-align:center">
+          <div style="font-size:9px;color:var(--text3);font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:.8px;margin-bottom:3px">Solicitado</div>
+          <div style="font-family:'JetBrains Mono',monospace;font-size:18px;font-weight:600;color:var(--cyan)">${totalNeeded}</div>
+        </div>
+        <div style="background:var(--s2);border:1px solid var(--border);border-radius:8px;padding:8px 14px;text-align:center">
+          <div style="font-size:9px;color:var(--text3);font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:.8px;margin-bottom:3px">Realizado</div>
+          <div style="font-family:'JetBrains Mono',monospace;font-size:18px;font-weight:600;color:${totalColor}">${totalProduced}</div>
+        </div>
+        <div style="background:var(--s2);border:1px solid var(--border);border-radius:8px;padding:8px 14px;text-align:center">
+          <div style="font-size:9px;color:var(--text3);font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:.8px;margin-bottom:3px">Taxa Geral</div>
+          <div style="font-family:'JetBrains Mono',monospace;font-size:18px;font-weight:600;color:${totalColor}">${totalPct}%</div>
+        </div>
+      </div>
+    </div>
+    ${allSections}`;
 
   body.innerHTML = html;
   body._machineGroups = null;
