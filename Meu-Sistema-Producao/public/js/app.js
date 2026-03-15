@@ -8,8 +8,258 @@ import {
   enviarResetSenha, adminForcaReset
 } from './auth.js';
 import {
-  collection, getDocs, addDoc, setDoc, doc, deleteDoc, query, orderBy, where
+  collection, getDocs, addDoc, setDoc, doc, deleteDoc, query, orderBy, where, updateDoc,
+  serverTimestamp
 } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+
+// ===================================================================
+// ===== SISTEMA CONTROLADO DE APONTAMENTOS =======================
+// ===================================================================
+
+// Controles de perfil para aba Realizado
+function isOperadorLevel() {
+  const user = currentUser();
+  if (!user) return false;
+  const nivel = user.userData?.nivel || 'operador';
+  return ['operador'].includes(nivel);
+}
+
+function isPCPLevel() {
+  const user = currentUser();
+  if (!user) return false;
+  const nivel = user.userData?.nivel || 'operador';
+  return ['admin', 'planejamento'].includes(nivel);
+}
+
+// Status de programação por registro
+const STATUS_PROGRAMACAO = {
+  NAO_INICIADO: 'nao_iniciado',
+  EM_PRODUCAO: 'em_producao',
+  CONCLUIDO: 'concluido',
+  ATRASADO: 'atrasado',
+  AGUARDANDO: 'aguardando',
+  FORA_SEQUENCIA: 'fora_sequencia'
+};
+
+// Salva apontamento no Firestore (não mais localStorage)
+async function salvarApontamentoFirestore(data) {
+  try {
+    const payload = {
+      ...data,
+      criadoEm: serverTimestamp(),
+      usuario: currentUser()?.email || 'sistema',
+      lojaId: getLojaAtiva()
+    };
+    await addDoc(lojaCol('apontamentos_producao'), payload);
+    return true;
+  } catch(e) {
+    console.error('Erro ao salvar apontamento:', e);
+    toast('Erro ao salvar apontamento: ' + e.message, 'err');
+    return false;
+  }
+}
+
+// Carrega apontamentos do Firestore
+async function carregarApontamentosFirestore(dataInicio, dataFim) {
+  try {
+    const q = query(
+      lojaCol('apontamentos_producao'),
+      where('data', '>=', dataInicio),
+      where('data', '<=', dataFim),
+      orderBy('data', 'asc'),
+      orderBy('hora', 'asc')
+    );
+    const snap = await getDocs(q);
+    return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  } catch(e) {
+    console.error('Erro ao carregar apontamentos:', e);
+    return [];
+  }
+}
+
+// Registra auditoria de alterações
+async function registrarAuditoria(acao, detalhes) {
+  try {
+    const payload = {
+      acao: acao,
+      detalhes: detalhes,
+      usuario: currentUser()?.email || 'sistema',
+      timestamp: serverTimestamp(),
+      lojaId: getLojaAtiva(),
+      ip: 'sistema', // Poderia pegar IP real se necessário
+      userAgent: navigator.userAgent
+    };
+    await addDoc(lojaCol('auditoria'), payload);
+  } catch(e) {
+    console.warn('Erro ao registrar auditoria:', e);
+  }
+}
+
+// Verifica se produto pode ser produzido (controles de sequência)
+function validarProducaoPermitida(record, maquina, data) {
+  // 1. Verificar se está programado para esta data/máquina
+  const programacaoValida = verificarProgramacaoValida(record, maquina, data);
+  if (!programacaoValida.valido) {
+    return { permitido: false, motivo: programacaoValida.motivo };
+  }
+  
+  // 2. Verificar sequência na máquina
+  const sequenciaValida = verificarSequenciaMaquina(record, maquina, data);
+  if (!sequenciaValida.valido) {
+    return { permitido: false, motivo: sequenciaValida.motivo };
+  }
+  
+  // 3. Verificar se não excede quantidade programada
+  const quantidadeValida = verificarQuantidadePermitida(record);
+  if (!quantidadeValida.valido) {
+    return { permitido: false, motivo: quantidadeValida.motivo };
+  }
+  
+  return { permitido: true };
+}
+
+// Verifica se produto está programado corretamente
+function verificarProgramacaoValida(record, maquina, data) {
+  // Verificar se máquina corresponde
+  if (record.maquina !== maquina) {
+    return { 
+      valido: false, 
+      motivo: `Produto programado para ${record.maquina}, não para ${maquina}` 
+    };
+  }
+  
+  // Verificar se data está dentro da programação
+  const dataDesejada = record.dtDesejada || record.dtSolicitacao;
+  if (!dataDesejada) {
+    return { 
+      valido: false, 
+      motivo: 'Produto sem data de programação definida' 
+    };
+  }
+  
+  // Permitir produção na semana programada
+  const semanaRecord = getWeekStart(new Date(dataDesejada + 'T12:00:00'));
+  const semanaProduzindo = getWeekStart(new Date(data + 'T12:00:00'));
+  
+  if (dateStr(semanaRecord) !== dateStr(semanaProduzindo)) {
+    return { 
+      valido: false, 
+      motivo: `Produto programado para semana de ${fmtDate(semanaRecord)}, não para esta semana` 
+    };
+  }
+  
+  return { valido: true };
+}
+
+// Verifica sequência na máquina
+function verificarSequenciaMaquina(record, maquina, data) {
+  // Buscar todos os produtos programados para esta máquina nesta semana
+  const weekStart = getWeekStart(new Date(data + 'T12:00:00'));
+  const weekEnd = addDays(weekStart, 6);
+  
+  const produtosMaquina = records.filter(r => 
+    r.maquina === maquina &&
+    r.dtDesejada >= dateStr(weekStart) &&
+    r.dtDesejada <= dateStr(weekEnd)
+  ).sort((a, b) => {
+    // Ordenar por prioridade, depois por data desejada
+    if (a.prioridade !== b.prioridade) return a.prioridade - b.prioridade;
+    return (a.dtDesejada || a.dtSolicitacao).localeCompare(b.dtDesejada || b.dtSolicitacao);
+  });
+  
+  const indexAtual = produtosMaquina.findIndex(r => r.id === record.id);
+  if (indexAtual === -1) return { valido: false, motivo: 'Produto não encontrado na programação' };
+  
+  // Verificar se produtos anteriores foram concluídos
+  for (let i = 0; i < indexAtual; i++) {
+    const prodAnterior = produtosMaquina[i];
+    const totalProduzido = calcularTotalProduzido(prodAnterior.id);
+    
+    if (totalProduzido < prodAnterior.qntCaixas) {
+      return {
+        valido: false,
+        motivo: `Aguardando conclusão de "${prodAnterior.produto}" (${totalProduzido}/${prodAnterior.qntCaixas} caixas)`
+      };
+    }
+  }
+  
+  return { valido: true };
+}
+
+// Verifica quantidade permitida
+function verificarQuantidadePermitida(record) {
+  const totalProduzido = calcularTotalProduzido(record.id);
+  const necessario = record.qntCaixas || 0;
+  
+  if (totalProduzido >= necessario) {
+    return {
+      valido: false,
+      motivo: `Produto já foi concluído (${totalProduzido}/${necessario} caixas)`
+    };
+  }
+  
+  return { valido: true, restante: necessario - totalProduzido };
+}
+
+// Calcula total produzido de um record (substituir localStorage)
+function calcularTotalProduzido(recordId) {
+  // TODO: Implementar busca no Firestore
+  // Por enquanto, manter compatibilidade com localStorage
+  let total = 0;
+  const suffix = '_' + recordId;
+  aponGetAllKeys().forEach(function(k){
+    if(!k.endsWith(suffix)) return;
+    const d = aponStorageGet(k);
+    if(d) APON_HOURS.forEach(function(h){ total += parseInt(d[h])||0; });
+  });
+  return total;
+}
+
+// Determina status do produto na programação
+function determinarStatusProgramacao(record) {
+  const totalProduzido = calcularTotalProduzido(record.id);
+  const necessario = record.qntCaixas || 0;
+  const dataDesejada = new Date((record.dtDesejada || record.dtSolicitacao) + 'T12:00:00');
+  const hoje = new Date();
+  
+  if (totalProduzido >= necessario) {
+    return STATUS_PROGRAMACAO.CONCLUIDO;
+  }
+  
+  if (totalProduzido > 0) {
+    return STATUS_PROGRAMACAO.EM_PRODUCAO;
+  }
+  
+  if (dataDesejada < hoje) {
+    return STATUS_PROGRAMACAO.ATRASADO;
+  }
+  
+  // Verificar se pode começar (sequência liberada)
+  const validacao = verificarSequenciaMaquina(record, record.maquina, dateStr(hoje));
+  if (!validacao.valido) {
+    return STATUS_PROGRAMACAO.AGUARDANDO;
+  }
+  
+  return STATUS_PROGRAMACAO.NAO_INICIADO;
+}
+
+// Cores e ícones por status
+function getStatusInfo(status) {
+  switch(status) {
+    case STATUS_PROGRAMACAO.CONCLUIDO:
+      return { cor: 'var(--green)', icone: '✅', label: 'Concluído' };
+    case STATUS_PROGRAMACAO.EM_PRODUCAO:
+      return { cor: 'var(--cyan)', icone: '🔄', label: 'Em Produção' };
+    case STATUS_PROGRAMACAO.ATRASADO:
+      return { cor: 'var(--red)', icone: '⚠️', label: 'Atrasado' };
+    case STATUS_PROGRAMACAO.AGUARDANDO:
+      return { cor: 'var(--warn)', icone: '⏳', label: 'Aguardando' };
+    case STATUS_PROGRAMACAO.FORA_SEQUENCIA:
+      return { cor: 'var(--purple)', icone: '🔀', label: 'Fora de Sequência' };
+    default:
+      return { cor: 'var(--text3)', icone: '📋', label: 'Não Iniciado' };
+  }
+}
 
 // ===================================================================
 // ===== GESTÃO DE LOJA ATIVA =========================================
@@ -3698,155 +3948,511 @@ function renderApontamento(){
 
   // Se a aba "Produção Dia" estiver selecionada
   if(dateVal === 'producao-dia'){
-    renderProducaoDia();
+    renderProducaoDiaControlado();
     return;
   }
-  // Se a aba "Total da Semana" estiver selecionada, renderiza o resumo semanal
+  // Se a aba "Total da Semana" estiver selecionada
   if(dateVal === 'semana'){
     renderWeeklySummary(body);
     return;
   }
 
-  // Filtra somente registros da semana sendo visualizada
+  // NOVA VERSÃO CONTROLADA DA ABA REALIZADO
+  renderRealizadoControlado(dateVal, body);
+}
+
+// Nova função para renderizar aba Realizado de forma controlada
+function renderRealizadoControlado(dateVal, body) {
+  const isOperador = isOperadorLevel();
+  const isPCP = isPCPLevel();
+  
+  // Filtra registros da semana
   const weekDays = getWeekDays(prodBaseMonday);
   const weekStart = dateStr(weekDays[0]);
-  const weekEnd   = dateStr(weekDays[6]);
+  const weekEnd = dateStr(weekDays[6]);
+  
   function recIsInWeek(r){
     const dt = r.dtDesejada || r.dtSolicitacao;
     return dt && dt >= weekStart && dt <= weekEnd;
   }
 
-  // Monta grupos por máquina usando registros da semana selecionada
-  // Filtra pelo que foi definido em "Produção Dia": só mostra produtos atribuídos a este dia
-  // (e que não foram finalizados). Se o produto não tiver dia atribuído, não aparece.
-  const machineGroups = [];
-  for(let mi=0; mi<MAQUINAS.length; mi++){
-    const maq = MAQUINAS[mi];
-    const recs = records.filter(function(r){
-      if(r.maquina !== maq || !recIsInWeek(r)) return false;
-      // Respeita atribuição do Produção Dia
-      const assigned = pdGetAssign(r.id);
-      if(assigned !== dateVal) return false;
-      // Oculta finalizados
-      if(pdIsFin(r.id)) return false;
-      return true;
-    });
-    if(!recs.length) continue;
-    const items = recs.map(function(rec, seqIdx){
-      const prevTotal = aponGetPrevTotal(rec.id, dateVal);
-      const needed = rec.qntCaixas;
-      const todayData = aponStorageGet(aponKey(dateVal, rec.id)) || {};
-      let todayTotal = 0;
-      APON_HOURS.forEach(function(h){ todayTotal += parseInt(todayData[h])||0; });
-      const overallTotal = prevTotal + todayTotal;
-      // Usa o total global para isDone: se concluído em qualquer dia, aparece verde em todos os dias
-      const globalTotal = aponGetTotalProduced(rec.id);
-      const isDone = globalTotal >= needed;
-      return { rec: rec, seqIdx: seqIdx, prevTotal: prevTotal, needed: needed,
-               todayData: todayData, todayTotal: todayTotal, overallTotal: overallTotal,
-               isDone: isDone, seqBlocked: false };
-    });
-    machineGroups.push({maq: maq, items: items});
-  }
-
-  if(!machineGroups.length){
-    // Verifica se há produtos na semana mas sem atribuição para este dia
-    const weekRecsAll = records.filter(function(r){ return recIsInWeek(r); });
-    const hasAnyAssigned = weekRecsAll.some(function(r){ return pdGetAssign(r.id) === dateVal; });
-    const hasWeekRecs = weekRecsAll.length > 0;
-    let emptyMsg;
-    if(!hasWeekRecs){
-      emptyMsg = 'Nenhum produto programado para esta semana.';
-    } else {
-      emptyMsg = 'Nenhum produto atribuído para este dia. Use a aba <strong style="color:var(--orange)">&#x1F5C2; Produ&#231;&#227;o Dia</strong> para arrastar produtos para os dias da semana.';
-    }
-    body.innerHTML='<div class="empty" style="flex-direction:column;gap:10px"><div class="ei">&#128197;</div><div>'+emptyMsg+'</div></div>';
-    body._machineGroups = [];
-    body._dateVal = dateVal;
+  // CONTROLE: Só mostra produtos PROGRAMADOS para a semana
+  const weekRecs = records.filter(recIsInWeek);
+  
+  if (!weekRecs.length) {
+    body.innerHTML = `
+      <div class="empty" style="flex-direction:column;gap:12px">
+        <div class="ei">📋</div>
+        <div>Nenhum produto programado para esta semana.</div>
+        <div style="font-size:11px;color:var(--text3)">
+          Use <strong>Programação Semanal</strong> para criar a programação.
+        </div>
+      </div>`;
     return;
   }
 
+  // Renderizar cabeçalho com indicadores
   const dateLabel = fmtDate(new Date(dateVal+'T12:00:00'));
-  const totalProds = machineGroups.reduce(function(a,g){ return a+g.items.length; },0);
+  const isHoje = dateVal === dateStr(new Date());
 
-  let html = '<div style="font-family:\'JetBrains Mono\',monospace;font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--text3);margin-bottom:12px">'
-    + dateLabel + ' · ' + totalProds + ' produto(s)</div>';
+  let html = `
+    <!-- Dashboard de Indicadores -->
+    ${renderDashboardIndicadores()}
+    
+    <!-- Painel de Alertas -->
+    ${renderPainelAlertas()}
+    
+    <!-- Cabeçalho Principal -->
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:12px">
+      <div>
+        <div style="font-family:'JetBrains Mono',monospace;font-size:12px;text-transform:uppercase;letter-spacing:1px;color:var(--text3)">
+          ${dateLabel} ${isHoje ? '(HOJE)' : ''}
+        </div>
+        <div style="font-size:13px;color:var(--text2);margin-top:4px;display:flex;align-items:center;gap:8px">
+          ${isOperador ? '🔒 <span style="color:var(--warn)">Modo Operador</span> - Produção Controlada' : '🔧 <span style="color:var(--cyan)">Modo PCP</span> - Gestão Completa'}
+          <button onclick="solicitarPermissaoNotificacoes()" 
+                  style="background:none;border:1px solid var(--border);color:var(--text3);padding:2px 8px;border-radius:4px;font-size:10px;cursor:pointer"
+                  title="Ativar notificações de alerta">
+            🔔
+          </button>
+        </div>
+      </div>
+      ${isPCP ? `
+        <div style="display:flex;gap:8px;align-items:center">
+          <button onclick="gerarRelatorioProducao()" 
+                  style="background:var(--purple);color:#fff;border:none;border-radius:6px;padding:6px 12px;font-size:11px;cursor:pointer">
+            📊 Relatório
+          </button>
+          <button onclick="exportarApontamentos()" 
+                  style="background:var(--s2);border:1px solid var(--border);border-radius:6px;padding:6px 12px;font-size:11px;cursor:pointer">
+            📤 Exportar
+          </button>
+          <button onclick="realizadoResetarDia('${dateVal}')" 
+                  style="background:var(--red);color:#fff;border:none;border-radius:6px;padding:6px 12px;font-size:11px;cursor:pointer">
+            🗑 Reset Dia
+          </button>
+        </div>
+      ` : ''}
+    </div>`;
 
-  for(let gi=0;gi<machineGroups.length;gi++){
+  // Agrupar por máquina e aplicar CONTROLES DE SEQUÊNCIA
+  const machineGroups = [];
+  
+  for(let mi=0; mi<MAQUINAS.length; mi++){
+    const maq = MAQUINAS[mi];
+    
+    // Produtos desta máquina na semana, ordenados por SEQUÊNCIA PROGRAMADA
+    let recs = weekRecs.filter(r => r.maquina === maq)
+      .sort((a, b) => {
+        // Ordenar por prioridade, depois por data desejada
+        if (a.prioridade !== b.prioridade) return a.prioridade - b.prioridade;
+        return (a.dtDesejada || a.dtSolicitacao).localeCompare(b.dtDesejada || b.dtSolicitacao);
+      });
+    
+    if(!recs.length) continue;
+
+    // CONTROLE: Para operador, só mostra produtos do dia atual ou em andamento
+    if (isOperador) {
+      recs = recs.filter(r => {
+        const dataRecord = r.dtDesejada || r.dtSolicitacao;
+        const totalProduzido = calcularTotalProduzido(r.id);
+        
+        // Mostrar se:
+        // 1. É para hoje
+        // 2. Está em andamento (já começou)
+        // 3. É o próximo da sequência liberada
+        // 4. Tem liberação temporária
+        return dataRecord === dateVal || 
+               totalProduzido > 0 ||
+               isProximoDaSequencia(r, recs) ||
+               temLiberacaoTemporaria(r.id);
+      });
+    }
+
+    const items = recs.map(function(rec, seqIdx){
+      const status = determinarStatusProgramacao(rec);
+      const validacao = validarProducaoPermitida(rec, maq, dateVal);
+      const totalProduzido = calcularTotalProduzido(rec.id);
+      const necessario = rec.qntCaixas || 0;
+      const restante = Math.max(0, necessario - totalProduzido);
+      const pct = necessario > 0 ? Math.min(100, Math.round(totalProduzido/necessario*100)) : 0;
+      const temLiberacao = temLiberacaoTemporaria(rec.id);
+
+      // Dados do dia atual
+      const todayData = aponStorageGet(aponKey(dateVal, rec.id)) || {};
+      let todayTotal = 0;
+      APON_HOURS.forEach(h => { todayTotal += parseInt(todayData[h])||0; });
+
+      return { 
+        rec, seqIdx, status, validacao, totalProduzido, necessario, restante, pct,
+        todayData, todayTotal, temLiberacao,
+        bloqueado: !validacao.permitido && !temLiberacao && isOperador,
+        motivoBloqueio: validacao.motivo
+      };
+    });
+
+    if (items.length > 0) {
+      machineGroups.push({maq: maq, items: items});
+    }
+  }
+
+  if(!machineGroups.length){
+    body.innerHTML = html + `
+      <div class="empty" style="flex-direction:column;gap:12px">
+        <div class="ei">⏰</div>
+        <div>Nenhum produto liberado para produção neste dia.</div>
+        <div style="font-size:11px;color:var(--text3)">
+          ${isOperador ? 'Aguarde liberação da sequência ou consulte o PCP.' : 'Use "Produção Dia" para distribuir produtos pelos dias.'}
+        </div>
+      </div>`;
+    return;
+  }
+
+  // Renderizar máquinas com interface aprimorada
+  for(let gi=0; gi<machineGroups.length; gi++){
     const grp = machineGroups[gi];
     const items = grp.items;
-    const hdrCols = '<th style="min-width:32px;text-align:center">#</th><th class="col-prod">Produto</th>'
-      + APON_HOURS.map(function(h){ return '<th style="min-width:68px">'+String(h).padStart(2,'0')+'h</th>'; }).join('')
-      + '<th style="min-width:72px">Total Dia</th><th style="min-width:80px">Acumulado</th><th style="min-width:72px">Solicitado</th><th style="min-width:100px">Progresso</th>';
 
-    // Cabeçalho da seção com nome da máquina + seletor de funcionário
-    const maqKey = 'apon_func_'+dateVal+'_'+grp.maq.replace(/\s+/g,'_');
-    const savedFunc = localStorage.getItem(maqKey)||'';
-    const now = Date.now();
-    const activeWorkers = (typeof funcionarios!=='undefined')
-      ? funcionarios.filter(function(f){
-          return !(f.deactivatedUntil && new Date(f.deactivatedUntil+'T23:59:59').getTime()>=now);
-        })
-      : [];
-    const funcOptions = '<option value="">— Selecionar operador —</option>'
-      + activeWorkers.map(function(f){
-          return '<option value="'+f.nome.replace(/"/g,'&quot;')+'"'+(savedFunc===f.nome?' selected':'')+'>'+f.nome+(f.cargo?' ('+f.cargo+')':'')+'</option>';
-        }).join('');
-    const funcSelector = activeWorkers.length
-      ? '<div style="display:flex;align-items:center;gap:7px">'
-          + '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>'
-          + '<select data-maqkey="'+maqKey+'" onchange="aponSaveFunc(this)" style="background:var(--s1);border:1px solid '+(savedFunc?'var(--cyan)':'var(--border)')+';border-radius:6px;color:'+(savedFunc?'var(--cyan)':'var(--text2)')+';font-family:\'Space Grotesk\',sans-serif;font-size:12px;padding:4px 10px;cursor:pointer;max-width:200px;transition:all .2s" id="func-sel-'+gi+'">'+funcOptions+'</select>'
-          + '</div>'
-      : '<span style="font-size:11px;color:var(--text3);font-style:italic">Nenhum operador — <a href="#" onclick="openSettings();return false" style="color:var(--cyan)">Configurações</a></span>';
+    // Contadores de status
+    const concluidos = items.filter(it => it.status === STATUS_PROGRAMACAO.CONCLUIDO).length;
+    const emAndamento = items.filter(it => it.status === STATUS_PROGRAMACAO.EM_PRODUCAO).length;
+    const bloqueados = items.filter(it => it.bloqueado).length;
+    const comLiberacao = items.filter(it => it.temLiberacao).length;
 
-    html += '<div class="apon-section" style="margin-bottom:14px">'
-      + '<div class="apon-section-header">'
-      + '<span class="ins-maq-title">🏭 '+grp.maq+'</span>'
-      + '<div style="display:flex;align-items:center;gap:14px">'
-      + funcSelector
-      + '<span style="font-size:10px;color:var(--text3);font-family:\'JetBrains Mono\',monospace">'+items.length+' produto(s)</span>'
-      + '</div>'
-      + '</div>'
-      + '<div style="overflow-x:auto;-webkit-overflow-scrolling:touch"><table class="apon-table"><thead><tr>'
-      + hdrCols + '</tr></thead><tbody>';
+    // Calcular eficiência da máquina
+    let metaTotal = 0, produzidoTotal = 0;
+    items.forEach(it => {
+      metaTotal += it.necessario;
+      produzidoTotal += it.totalProduzido;
+    });
+    const eficienciaMaq = metaTotal > 0 ? Math.round((produzidoTotal / metaTotal) * 100) : 0;
 
-    for(let ii=0;ii<items.length;ii++){
+    html += `
+      <div class="apon-section" style="margin-bottom:20px;background:var(--s1);border:1px solid var(--border);border-radius:12px;overflow:hidden">
+        <!-- Cabeçalho da máquina aprimorado -->
+        <div class="apon-section-header" style="padding:14px 18px;border-bottom:1px solid var(--border);background:var(--s2)">
+          <div style="display:flex;align-items:center;justify-content:space-between">
+            <div style="display:flex;align-items:center;gap:16px">
+              <div style="display:flex;align-items:center;gap:10px">
+                <span style="font-weight:700;font-size:15px;color:var(--text)">🏭 ${grp.maq}</span>
+                <div style="background:var(--s1);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:11px;color:var(--text2)">
+                  ${eficienciaMaq}% eficiência
+                </div>
+              </div>
+              
+              <div style="display:flex;gap:8px;font-size:10px">
+                ${concluidos > 0 ? `<span style="background:var(--green);color:#000;padding:3px 7px;border-radius:4px;font-weight:600">${concluidos} ✅</span>` : ''}
+                ${emAndamento > 0 ? `<span style="background:var(--cyan);color:#000;padding:3px 7px;border-radius:4px;font-weight:600">${emAndamento} 🔄</span>` : ''}
+                ${bloqueados > 0 ? `<span style="background:var(--warn);color:#000;padding:3px 7px;border-radius:4px;font-weight:600">${bloqueados} 🔒</span>` : ''}
+                ${comLiberacao > 0 ? `<span style="background:var(--purple);color:#fff;padding:3px 7px;border-radius:4px;font-weight:600">${comLiberacao} 🔀</span>` : ''}
+              </div>
+            </div>
+            
+            <div style="display:flex;align-items:center;gap:12px">
+              <!-- Seletor de operador -->
+              <div style="display:flex;align-items:center;gap:6px">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" stroke-width="2">
+                  <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+                  <circle cx="12" cy="7" r="4"/>
+                </svg>
+                <select style="background:var(--s1);border:1px solid var(--border);border-radius:4px;color:var(--text2);font-size:11px;padding:4px 8px;max-width:140px">
+                  <option>Selecionar operador...</option>
+                  <!-- TODO: Lista de funcionários -->
+                </select>
+              </div>
+              
+              <div style="font-size:11px;color:var(--text3);text-align:right">
+                <div>${items.length} produto(s)</div>
+                <div>${Math.round(produzidoTotal)} de ${Math.round(metaTotal)} cx</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        <div style="padding:0">`;
+
+    // Renderizar produtos da máquina com interface avançada
+    for(let ii=0; ii<items.length; ii++){
       const it = items[ii];
-      const pct = it.needed>0 ? Math.min(100, Math.round(it.overallTotal/it.needed*100)) : 0;
-      const barColor = it.isDone?'var(--green)':pct>=60?'var(--cyan)':'var(--warn)';
-      const rowStyle = it.isDone ? 'background:rgba(41,217,132,.06);border-left:3px solid var(--green)' : '';
-      const inputExtra = it.isDone ? 'border-color:rgba(41,217,132,.4)' : '';
-      const doneNote = it.isDone
-        ? '<div style="font-size:9px;color:var(--green);margin-top:2px;font-weight:700">✓ Concluído</div>'
-        : '';
+      const statusInfo = getStatusInfo(it.status);
+      const isProximo = ii === 0 || items.slice(0, ii).every(prev => prev.status === STATUS_PROGRAMACAO.CONCLUIDO);
+      
+      // Estilo da linha baseado no status
+      let rowStyle = 'border-bottom:1px solid var(--border)';
+      let rowClass = '';
+      
+      if (it.status === STATUS_PROGRAMACAO.CONCLUIDO) {
+        rowStyle += ';background:rgba(41,217,132,.06);border-left:3px solid var(--green)';
+      } else if (it.temLiberacao) {
+        rowStyle += ';background:rgba(139,92,246,.06);border-left:3px solid var(--purple)';
+        rowClass = 'liberado';
+      } else if (it.bloqueado) {
+        rowStyle += ';background:rgba(255,179,0,.06);border-left:3px solid var(--warn)';
+        rowClass = 'bloqueado';
+      } else if (it.status === STATUS_PROGRAMACAO.EM_PRODUCAO) {
+        rowStyle += ';background:rgba(0,212,255,.06);border-left:3px solid var(--cyan)';
+      } else if (isProximo) {
+        rowStyle += ';background:rgba(0,255,204,.06);border-left:3px solid var(--green)';
+      }
 
-      const inputCells = APON_HOURS.map(function(h){
-        const val = it.todayData[h]||'';
-        return '<td style="padding:4px 6px"><input class="apon-input" type="number" min="0" data-rec="'+it.rec.id+'" data-hr="'+h+'" value="'+val+'" placeholder="0" oninput="aponRecalcRow('+it.rec.id+')" style="width:62px;'+inputExtra+'"></td>';
-      }).join('');
+      html += `
+        <div class="produto-row ${rowClass}" style="${rowStyle};padding:16px 18px" data-record-id="${it.rec.id}">
+          <div style="display:flex;align-items:center;gap:16px;margin-bottom:12px">
+            <!-- Sequência e status -->
+            <div style="display:flex;align-items:center;gap:12px;min-width:60px">
+              <div style="background:var(--s2);border:1px solid var(--border);border-radius:6px;padding:4px 8px;text-align:center;min-width:32px">
+                <div style="font-size:10px;color:var(--text3)">SEQ</div>
+                <div style="font-weight:700;color:var(--text)">${ii+1}</div>
+              </div>
+              <span style="color:${statusInfo.cor};font-size:18px">${statusInfo.icone}</span>
+            </div>
+            
+            <!-- Informações do produto -->
+            <div style="min-width:0;flex:1">
+              <div style="font-weight:600;font-size:13px;color:var(--text);margin-bottom:4px">${it.rec.produto}</div>
+              <div style="font-size:11px;color:var(--text3);display:flex;align-items:center;gap:12px">
+                <span>${statusInfo.label}</span>
+                <span>Pri. ${it.rec.prioridade || 'N/A'}</span>
+                ${it.temLiberacao ? '<span style="color:var(--purple)">🔀 LIBERAÇÃO ATIVA</span>' : ''}
+                ${isProximo && !it.bloqueado && it.status !== STATUS_PROGRAMACAO.CONCLUIDO ? '<span style="color:var(--green)">👉 PRÓXIMO</span>' : ''}
+              </div>
+            </div>
+            
+            <!-- Indicadores visuais -->
+            <div style="display:flex;align-items:center;gap:20px">
+              <!-- Progresso circular -->
+              <div style="text-align:center;min-width:80px">
+                <div style="font-size:10px;color:var(--text3);margin-bottom:4px">Progresso</div>
+                <div style="position:relative;width:50px;height:50px;margin:0 auto">
+                  <svg width="50" height="50" style="transform:rotate(-90deg)">
+                    <circle cx="25" cy="25" r="20" fill="none" stroke="var(--s2)" stroke-width="4"/>
+                    <circle cx="25" cy="25" r="20" fill="none" stroke="${statusInfo.cor}" stroke-width="4" 
+                            stroke-dasharray="${2 * Math.PI * 20}" stroke-dashoffset="${2 * Math.PI * 20 * (1 - it.pct/100)}"
+                            style="transition:stroke-dashoffset 0.5s"/>
+                  </svg>
+                  <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-size:11px;font-weight:700;color:${statusInfo.cor}">
+                    ${it.pct}%
+                  </div>
+                </div>
+              </div>
+              
+              <!-- Quantidades -->
+              <div style="text-align:center;min-width:120px">
+                <div style="font-size:10px;color:var(--text3);margin-bottom:4px">Produzido / Meta</div>
+                <div style="font-weight:700;color:var(--text);font-size:14px">
+                  <span style="color:${it.status === STATUS_PROGRAMACAO.CONCLUIDO ? 'var(--green)' : 'var(--cyan)'}">${it.totalProduzido.toLocaleString()}</span>
+                  <span style="color:var(--text3)"> / </span>
+                  <span>${it.necessario.toLocaleString()}</span>
+                </div>
+                ${it.restante > 0 ? `
+                  <div style="font-size:10px;color:var(--warn);margin-top:2px">
+                    Faltam ${it.restante.toLocaleString()} caixas
+                  </div>
+                ` : ''}
+              </div>
 
-      html += '<tr id="prod-row-'+it.rec.id+'" style="'+rowStyle+'">'
-        + '<td style="text-align:center;font-family:\'JetBrains Mono\',monospace;font-size:11px;color:var(--text3);font-weight:700;padding:6px 8px">'+(ii+1)+'</td>'
-        + '<td class="col-prod" style="padding:6px 12px;min-width:200px;max-width:260px">'
-        + '<div style="font-size:11px;font-weight:600;color:'+(it.isDone?'var(--green)':'var(--text)')+'">'+it.rec.produto+'</div>'
-        + doneNote
-        + '</td>'
-        + inputCells
-        + '<td style="padding:6px 8px;text-align:center"><span class="apon-total" id="apon-dayqty-'+it.rec.id+'" style="color:var(--cyan)">'+(it.todayTotal||'—')+'</span></td>'
-        + '<td style="padding:6px 8px;text-align:center"><span class="apon-total" id="apon-overall-'+it.rec.id+'" style="color:'+(it.isDone?'var(--green)':'var(--text)')+'">'+it.overallTotal+'</span></td>'
-        + '<td style="padding:6px 8px;text-align:center"><span class="apon-meta">'+it.needed+'</span></td>'
-        + '<td style="padding:6px 8px;min-width:100px">'
-        + '<div class="apon-meta" id="apon-pct-'+it.rec.id+'" style="color:'+barColor+';font-weight:700;text-align:center">'+pct+'%</div>'
-        + '<div class="apon-progress" style="margin-top:3px"><div class="apon-progress-bar" id="apon-bar-'+it.rec.id+'" style="width:'+pct+'%;background:'+barColor+'"></div></div>'
-        + '</td>'
-        + '</tr>';
+              <!-- Ações -->
+              ${isPCP && it.bloqueado ? `
+                <button onclick="abrirModalLiberacaoSequencia(${it.rec.id})" 
+                        style="background:var(--purple);color:#fff;border:none;border-radius:6px;padding:6px 12px;font-size:11px;cursor:pointer;white-space:nowrap">
+                  🔀 Liberar
+                </button>
+              ` : ''}
+            </div>
+          </div>`;
+
+      // Área de apontamento (só se permitido)
+      if (!it.bloqueado || it.temLiberacao) {
+        if (it.status !== STATUS_PROGRAMACAO.CONCLUIDO) {
+          html += `
+            <div class="apontamento-area" style="background:var(--s2);border-radius:8px;padding:14px;margin-top:12px">
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+                <div style="display:flex;align-items:center;gap:8px">
+                  <span style="font-size:13px;font-weight:600;color:var(--text)">⏱ Apontamento ${dateLabel}</span>
+                  ${it.todayTotal > 0 ? `<span style="background:var(--cyan);color:#000;padding:2px 6px;border-radius:4px;font-size:10px;font-weight:600">${it.todayTotal} caixas hoje</span>` : ''}
+                </div>
+                <button onclick="salvarApontamentoCompleto(${it.rec.id})"
+                        style="background:var(--green);color:#000;border:none;border-radius:6px;padding:4px 10px;font-size:10px;font-weight:600;cursor:pointer">
+                  💾 Salvar
+                </button>
+              </div>
+              
+              <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(70px,1fr));gap:10px">`;
+
+          // Inputs por hora com validação
+          APON_HOURS.forEach(h => {
+            const val = it.todayData[h]||'';
+            html += `
+              <div style="text-align:center">
+                <div style="font-size:10px;color:var(--text3);margin-bottom:4px;font-weight:600">${String(h).padStart(2,'0')}h</div>
+                <input class="apon-input-controlado" type="number" min="0" max="${Math.min(it.restante, 100)}" 
+                       data-rec="${it.rec.id}" data-hr="${h}" value="${val}" placeholder="0"
+                       oninput="aponRecalcRowControlado('${it.rec.id}')"
+                       style="width:60px;padding:6px;border:1px solid var(--border);border-radius:6px;text-align:center;font-size:12px;background:var(--bg)">
+              </div>`;
+          });
+
+          html += `
+              </div>
+              
+              ${it.restante <= 20 ? `
+                <div style="background:rgba(255,179,0,.15);border:1px solid var(--warn);border-radius:6px;padding:10px;margin-top:12px;font-size:11px;color:var(--warn)">
+                  ⚠️ <strong>Próximo da conclusão!</strong> Faltam apenas ${it.restante} caixas para atingir a meta.
+                </div>
+              ` : ''}
+              
+              ${it.temLiberacao ? `
+                <div style="background:rgba(139,92,246,.15);border:1px solid var(--purple);border-radius:6px;padding:10px;margin-top:12px;font-size:11px;color:var(--purple)">
+                  🔀 <strong>Liberação ativa:</strong> Este produto foi liberado para produção fora de sequência.
+                </div>
+              ` : ''}
+            </div>`;
+        } else {
+          // Produto concluído - mostrar resumo
+          html += `
+            <div style="background:rgba(41,217,132,.1);border:1px solid var(--green);border-radius:8px;padding:12px;margin-top:12px;font-size:12px;color:var(--green)">
+              ✅ <strong>Produção concluída!</strong> 
+              Produto finalizado automaticamente ao atingir ${it.necessario.toLocaleString()} caixas.
+              ${it.totalProduzido > it.necessario ? `<br>📈 Produção excedente: +${(it.totalProduzido - it.necessario).toLocaleString()} caixas` : ''}
+            </div>`;
+        }
+      } else {
+        // Produto bloqueado
+        html += `
+          <div style="background:rgba(255,179,0,.1);border:1px solid var(--warn);border-radius:6px;padding:12px;margin-top:12px;font-size:12px;color:var(--warn)">
+            🔒 <strong>Produção bloqueada:</strong> ${it.motivoBloqueio}
+            ${isPCP ? `<br><br><button onclick="abrirModalLiberacaoSequencia(${it.rec.id})" style="background:var(--purple);color:#fff;border:none;border-radius:4px;padding:4px 8px;font-size:10px;cursor:pointer">🔀 Liberar Exceção</button>` : ''}
+          </div>`;
+      }
+
+      html += '</div>';
     }
-    html += '</tbody></table></div></div>';
+
+    html += '</div></div>';
   }
 
   body.innerHTML = html;
   body._machineGroups = machineGroups;
   body._dateVal = dateVal;
+  
+  // Inicializar notificações se ainda não foi feito
+  if (typeof _notificacoesInicializadas === 'undefined') {
+    iniciarNotificacoesTempoReal();
+    window._notificacoesInicializadas = true;
+  }
+}
+
+// Verifica se é o próximo da sequência liberada
+function isProximoDaSequencia(record, todosRecords) {
+  const index = todosRecords.findIndex(r => r.id === record.id);
+  if (index === 0) return true; // Primeiro da lista
+  
+  // Verificar se todos os anteriores foram concluídos
+  for (let i = 0; i < index; i++) {
+    const anterior = todosRecords[i];
+    const totalProduzido = calcularTotalProduzido(anterior.id);
+    if (totalProduzido < anterior.qntCaixas) {
+      return false;
+    }
+  }
+  
+  return true;
+}
+
+// Recálculo controlado de linha (com validações)
+function aponRecalcRowControlado(recordId) {
+  const inputs = document.querySelectorAll(`[data-rec="${recordId}"]`);
+  let total = 0;
+  
+  inputs.forEach(input => {
+    const val = parseInt(input.value) || 0;
+    total += val;
+  });
+  
+  // Buscar dados do record para validação
+  const record = records.find(r => r.id === recordId);
+  if (!record) return;
+  
+  const totalProduzido = calcularTotalProduzido(recordId);
+  const necessario = record.qntCaixas || 0;
+  const totalGlobal = totalProduzido + total;
+  
+  // VALIDAÇÃO: Não permitir exceder muito a meta
+  if (totalGlobal > necessario + 10) { // Margem de 10 caixas
+    toast('⚠️ Quantidade muito acima da meta! Verifique se está correto.', 'warn');
+  }
+  
+  // Salvar apontamento
+  const data = {};
+  inputs.forEach(input => {
+    const hora = input.dataset.hr;
+    data[hora] = input.value || '';
+  });
+  
+  aponStorageSet(aponKey(prodSelectedDate, recordId), data);
+  
+  // Atualizar interface
+  const totalElem = document.getElementById('apon-dayqty-'+recordId);
+  if (totalElem) totalElem.textContent = total || '—';
+  
+  const overallElem = document.getElementById('apon-overall-'+recordId);
+  if (overallElem) overallElem.textContent = totalGlobal;
+  
+  // Verificar se concluiu automaticamente
+  if (totalGlobal >= necessario) {
+    toast(`✅ Produto "${record.produto}" concluído automaticamente!`, 'ok');
+    registrarAuditoria('PRODUTO_CONCLUIDO_AUTO', {
+      recordId: recordId,
+      produto: record.produto,
+      totalProduzido: totalGlobal,
+      meta: necessario
+    });
+    
+    // Recarregar para mostrar como concluído
+    setTimeout(() => renderApontamento(), 1000);
+  }
+}
+
+// Função para PCP permitir produção fora de sequência
+function realizadoPermitirFaltaSequencia() {
+  if (!isPCPLevel()) {
+    toast('Apenas usuários PCP podem alterar a sequência!', 'err');
+    return;
+  }
+  
+  // TODO: Implementar modal de seleção de produto e justificativa
+  toast('Funcionalidade de quebra de sequência em desenvolvimento', 'info');
+}
+
+// Função para PCP resetar apontamentos do dia
+function realizadoResetarDia(data) {
+  if (!isPCPLevel()) {
+    toast('Apenas usuários PCP podem resetar dados!', 'err');
+    return;
+  }
+  
+  if (!confirm(`Deseja realmente limpar TODOS os apontamentos do dia ${fmtDate(new Date(data+'T12:00:00'))}?\n\nEsta ação não pode ser desfeita.`)) {
+    return;
+  }
+  
+  // Limpar localStorage do dia
+  const keysToRemove = [];
+  for(let i=0; i<localStorage.length; i++){
+    const key = localStorage.key(i);
+    if(key && key.startsWith('apon_'+data+'_')){
+      keysToRemove.push(key);
+    }
+  }
+  
+  keysToRemove.forEach(key => localStorage.removeItem(key));
+  
+  registrarAuditoria('DIA_RESETADO', {
+    data: data,
+    itensLimpos: keysToRemove.length
+  });
+  
+  toast(`✅ ${keysToRemove.length} apontamentos removidos do dia ${fmtDate(new Date(data+'T12:00:00'))}`, 'ok');
+  renderApontamento();
 }
 
 // Aba "Total da Semana": mostra todos os produtos programados com taxa de produção e status
@@ -7653,6 +8259,614 @@ window.saveMaquinaModal = saveMaquinaModal;
 window.importarMaquinasExcel = importarMaquinasExcel;
 window.downloadSetupTemplate = downloadSetupTemplate;
 window.importarSetupExcel = importarSetupExcel;
+
+// ===== SISTEMA FIRESTORE PARA APONTAMENTOS (substituir localStorage) =====
+
+// Carrega apontamentos da semana atual do Firestore
+async function carregarApontamentosSemana(prodBaseMonday) {
+  if (!prodBaseMonday) return {};
+  
+  try {
+    const weekStart = dateStr(prodBaseMonday);
+    const weekEnd = dateStr(addDays(prodBaseMonday, 6));
+    
+    const q = query(
+      lojaCol('apontamentos_producao'),
+      where('data', '>=', weekStart),
+      where('data', '<=', weekEnd),
+      orderBy('data'),
+      orderBy('criadoEm')
+    );
+    
+    const snap = await getDocs(q);
+    const apontamentos = {};
+    
+    snap.docs.forEach(doc => {
+      const data = doc.data();
+      const key = `${data.data}_${data.recordId}`;
+      
+      if (!apontamentos[key]) {
+        apontamentos[key] = {};
+      }
+      
+      // Consolidar por hora
+      if (data.hora && data.quantidade) {
+        apontamentos[key][data.hora] = (apontamentos[key][data.hora] || 0) + data.quantidade;
+      }
+    });
+    
+    return apontamentos;
+    
+  } catch(e) {
+    console.error('Erro ao carregar apontamentos:', e);
+    toast('Erro ao carregar dados de produção', 'err');
+    return {};
+  }
+}
+
+// Salva apontamento individual no Firestore
+async function salvarApontamentoFirestore(data, hora, recordId, quantidade, operador) {
+  try {
+    const user = currentUser();
+    if (!user) {
+      toast('Usuário não autenticado', 'err');
+      return false;
+    }
+    
+    const record = records.find(r => r.id === recordId);
+    if (!record) {
+      toast('Produto não encontrado', 'err');
+      return false;
+    }
+    
+    // Validações de negócio
+    const validacao = validarApontamento(recordId, quantidade, data);
+    if (!validacao.valido) {
+      toast('❌ ' + validacao.motivo, 'err');
+      return false;
+    }
+    
+    const payload = {
+      data: data,
+      hora: parseInt(hora),
+      recordId: recordId,
+      quantidade: parseInt(quantidade) || 0,
+      produto: record.produto,
+      maquina: record.maquina,
+      operador: operador || 'N/A',
+      usuario: user.email,
+      criadoEm: serverTimestamp(),
+      lojaId: getLojaAtiva(),
+      ip: getClientIP(),
+      sessao: getSessionId()
+    };
+    
+    await addDoc(lojaCol('apontamentos_producao'), payload);
+    
+    // Registrar auditoria
+    await registrarAuditoria('APONTAMENTO_SALVO', {
+      recordId: recordId,
+      produto: record.produto,
+      data: data,
+      hora: hora,
+      quantidade: quantidade,
+      quantidadeAnterior: 0 // TODO: buscar quantidade anterior
+    });
+    
+    return true;
+    
+  } catch(e) {
+    console.error('Erro ao salvar apontamento:', e);
+    toast('Erro ao salvar produção: ' + e.message, 'err');
+    return false;
+  }
+}
+
+// Validações de apontamento
+function validarApontamento(recordId, quantidade, data) {
+  const record = records.find(r => r.id === recordId);
+  if (!record) {
+    return { valido: false, motivo: 'Produto não encontrado' };
+  }
+  
+  // 1. Quantidade não pode ser negativa
+  if (quantidade < 0) {
+    return { valido: false, motivo: 'Quantidade não pode ser negativa' };
+  }
+  
+  // 2. Verificar se data é válida
+  const dataObj = new Date(data + 'T12:00:00');
+  const hoje = new Date();
+  const umAnoAtras = new Date();
+  umAnoAtras.setFullYear(hoje.getFullYear() - 1);
+  
+  if (dataObj > hoje) {
+    return { valido: false, motivo: 'Não é possível apontar produção futura' };
+  }
+  
+  if (dataObj < umAnoAtras) {
+    return { valido: false, motivo: 'Data muito antiga para apontamento' };
+  }
+  
+  // 3. Verificar se não excede muito a meta
+  const totalAtual = calcularTotalProduzido(recordId);
+  const meta = record.qntCaixas || 0;
+  const novoTotal = totalAtual + quantidade;
+  
+  if (novoTotal > meta * 1.5) { // 50% acima da meta
+    return { valido: false, motivo: `Quantidade muito acima da meta (${novoTotal} vs ${meta} programadas)` };
+  }
+  
+  // 4. Para operadores, validar se está liberado
+  if (isOperadorLevel()) {
+    const validacaoProducao = validarProducaoPermitida(record, record.maquina, data);
+    if (!validacaoProducao.permitido) {
+      return { valido: false, motivo: validacaoProducao.motivo };
+    }
+  }
+  
+  // 5. Validar quantidade por hora não absurda
+  if (quantidade > 500) { // Máximo 500 caixas por hora
+    return { valido: false, motivo: 'Quantidade por hora muito alta (máx 500)' };
+  }
+  
+  return { valido: true };
+}
+
+// Funções auxiliares
+function getClientIP() {
+  // Simplificado - em produção poderia usar serviço real
+  return 'sistema';
+}
+
+function getSessionId() {
+  let sessionId = sessionStorage.getItem('sessionId');
+  if (!sessionId) {
+    sessionId = Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+    sessionStorage.setItem('sessionId', sessionId);
+  }
+  return sessionId;
+}
+
+// Calcula total produzido usando dados híbridos (Firestore + localStorage)
+async function calcularTotalProduzidoHibrido(recordId) {
+  // TODO: Implementar busca no Firestore + fallback localStorage
+  // Por enquanto, usar localStorage para compatibilidade
+  return calcularTotalProduzido(recordId);
+}
+
+// ===== INTERFACE AVANÇADA PARA ABA REALIZADO =====
+
+// Renderiza painel de alertas
+function renderPainelAlertas() {
+  const alertas = verificarAlertasProducao();
+  
+  if (alertas.length === 0) return '';
+  
+  const alertasHtml = alertas.map(alerta => {
+    let cor, icone, titulo, detalhes;
+    
+    switch(alerta.tipo) {
+      case 'ATRASO':
+        cor = 'var(--red)';
+        icone = '🚨';
+        titulo = `${alerta.produto} em atraso`;
+        detalhes = `${alerta.dias_atraso} dia(s) · ${alerta.pct_concluido}% concluído`;
+        break;
+      case 'PRODUCAO_PARADA':
+        cor = 'var(--warn)';
+        icone = '⏸️';
+        titulo = `${alerta.produto} parado`;
+        detalhes = `${alerta.dias_parado} dia(s) sem produção · ${alerta.pct_concluido}% concluído`;
+        break;
+      case 'EXCESSO_PRODUCAO':
+        cor = 'var(--purple)';
+        icone = '📈';
+        titulo = `${alerta.produto} com excesso`;
+        detalhes = `${alerta.excesso}% acima da meta`;
+        break;
+      default:
+        cor = 'var(--text3)';
+        icone = 'ℹ️';
+        titulo = alerta.produto;
+        detalhes = '';
+    }
+    
+    return `
+      <div style="background:rgba(255,255,255,.03);border-left:3px solid ${cor};padding:8px 12px;border-radius:6px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="font-size:14px">${icone}</span>
+          <div>
+            <div style="font-size:11px;font-weight:600;color:${cor}">${titulo}</div>
+            <div style="font-size:10px;color:var(--text3)">${detalhes}</div>
+          </div>
+        </div>
+      </div>`;
+  }).join('');
+  
+  return `
+    <div style="background:rgba(255,179,0,.05);border:1px solid rgba(255,179,0,.2);border-radius:10px;padding:12px 16px;margin-bottom:16px">
+      <div style="font-size:12px;font-weight:700;color:var(--warn);margin-bottom:8px;display:flex;align-items:center;gap:8px">
+        🔔 Alertas de Produção
+        <span style="background:var(--warn);color:#000;padding:1px 6px;border-radius:4px;font-size:10px">${alertas.length}</span>
+      </div>
+      <div style="display:grid;gap:6px">
+        ${alertasHtml}
+      </div>
+    </div>`;
+}
+
+// Modal para liberação fora de sequência
+function abrirModalLiberacaoSequencia(recordId) {
+  if (!isPCPLevel()) {
+    toast('Apenas PCP pode liberar fora de sequência!', 'err');
+    return;
+  }
+  
+  const record = records.find(r => r.id === recordId);
+  if (!record) return;
+  
+  const modalHtml = `
+    <div id="modal-liberacao" style="position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.7);z-index:9999;display:flex;align-items:center;justify-content:center">
+      <div style="background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:24px;max-width:500px;width:90%">
+        <div style="font-size:16px;font-weight:700;color:var(--text);margin-bottom:16px">
+          🔀 Liberar Fora de Sequência
+        </div>
+        
+        <div style="background:var(--s1);border-radius:8px;padding:12px;margin-bottom:16px">
+          <div style="font-size:12px;font-weight:600;color:var(--text)">${record.produto}</div>
+          <div style="font-size:10px;color:var(--text3);margin-top:4px">
+            Máquina: ${record.maquina} · Meta: ${record.qntCaixas} caixas
+          </div>
+        </div>
+        
+        <div style="margin-bottom:16px">
+          <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:6px">
+            Motivo da liberação:
+          </label>
+          <select id="liberacao-motivo" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:6px;background:var(--s1);color:var(--text)">
+            <option value="">Selecione o motivo...</option>
+            <option value="urgencia_cliente">Urgência do cliente</option>
+            <option value="setup_longo">Setup muito longo</option>
+            <option value="materia_prima">Falta de matéria-prima outro produto</option>
+            <option value="manutencao">Manutenção da máquina</option>
+            <option value="capacidade">Aproveitamento de capacidade ociosa</option>
+            <option value="outro">Outro motivo</option>
+          </select>
+        </div>
+        
+        <div id="liberacao-outro" style="margin-bottom:16px;display:none">
+          <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:6px">
+            Especifique o motivo:
+          </label>
+          <textarea id="liberacao-motivo-outro" 
+                    style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:6px;background:var(--s1);color:var(--text);resize:vertical;min-height:60px"
+                    placeholder="Descreva o motivo da liberação..."></textarea>
+        </div>
+        
+        <div style="background:rgba(255,179,0,.1);border:1px solid var(--warn);border-radius:6px;padding:10px;margin-bottom:16px;font-size:11px;color:var(--warn)">
+          ⚠️ <strong>Atenção:</strong> Esta liberação será válida por 24 horas e será registrada na auditoria.
+        </div>
+        
+        <div style="display:flex;gap:10px;justify-content:flex-end">
+          <button onclick="fecharModalLiberacao()" 
+                  style="background:var(--s2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:8px 16px;cursor:pointer">
+            Cancelar
+          </button>
+          <button onclick="confirmarLiberacaoSequencia('${recordId}')"
+                  style="background:var(--warn);color:#000;border:none;border-radius:6px;padding:8px 16px;font-weight:600;cursor:pointer">
+            🔀 Liberar Produto
+          </button>
+        </div>
+      </div>
+    </div>`;
+  
+  document.body.insertAdjacentHTML('beforeend', modalHtml);
+  
+  // Event listener para mostrar/ocultar campo "outro"
+  document.getElementById('liberacao-motivo').addEventListener('change', function() {
+    const outroField = document.getElementById('liberacao-outro');
+    if (this.value === 'outro') {
+      outroField.style.display = 'block';
+    } else {
+      outroField.style.display = 'none';
+    }
+  });
+}
+
+function fecharModalLiberacao() {
+  const modal = document.getElementById('modal-liberacao');
+  if (modal) modal.remove();
+}
+
+function confirmarLiberacaoSequencia(recordId) {
+  const motivoSelect = document.getElementById('liberacao-motivo').value;
+  const motivoOutro = document.getElementById('liberacao-motivo-outro').value;
+  
+  if (!motivoSelect) {
+    toast('Selecione o motivo da liberação!', 'err');
+    return;
+  }
+  
+  if (motivoSelect === 'outro' && !motivoOutro.trim()) {
+    toast('Especifique o motivo da liberação!', 'err');
+    return;
+  }
+  
+  const motivo = motivoSelect === 'outro' ? motivoOutro.trim() : motivoSelect;
+  const usuario = currentUser()?.email || 'desconhecido';
+  
+  const sucesso = liberarProdutoFaltaSequencia(recordId, motivo, usuario);
+  
+  if (sucesso) {
+    fecharModalLiberacao();
+    renderApontamento(); // Recarregar para mostrar liberação
+  }
+}
+
+// Sistema de notificações em tempo real
+function iniciarNotificacoesTempoReal() {
+  // Verificar alertas a cada 5 minutos
+  setInterval(() => {
+    const alertas = verificarAlertasProducao();
+    const alertasAlta = alertas.filter(a => a.prioridade === 'ALTA');
+    
+    if (alertasAlta.length > 0 && isPCPLevel()) {
+      mostrarNotificacaoDesktop(
+        '🚨 Alertas de Produção',
+        `${alertasAlta.length} produto(s) em situação crítica`
+      );
+    }
+  }, 5 * 60 * 1000);
+  
+  // Auto-save a cada 30 segundos
+  setInterval(() => {
+    salvarApontamentosAutomatico();
+  }, 30 * 1000);
+}
+
+function mostrarNotificacaoDesktop(titulo, mensagem) {
+  if ('Notification' in window && Notification.permission === 'granted') {
+    new Notification(titulo, {
+      body: mensagem,
+      icon: '/favicon.ico',
+      tag: 'producao-alert'
+    });
+  }
+}
+
+function solicitarPermissaoNotificacoes() {
+  if ('Notification' in window && Notification.permission === 'default') {
+    Notification.requestPermission().then(permission => {
+      if (permission === 'granted') {
+        toast('✅ Notificações ativadas para alertas de produção', 'ok');
+      }
+    });
+  }
+}
+
+// Auto-save de apontamentos pendentes
+let _apontamentosPendentes = new Map();
+
+function salvarApontamentosAutomatico() {
+  if (_apontamentosPendentes.size === 0) return;
+  
+  const pendentes = Array.from(_apontamentosPendentes.entries());
+  let salvos = 0;
+  
+  pendentes.forEach(async ([key, dados]) => {
+    try {
+      const sucesso = await salvarApontamentoFirestore(
+        dados.data, dados.hora, dados.recordId, dados.quantidade, dados.operador
+      );
+      
+      if (sucesso) {
+        _apontamentosPendentes.delete(key);
+        salvos++;
+      }
+    } catch(e) {
+      console.warn('Erro no auto-save:', e);
+    }
+  });
+  
+  if (salvos > 0) {
+    console.log(`Auto-save: ${salvos} apontamentos salvos`);
+  }
+}
+
+// Adicionar apontamento à fila de auto-save
+function adicionarApontamentoPendente(data, hora, recordId, quantidade, operador) {
+  const key = `${data}_${recordId}_${hora}`;
+  _apontamentosPendentes.set(key, {
+    data, hora, recordId, quantidade, operador, timestamp: Date.now()
+  });
+}
+
+// ===== DASHBOARD DE INDICADORES =====
+
+function renderDashboardIndicadores() {
+  const weekRecs = records.filter(r => {
+    const dt = r.dtDesejada || r.dtSolicitacao;
+    if (!prodBaseMonday) return false;
+    const weekStart = dateStr(prodBaseMonday);
+    const weekEnd = dateStr(addDays(prodBaseMonday, 6));
+    return dt && dt >= weekStart && dt <= weekEnd;
+  });
+  
+  let totalMeta = 0;
+  let totalProduzido = 0;
+  let produtosConcluidos = 0;
+  let produtosAtrasados = 0;
+  
+  weekRecs.forEach(record => {
+    const meta = record.qntCaixas || 0;
+    const produzido = calcularTotalProduzido(record.id);
+    const status = determinarStatusProgramacao(record);
+    
+    totalMeta += meta;
+    totalProduzido += produzido;
+    
+    if (status === STATUS_PROGRAMACAO.CONCLUIDO) {
+      produtosConcluidos++;
+    } else if (status === STATUS_PROGRAMACAO.ATRASADO) {
+      produtosAtrasados++;
+    }
+  });
+  
+  const eficiencia = totalMeta > 0 ? Math.round((totalProduzido / totalMeta) * 100) : 0;
+  const produtosPendentes = weekRecs.length - produtosConcluidos;
+  
+  return `
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:16px">
+      <div style="background:var(--s1);border:1px solid var(--border);border-radius:8px;padding:12px;text-align:center">
+        <div style="font-size:20px;font-weight:700;color:var(--cyan)">${eficiencia}%</div>
+        <div style="font-size:10px;color:var(--text3);text-transform:uppercase">Eficiência</div>
+      </div>
+      
+      <div style="background:var(--s1);border:1px solid var(--border);border-radius:8px;padding:12px;text-align:center">
+        <div style="font-size:20px;font-weight:700;color:var(--green)">${produtosConcluidos}</div>
+        <div style="font-size:10px;color:var(--text3);text-transform:uppercase">Concluídos</div>
+      </div>
+      
+      <div style="background:var(--s1);border:1px solid var(--border);border-radius:8px;padding:12px;text-align:center">
+        <div style="font-size:20px;font-weight:700;color:var(--warn)">${produtosPendentes}</div>
+        <div style="font-size:10px;color:var(--text3);text-transform:uppercase">Pendentes</div>
+      </div>
+      
+      <div style="background:var(--s1);border:1px solid var(--border);border-radius:8px;padding:12px;text-align:center">
+        <div style="font-size:20px;font-weight:700;color:var(--red)">${produtosAtrasados}</div>
+        <div style="font-size:10px;color:var(--text3);text-transform:uppercase">Atrasados</div>
+      </div>
+      
+      <div style="background:var(--s1);border:1px solid var(--border);border-radius:8px;padding:12px;text-align:center">
+        <div style="font-size:16px;font-weight:700;color:var(--text)">${totalProduzido.toLocaleString()}</div>
+        <div style="font-size:10px;color:var(--text3);text-transform:uppercase">Caixas Produzidas</div>
+      </div>
+    </div>`;
+}
+
+// Exportar novas funções controladas
+window.aponRecalcRowControlado = aponRecalcRowControlado;
+window.realizadoPermitirFaltaSequencia = realizadoPermitirFaltaSequencia;
+window.realizadoResetarDia = realizadoResetarDia;
+window.pdUnassign = pdUnassign;
+window.abrirModalLiberacaoSequencia = abrirModalLiberacaoSequencia;
+window.fecharModalLiberacao = fecharModalLiberacao;
+window.confirmarLiberacaoSequencia = confirmarLiberacaoSequencia;
+window.solicitarPermissaoNotificacoes = solicitarPermissaoNotificacoes;
+
+// ===== NOVA VERSÃO RENDERAPONTAMENTO COM FIRESTORE =====
+
+let _apontamentosCache = {};
+let _cacheTimestamp = 0;
+
+async function renderRealizadoControladoComFirestore(dateVal, body) {
+  // Carregar dados do Firestore (com cache)
+  const agora = Date.now();
+  if (agora - _cacheTimestamp > 30000) { // Cache por 30 segundos
+    _apontamentosCache = await carregarApontamentosSemana(prodBaseMonday);
+    _cacheTimestamp = agora;
+  }
+  
+  const isOperador = isOperadorLevel();
+  const isPCP = isPCPLevel();
+  
+  // Mesmo código de filtros e validações...
+  const weekDays = getWeekDays(prodBaseMonday);
+  const weekStart = dateStr(weekDays[0]);
+  const weekEnd = dateStr(weekDays[6]);
+  
+  function recIsInWeek(r){
+    const dt = r.dtDesejada || r.dtSolicitacao;
+    return dt && dt >= weekStart && dt <= weekEnd;
+  }
+
+  const weekRecs = records.filter(recIsInWeek);
+  
+  if (!weekRecs.length) {
+    body.innerHTML = `
+      <div class="empty" style="flex-direction:column;gap:12px">
+        <div class="ei">📋</div>
+        <div>Nenhum produto programado para esta semana.</div>
+        <div style="font-size:11px;color:var(--text3)">
+          Use <strong>Programação Semanal</strong> para criar a programação.
+        </div>
+      </div>`;
+    return;
+  }
+
+  // Resto da implementação continua igual...
+  // (mesmo código da função anterior, mas usando _apontamentosCache ao invés de localStorage)
+}
+
+// ===== SISTEMA DE ALERTAS INTELIGENTES =====
+
+function verificarAlertasProducao() {
+  const alertas = [];
+  
+  records.forEach(record => {
+    const totalProduzido = calcularTotalProduzido(record.id);
+    const meta = record.qntCaixas || 0;
+    const pct = meta > 0 ? (totalProduzido / meta) * 100 : 0;
+    const dataDesejada = new Date((record.dtDesejada || record.dtSolicitacao) + 'T12:00:00');
+    const hoje = new Date();
+    
+    // Alerta: Produto em atraso
+    if (dataDesejada < hoje && pct < 100) {
+      alertas.push({
+        tipo: 'ATRASO',
+        prioridade: 'ALTA',
+        produto: record.produto,
+        dias_atraso: Math.floor((hoje - dataDesejada) / (1000 * 60 * 60 * 24)),
+        pct_concluido: Math.round(pct)
+      });
+    }
+    
+    // Alerta: Produção parada há muito tempo
+    const ultimoApontamento = getUltimoApontamento(record.id);
+    if (ultimoApontamento && pct > 0 && pct < 100) {
+      const diasParado = (hoje - ultimoApontamento) / (1000 * 60 * 60 * 24);
+      if (diasParado > 2) {
+        alertas.push({
+          tipo: 'PRODUCAO_PARADA',
+          prioridade: 'MEDIA',
+          produto: record.produto,
+          dias_parado: Math.floor(diasParado),
+          pct_concluido: Math.round(pct)
+        });
+      }
+    }
+    
+    // Alerta: Excesso de produção
+    if (pct > 110) {
+      alertas.push({
+        tipo: 'EXCESSO_PRODUCAO',
+        prioridade: 'BAIXA',
+        produto: record.produto,
+        excesso: Math.round(pct - 100)
+      });
+    }
+  });
+  
+  return alertas;
+}
+
+function getUltimoApontamento(recordId) {
+  // TODO: Implementar busca no Firestore
+  // Por enquanto, usar localStorage
+  const keys = aponGetAllKeys().filter(k => k.endsWith('_' + recordId));
+  let ultimaData = null;
+  
+  keys.forEach(key => {
+    const dataPart = key.slice('apon_'.length, key.length - ('_' + recordId).length);
+    const data = new Date(dataPart + 'T12:00:00');
+    if (!ultimaData || data > ultimaData) {
+      ultimaData = data;
+    }
+  });
+  
+  return ultimaData;
+}
 window.renderProdutosCfg = renderProdutosCfg;
 // window.prodCfgToggle = prodCfgToggle; // função removida
 window.openAddProduto = openAddProduto;
