@@ -4646,6 +4646,8 @@ async function pdLoadWeek(mondayDate) {
   } catch(e) {
     console.error('Erro ao carregar programacao_dias:', e);
   }
+  // Garante que o mapa do Gantt está atualizado após carregar overrides
+  pdBuildGanttMap(mondayDate);
 }
 
 function pdGetAssign(recId){ return (_pdCache[String(recId)] || {}).dia || null; }
@@ -4672,6 +4674,36 @@ function pdSetFin(recId, v) {
   ).catch(function(e){ console.error('Erro ao salvar finalizado no Firestore:', e); });
 }
 
+// ── Retorna o dia real do Gantt para um registro (primeiro segmento)
+// Se o PCP fez override manual (drag), usa o override; caso contrário usa o Gantt.
+// _pdGanttMap é populado por pdBuildGanttMap() antes de cada render.
+let _pdGanttMap = {}; // { recId: 'YYYY-MM-DD' }
+
+function pdBuildGanttMap(monday) {
+  _pdGanttMap = {};
+  try {
+    const { schedule } = buildSchedule(monday);
+    for (const maq of MAQUINAS) {
+      const entries = schedule[maq] || [];
+      for (const entry of entries) {
+        const firstSeg = entry.segments && entry.segments.length > 0 ? entry.segments[0] : null;
+        if (firstSeg) {
+          _pdGanttMap[String(entry.rec.id)] = firstSeg.date;
+        }
+      }
+    }
+  } catch(e) {
+    console.error('Erro em pdBuildGanttMap:', e);
+  }
+}
+
+// Retorna o dia efetivo: override manual se existir, senão dia do Gantt
+function pdGetEffectiveDay(recId) {
+  const override = pdGetAssign(recId);
+  if (override) return override;
+  return _pdGanttMap[String(recId)] || null;
+}
+
 // ===== VERSÃO CONTROLADA DA ABA PRODUÇÃO DIA =====
 
 function renderProducaoDiaControlado() {
@@ -4679,6 +4711,9 @@ function renderProducaoDiaControlado() {
     document.getElementById('apon-body').innerHTML = '<div class="empty"><div class="ei">📅</div>Selecione uma semana</div>'; 
     return; 
   }
+
+  // Calcula mapa de dias do Gantt para esta semana
+  pdBuildGanttMap(prodBaseMonday);
 
   const isOperador = isOperadorLevel();
   const isPCP = isPCPLevel();
@@ -4688,7 +4723,11 @@ function renderProducaoDiaControlado() {
   const weekEnd = dateStr(weekDays[6]);
   const workDays = weekDays.filter(function(d) { return hoursOnDay(d) > 0; });
 
+  // Inclui todos os registros que têm segmento nesta semana (via Gantt) OU dtDesejada na semana
   const weekRecs = records.filter(function(r) {
+    if (r.status === 'Concluído') return false;
+    const effectiveDay = pdGetEffectiveDay(r.id);
+    if (effectiveDay && effectiveDay >= weekStart && effectiveDay <= weekEnd) return true;
     const dt = r.dtDesejada || r.dtSolicitacao;
     return dt && dt >= weekStart && dt <= weekEnd;
   });
@@ -4750,7 +4789,7 @@ function renderProducaoDiaControlado() {
     const isToday = ds === dateStr(new Date());
 
     const dayRecs = weekRecs.filter(function(r) {
-      return pdGetAssign(r.id) === ds && !pdIsFin(r.id);
+      return pdGetEffectiveDay(r.id) === ds && !pdIsFin(r.id);
     });
 
     const borderColor = isToday ? 'var(--cyan)' : 'var(--border)';
@@ -4790,9 +4829,9 @@ function renderProducaoDiaControlado() {
 
   // Produtos não atribuídos (só PCP pode ver e mover)
   const unassigned = weekRecs.filter(function(r) {
-    const a = pdGetAssign(r.id);
-    const isWD = workDays.some(function(wd) { return dateStr(wd) === a; });
-    return !pdIsFin(r.id) && (!a || !isWD);
+    const eff = pdGetEffectiveDay(r.id);
+    const isWD = workDays.some(function(wd) { return dateStr(wd) === eff; });
+    return !pdIsFin(r.id) && (!eff || !isWD);
   });
 
   if (unassigned.length > 0 && isPCP) {
@@ -5043,12 +5082,17 @@ if (typeof window !== 'undefined') {
 function renderProducaoDia(){
   if(!prodBaseMonday){ document.getElementById('apon-body').innerHTML='<div class="empty"><div class="ei">&#128197;</div>Selecione uma semana</div>'; return; }
 
+  pdBuildGanttMap(prodBaseMonday);
+
   const weekDays = getWeekDays(prodBaseMonday);
   const weekStart = dateStr(weekDays[0]);
   const weekEnd   = dateStr(weekDays[6]);
   const workDays  = weekDays.filter(function(d){ return hoursOnDay(d)>0; });
 
   const weekRecs = records.filter(function(r){
+    if(r.status==='Concluído') return false;
+    const effectiveDay = pdGetEffectiveDay(r.id);
+    if(effectiveDay && effectiveDay>=weekStart && effectiveDay<=weekEnd) return true;
     const dt = r.dtDesejada||r.dtSolicitacao;
     return dt && dt>=weekStart && dt<=weekEnd;
   });
@@ -5073,7 +5117,7 @@ function renderProducaoDia(){
     const isToday = ds===dateStr(new Date());
 
     const dayRecs = weekRecs.filter(function(r){
-      return pdGetAssign(r.id)===ds && !pdIsFin(r.id);
+      return pdGetEffectiveDay(r.id)===ds && !pdIsFin(r.id);
     });
 
     const borderColor = isToday?'var(--cyan)':'var(--border)';
@@ -5102,9 +5146,9 @@ function renderProducaoDia(){
   html += '</div>';
 
   const unassigned = weekRecs.filter(function(r){
-    const a = pdGetAssign(r.id);
-    const isWD = workDays.some(function(wd){ return dateStr(wd)===a; });
-    return !pdIsFin(r.id) && (!a || !isWD);
+    const eff = pdGetEffectiveDay(r.id);
+    const isWD = workDays.some(function(wd){ return dateStr(wd)===eff; });
+    return !pdIsFin(r.id) && (!eff || !isWD);
   });
 
   if(unassigned.length>0){
