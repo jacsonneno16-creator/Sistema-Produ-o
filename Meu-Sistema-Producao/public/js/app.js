@@ -9687,37 +9687,30 @@ function salvarApontamentoCompleto(recordId) {
   // Bloquear se data inválida
   if (!dataAtual || dataAtual === 'semana' || dataAtual === 'producao-dia') return;
 
-  if (!isPCPLevel() && isOperadorLevel()) {
-    const record = records.find(r => r.id === recordId);
-    if (!record) return;
-    const validacao = validarProducaoPermitida(record, record.maquina, dataAtual);
-    if (!validacao.permitido) {
-      toast('❌ ' + validacao.motivo, 'err');
-      return;
-    }
-  }
+  // Coletar dados dos inputs — buscar por string e número para garantir match
+  const inputs = document.querySelectorAll(`[data-rec="${recordId}"].apon-input-controlado`);
+  if (!inputs.length) return;
 
-  // Coletar dados dos inputs do dia
-  const inputs = document.querySelectorAll(`.apon-input[data-rec="${recordId}"]`);
   const data = {};
   let dayTotal = 0;
-
   inputs.forEach(input => {
-    const hora = input.dataset.hr;
-    const quantidade = parseInt(input.value) || 0;
-    data[hora] = quantidade || '';
-    dayTotal += quantidade;
+    const hora = parseInt(input.dataset.hr);
+    const qtd  = parseInt(input.value) || 0;
+    data[hora] = qtd || '';
+    dayTotal  += qtd;
   });
 
-  // Salvar no localStorage com a data correta
+  // Salvar no localStorage
   aponStorageSet(aponKey(dataAtual, recordId), data);
 
-  // Atualizar totais visuais inline (sem re-render)
+  // Atualizar TOTAL DIA
   const dtEl = document.getElementById(`realizado-daytotal-${recordId}`);
   if (dtEl) {
     dtEl.textContent = dayTotal > 0 ? dayTotal : '—';
     dtEl.style.color = dayTotal > 0 ? 'var(--cyan)' : 'var(--text3)';
   }
+
+  // Atualizar ACUMULADO
   const prevTotal = aponGetPrevTotal(recordId, dataAtual);
   const acum = prevTotal + dayTotal;
   const rec  = records.find(r => String(r.id) === String(recordId));
@@ -9727,19 +9720,6 @@ function salvarApontamentoCompleto(recordId) {
     acEl.textContent = acum > 0 ? acum : '—';
     acEl.style.color = acum >= meta && meta > 0 ? 'var(--green)' : acum > 0 ? 'var(--text)' : 'var(--text3)';
   }
-
-  // Salvar no Firestore em background (sem bloquear UI)
-  inputs.forEach(async input => {
-    const hora = input.dataset.hr;
-    const quantidade = parseInt(input.value) || 0;
-    if (quantidade > 0) {
-      try {
-        await salvarApontamentoFirestore(dataAtual, hora, recordId, quantidade, getUserEmailSafe() || 'Operador');
-      } catch(e) {
-        console.warn('Erro Firestore apontamento:', e);
-      }
-    }
-  });
 }
 
 function gerarRelatorioProducao() {

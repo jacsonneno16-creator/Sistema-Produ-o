@@ -141,12 +141,7 @@
 </div>
 
 <!-- Dropdown do menu (fora do header para evitar conflito de z-index/stacking context) -->
-<div id="hd-menu-dropdown" style="display:none;position:fixed;background:var(--s2);border:1px solid var(--border);border-radius:10px;min-width:220px;box-shadow:0 8px 32px rgba(0,0,0,.5);z-index:9999;overflow:hidden">
-  <button onclick="openMeuPerfil();toggleHdMenu()" style="width:100%;text-align:left;background:none;border:none;padding:12px 16px;color:var(--text);font-family:'Space Grotesk',sans-serif;font-size:13px;cursor:pointer;display:flex;align-items:center;gap:10px;transition:background .15s" onmouseover="this.style.background='var(--s3,rgba(255,255,255,.05))'" onmouseout="this.style.background='none'">
-    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-    Meu Perfil
-  </button>
-  <div style="height:1px;background:var(--border);margin:2px 0"></div>
+<div id="hd-menu-dropdown" style="display:none;position:fixed;background:var(--s2);border:1px solid var(--border);border-radius:10px;min-width:200px;box-shadow:0 8px 32px rgba(0,0,0,.5);z-index:9999;overflow:hidden">
   <button onclick="switchTab('projecao',null);toggleHdMenu()" style="width:100%;text-align:left;background:none;border:none;padding:12px 16px;color:var(--text);font-family:'Space Grotesk',sans-serif;font-size:13px;cursor:pointer;display:flex;align-items:center;gap:10px;transition:background .15s" onmouseover="this.style.background='var(--s3,rgba(255,255,255,.05))'" onmouseout="this.style.background='none'">
     <span>📈</span> Projeção de Vendas
   </button>
@@ -302,9 +297,7 @@
         <button class="btn btn-ghost" onclick="prodToday()" style="padding:7px 14px">Hoje</button>
       </div>
       <div style="display:flex;align-items:center;gap:8px">
-        <input type="date" id="prod-goto" onchange="prodGoDate()" style="font-size:12px;padding:7px 10px" title="Ir para semana">
-        <button class="btn btn-ghost" onclick="prodSaveAll()" style="padding:7px 14px">💾 Salvar</button>
-      </div>
+        <input type="date" id="prod-goto" onchange="prodGoDate()" style="font-size:12px;padding:7px 10px" title="Ir para semana">      </div>
     </div>
     <!-- Seletor de dias da semana -->
     <div id="prod-day-tabs" style="display:flex;gap:4px;margin-bottom:14px;flex-wrap:wrap"></div>
