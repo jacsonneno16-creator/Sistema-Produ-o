@@ -579,7 +579,15 @@ async function mostrarSeletorLoja() {
   const old = document.getElementById('loja-selector-screen');
   if (old) old.remove();
 
-  const lojas = await carregarLojas();
+  const todasLojas = await carregarLojas();
+
+  // Filtrar lojas permitidas para o usuário (admin vê todas)
+  const user = getCurrentUserSafe();
+  const isAdm = user && user.tipo === 'admin';
+  const lojasPermitidas = user && user.lojasPermitidas; // array de IDs ou null = todas
+  const lojas = isAdm || !lojasPermitidas || !lojasPermitidas.length
+    ? todasLojas
+    : todasLojas.filter(l => lojasPermitidas.includes(l.id));
 
   const screen = document.createElement('div');
   screen.id = 'loja-selector-screen';
@@ -598,7 +606,7 @@ async function mostrarSeletorLoja() {
           </div>
         </button>`).join('')
     : `<div style="color:var(--text3,#5a6a7a);font-size:13px;text-align:center;padding:20px 0">
-         Nenhuma loja cadastrada ainda.<br>Crie a primeira loja abaixo.
+         Nenhuma loja disponível para o seu perfil.<br>Contate o administrador.
        </div>`;
 
   screen.innerHTML = `
@@ -671,6 +679,14 @@ async function atualizarTopbarLoja() {
 
 function trocarLoja(lojaId) {
   if (!lojaId || lojaId === getLojaAtiva()) return;
+  // Verificar se o usuário tem acesso a essa loja
+  const user = getCurrentUserSafe();
+  const isAdm = user && user.tipo === 'admin';
+  const permitidas = user && user.lojasPermitidas;
+  if (!isAdm && permitidas && permitidas.length && !permitidas.includes(lojaId)) {
+    toast('Sem permissão para acessar essa loja.', 'err');
+    return;
+  }
   // Limpa dados em memória
   MAQUINAS = []; PRODUTOS = []; FICHA_TECNICA = []; SETUP_FIRESTORE = {};
   records = [];
@@ -7370,6 +7386,18 @@ function _usuarioFormHTML(u={}){
       </div>`:''}
     </div>
 
+    <!-- Acesso a Lojas -->
+    <div id="us-lojas-wrap" style="margin-bottom:14px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:8px">
+        <label class="flbl" style="margin:0">🏭 Lojas com Acesso</label>
+        <span style="font-size:10px;color:var(--text3)">Admin sempre acessa todas</span>
+      </div>
+      <div id="us-lojas-checkboxes" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:6px">
+        <div style="color:var(--text3);font-size:12px;padding:8px">Carregando lojas...</div>
+      </div>
+      <div style="margin-top:6px;font-size:10px;color:var(--text3)">Se nenhuma estiver marcada, o usuário acessa <strong>todas</strong>.</div>
+    </div>
+
     <div id="us-perms-wrap" style="display:${tipo==='admin'?'none':'block'}">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:8px">
         <label class="flbl" style="margin:0">Permissões por módulo</label>
@@ -7450,6 +7478,7 @@ function openAddUsuario(){
   document.getElementById('usuario-modal-title').textContent='Novo Usuário do Sistema';
   document.getElementById('usuario-modal-body').innerHTML=_usuarioFormHTML();
   document.getElementById('usuario-modal').style.display='flex';
+  _popularLojasCheckboxes([]);
   setTimeout(()=>document.getElementById('us-nome')?.focus(),80);
 }
 
@@ -7461,7 +7490,42 @@ function openEditUsuario(uid){
   document.getElementById('usuario-modal-title').textContent='Editar Usuário';
   document.getElementById('usuario-modal-body').innerHTML=_usuarioFormHTML(u);
   document.getElementById('usuario-modal').style.display='flex';
+  _popularLojasCheckboxes(u.lojasPermitidas||[]);
 }
+
+// Popula checkboxes de lojas no modal de usuário
+async function _popularLojasCheckboxes(selecionadas) {
+  const container = document.getElementById('us-lojas-checkboxes');
+  if (!container) return;
+  try {
+    const lojas = await carregarLojas();
+    if (!lojas.length) {
+      container.innerHTML = '<span style="color:var(--text3);font-size:12px">Nenhuma loja cadastrada.</span>';
+      return;
+    }
+    container.innerHTML = lojas.map(l => {
+      const marcada = selecionadas.includes(l.id);
+      return `<label style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:7px;background:var(--s2);border:1px solid ${marcada?'rgba(0,212,255,.3)':'var(--border)'};cursor:pointer;transition:all .15s" id="loja-lbl-${l.id}">
+        <input type="checkbox" id="loja-cb-${l.id}" value="${l.id}" ${marcada?'checked':''}
+               onchange="_onLojaChange('${l.id}')"
+               style="accent-color:var(--cyan);width:14px;height:14px;cursor:pointer;flex-shrink:0">
+        <div>
+          <div style="font-size:12px;font-weight:600;color:var(--text)">${l.nome||l.id}</div>
+          <div style="font-size:10px;color:var(--text3);font-family:'JetBrains Mono',monospace">${l.id}</div>
+        </div>
+      </label>`;
+    }).join('');
+  } catch(e) {
+    container.innerHTML = '<span style="color:var(--red);font-size:12px">Erro ao carregar lojas.</span>';
+  }
+}
+
+function _onLojaChange(lojaId) {
+  const cb  = document.getElementById(`loja-cb-${lojaId}`);
+  const lbl = document.getElementById(`loja-lbl-${lojaId}`);
+  if (lbl) lbl.style.borderColor = cb?.checked ? 'rgba(0,212,255,.3)' : 'var(--border)';
+}
+window._onLojaChange = _onLojaChange;
 
 function closeUsuarioModal(){ document.getElementById('usuario-modal').style.display='none'; }
 
@@ -7486,17 +7550,22 @@ async function saveUsuarioModal(){
       permissoes[m.key] = temAlgum ? modPerms : false;
     });
   }
+  // Coletar lojas selecionadas (array de IDs; vazio = acesso a todas)
+  const lojasPermitidas = [];
+  document.querySelectorAll('#us-lojas-checkboxes input[type=checkbox]:checked').forEach(cb => {
+    if (cb.value) lojasPermitidas.push(cb.value);
+  });
   try{
     if(!_usEditUid){
       const email=(document.getElementById('us-email')?.value||'').trim();
       const senha=document.getElementById('us-senha')?.value||'';
       if(!email){alert('Informe o e-mail.');return;}
       if(senha.length<6){alert('Senha deve ter ao menos 6 caracteres.');return;}
-      await criarUsuarioSistema({email,senha,nome,tipo,cargo,permissoes});
+      await criarUsuarioSistema({email,senha,nome,tipo,cargo,permissoes,lojasPermitidas});
       toast('Usuário '+nome+' criado com sucesso.','ok');
     } else {
       const ativo=document.getElementById('us-ativo')?.value!=='false';
-      await atualizarUsuarioSistema(_usEditUid,{nome,tipo,cargo,ativo,permissoes});
+      await atualizarUsuarioSistema(_usEditUid,{nome,tipo,cargo,ativo,permissoes,lojasPermitidas});
       toast('Usuário '+nome+' atualizado.','ok');
     }
     document.getElementById('usuario-modal').style.display='none';
