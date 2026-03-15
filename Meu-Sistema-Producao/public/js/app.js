@@ -4375,6 +4375,43 @@ function renderRealizadoControlado(dateVal, body) {
           html += `
               </div>
               
+              <!-- Coluna de Observação -->
+              <div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border)">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+                  <label style="font-size:12px;font-weight:600;color:var(--text);display:flex;align-items:center;gap:6px">
+                    📝 Observações do Dia
+                    <span style="font-size:10px;color:var(--text3);font-weight:400">(opcional)</span>
+                  </label>
+                  <div class="auto-save-indicator" id="autosave-${it.rec.id}-${dateVal}">
+                    Auto-save
+                  </div>
+                </div>
+                <div style="position:relative">
+                  <textarea 
+                    id="obs-${it.rec.id}-${dateVal}" 
+                    class="observacao-input"
+                    data-rec="${it.rec.id}" 
+                    data-date="${dateVal}"
+                    placeholder="Ex: Máquina com ruído no turno da manhã, setup demorou 20min extras, matéria-prima com qualidade inferior..."
+                    oninput="handleObservacaoInput(this, '${dateVal}', ${it.rec.id})"
+                    maxlength="500"
+                    style="width:100%;min-height:60px;max-height:120px;padding:8px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:11px;resize:vertical;font-family:inherit;line-height:1.4">
+                  </textarea>
+                  <div class="obs-counter" id="counter-${it.rec.id}-${dateVal}">0/500</div>
+                </div>
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px">
+                  <div style="font-size:10px;color:var(--text3)">
+                    💡 Descreva problemas, setup, qualidade, etc.
+                  </div>
+                  <button onclick="salvarObservacaoManual(${it.rec.id}, '${dateVal}')" 
+                          class="obs-save-btn"
+                          id="save-obs-${it.rec.id}-${dateVal}"
+                          style="background:var(--s2);border:1px solid var(--border);color:var(--text2);border-radius:4px;padding:3px 8px;font-size:10px;cursor:pointer">
+                    💾 Salvar Obs
+                  </button>
+                </div>
+              </div>
+              
               ${it.restante <= 20 ? `
                 <div style="background:rgba(255,179,0,.15);border:1px solid var(--warn);border-radius:6px;padding:10px;margin-top:12px;font-size:11px;color:var(--warn)">
                   ⚠️ <strong>Próximo da conclusão!</strong> Faltam apenas ${it.restante} caixas para atingir a meta.
@@ -4414,6 +4451,11 @@ function renderRealizadoControlado(dateVal, body) {
   body.innerHTML = html;
   body._machineGroups = machineGroups;
   body._dateVal = dateVal;
+  
+  // Carregar observações existentes para os campos
+  setTimeout(() => {
+    carregarObservacoesExistentes(dateVal);
+  }, 100);
   
   // Inicializar notificações se ainda não foi feito
   if (typeof _notificacoesInicializadas === 'undefined') {
@@ -4845,6 +4887,96 @@ function adicionarEstilosControlados() {
       margin-bottom: 16px;
       font-size: 12px;
       color: var(--cyan);
+    }
+    
+    /* Estilos para campos de observação */
+    .observacao-input {
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    
+    .observacao-input:focus {
+      outline: none;
+      border-color: var(--cyan) !important;
+      box-shadow: 0 0 0 2px rgba(0,212,255,0.1);
+    }
+    
+    .observacao-input:hover {
+      border-color: var(--text3);
+    }
+    
+    /* Contador de caracteres para observações */
+    .obs-counter {
+      position: absolute;
+      bottom: 4px;
+      right: 8px;
+      font-size: 9px;
+      color: var(--text3);
+      background: var(--bg);
+      padding: 1px 4px;
+      border-radius: 3px;
+    }
+    
+    .obs-counter.warning {
+      color: var(--warn);
+    }
+    
+    .obs-counter.error {
+      color: var(--red);
+    }
+    
+    /* Animação para botão de salvar observação */
+    .obs-save-btn {
+      transition: all 0.2s ease;
+    }
+    
+    .obs-save-btn:hover {
+      background: var(--cyan) !important;
+      color: #000 !important;
+      transform: translateY(-1px);
+    }
+    
+    .obs-save-btn.saved {
+      background: var(--green) !important;
+      color: #000 !important;
+      animation: pulse 0.5s;
+    }
+    
+    @keyframes pulse {
+      0% { transform: scale(1); }
+      50% { transform: scale(1.05); }
+      100% { transform: scale(1); }
+    }
+    
+    /* Indicador visual de auto-save */
+    .auto-save-indicator {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 9px;
+      color: var(--text3);
+    }
+    
+    .auto-save-indicator.saving {
+      color: var(--warn);
+    }
+    
+    .auto-save-indicator.saved {
+      color: var(--green);
+    }
+    
+    .auto-save-indicator::before {
+      content: '●';
+      animation: blink 1s infinite;
+    }
+    
+    .auto-save-indicator.saved::before {
+      content: '✓';
+      animation: none;
+    }
+    
+    @keyframes blink {
+      0%, 50% { opacity: 1; }
+      51%, 100% { opacity: 0.3; }
     }
   `;
   document.head.appendChild(style);
@@ -6353,8 +6485,7 @@ function saveProdModal() {
 function deleteExtraProduto(cod, maq, desc) {
   excluirProduto(cod, maq, desc);
 }
-  toast('Produto removido', 'ok');
-}
+
 function importProdutosExcel(input) {
   const file = input.files[0]; if (!file) return;
   const reader = new FileReader();
@@ -9463,6 +9594,20 @@ window.isOperadorLevel = isOperadorLevel;
 window.isPCPLevel = isPCPLevel;
 window.getUserEmailSafe = getUserEmailSafe;
 
+// Funções de observações
+window.salvarObservacao = salvarObservacao;
+window.carregarObservacoes = carregarObservacoes;
+window.getObservacaoComCache = getObservacaoComCache;
+window.salvarObservacaoLocal = salvarObservacaoLocal;
+window.autoSaveObservacao = autoSaveObservacao;
+window.getCurrentOperator = getCurrentOperator;
+window.salvarObservacaoManual = salvarObservacaoManual;
+window.carregarObservacoesExistentes = carregarObservacoesExistentes;
+window.validarObservacao = validarObservacao;
+window.exportarRelatorioComObservacoes = exportarRelatorioComObservacoes;
+window.buscarObservacoesPeriodo = buscarObservacoesPeriodo;
+window.handleObservacaoInput = handleObservacaoInput;
+
 // ===== INICIALIZAÇÃO FINAL DO SISTEMA =====
 
 // Função para inicializar sistema controlado
@@ -9555,6 +9700,399 @@ window.resetarConfiguracoes = function() {
     window.location.reload();
   }
 };
+
+// ===== SISTEMA DE OBSERVAÇÕES =====
+
+// Salva observação no Firestore
+async function salvarObservacao(data, recordId, observacao, operador) {
+  try {
+    const user = getCurrentUserSafe();
+    if (!user) {
+      toast('Usuário não autenticado', 'err');
+      return false;
+    }
+    
+    const record = records.find(r => r.id === recordId);
+    if (!record) {
+      toast('Produto não encontrado', 'err');
+      return false;
+    }
+    
+    const payload = {
+      data: data,
+      recordId: recordId,
+      observacao: observacao.trim(),
+      produto: record.produto,
+      maquina: record.maquina,
+      operador: operador || getUserEmailSafe(),
+      usuario: user.email,
+      criadoEm: serverTimestamp(),
+      lojaId: getLojaAtiva(),
+      ip: getClientIP(),
+      sessao: getSessionId()
+    };
+    
+    // Verificar se já existe observação para este produto neste dia
+    const q = query(
+      lojaCol('observacoes_producao'),
+      where('data', '==', data),
+      where('recordId', '==', recordId),
+      limit(1)
+    );
+    
+    const existingSnap = await getDocs(q);
+    
+    if (!existingSnap.empty) {
+      // Atualizar observação existente
+      const docId = existingSnap.docs[0].id;
+      await updateDoc(doc(lojaCol('observacoes_producao'), docId), {
+        observacao: observacao.trim(),
+        operador: operador || getUserEmailSafe(),
+        atualizadoEm: serverTimestamp(),
+        atualizadoPor: user.email
+      });
+    } else {
+      // Criar nova observação
+      await addDoc(lojaCol('observacoes_producao'), payload);
+    }
+    
+    // Registrar auditoria
+    await registrarAuditoria('OBSERVACAO_SALVA', {
+      recordId: recordId,
+      produto: record.produto,
+      data: data,
+      observacao: observacao.substring(0, 100) // Primeiros 100 chars para auditoria
+    });
+    
+    return true;
+    
+  } catch(e) {
+    console.error('Erro ao salvar observação:', e);
+    toast('Erro ao salvar observação: ' + e.message, 'err');
+    return false;
+  }
+}
+
+// Carrega observações do Firestore para um período
+async function carregarObservacoes(dataInicio, dataFim) {
+  try {
+    const q = query(
+      lojaCol('observacoes_producao'),
+      where('data', '>=', dataInicio),
+      where('data', '<=', dataFim),
+      orderBy('data'),
+      orderBy('criadoEm')
+    );
+    
+    const snap = await getDocs(q);
+    const observacoes = {};
+    
+    snap.docs.forEach(doc => {
+      const data = doc.data();
+      const key = `${data.data}_${data.recordId}`;
+      observacoes[key] = {
+        id: doc.id,
+        observacao: data.observacao,
+        operador: data.operador,
+        criadoEm: data.criadoEm,
+        atualizadoEm: data.atualizadoEm
+      };
+    });
+    
+    return observacoes;
+    
+  } catch(e) {
+    console.error('Erro ao carregar observações:', e);
+    return {};
+  }
+}
+
+// Cache de observações
+let _observacoesCache = {};
+let _observacoesCacheTimestamp = 0;
+
+// Função para obter observação com cache
+async function getObservacaoComCache(data, recordId) {
+  const key = `${data}_${recordId}`;
+  
+  // Verificar cache (válido por 60 segundos)
+  const agora = Date.now();
+  if (agora - _observacoesCacheTimestamp < 60000 && _observacoesCache[key]) {
+    return _observacoesCache[key];
+  }
+  
+  // Buscar no Firestore se cache inválido
+  try {
+    const q = query(
+      lojaCol('observacoes_producao'),
+      where('data', '==', data),
+      where('recordId', '==', recordId),
+      limit(1)
+    );
+    
+    const snap = await getDocs(q);
+    if (!snap.empty) {
+      const obs = snap.docs[0].data();
+      _observacoesCache[key] = {
+        observacao: obs.observacao,
+        operador: obs.operador,
+        criadoEm: obs.criadoEm
+      };
+      _observacoesCacheTimestamp = agora;
+      return _observacoesCache[key];
+    }
+  } catch(e) {
+    console.warn('Erro ao buscar observação:', e);
+  }
+  
+  // Fallback: verificar localStorage
+  const localKey = `obs_${data}_${recordId}`;
+  const localObs = localStorage.getItem(localKey);
+  if (localObs) {
+    try {
+      return JSON.parse(localObs);
+    } catch(e) {
+      console.warn('Erro no parse da observação local:', e);
+    }
+  }
+  
+  return null;
+}
+
+// Salva observação no localStorage (backup)
+function salvarObservacaoLocal(data, recordId, observacao, operador) {
+  const key = `obs_${data}_${recordId}`;
+  const dados = {
+    observacao: observacao.trim(),
+    operador: operador || getUserEmailSafe(),
+    timestamp: Date.now()
+  };
+  
+  localStorage.setItem(key, JSON.stringify(dados));
+}
+
+// Gerencia input de observação com contador e auto-save
+function handleObservacaoInput(textarea, dateVal, recordId) {
+  const valor = textarea.value;
+  const contador = document.getElementById(`counter-${recordId}-${dateVal}`);
+  const indicator = document.getElementById(`autosave-${recordId}-${dateVal}`);
+  
+  // Atualizar contador de caracteres
+  if (contador) {
+    const length = valor.length;
+    contador.textContent = `${length}/500`;
+    
+    // Mudar cor baseado no limite
+    contador.className = 'obs-counter';
+    if (length > 400) {
+      contador.classList.add('warning');
+    }
+    if (length >= 500) {
+      contador.classList.add('error');
+    }
+  }
+  
+  // Mostrar indicador de salvamento
+  if (indicator) {
+    indicator.className = 'auto-save-indicator saving';
+    indicator.textContent = 'Salvando...';
+  }
+  
+  // Auto-save com debounce
+  autoSaveObservacao(dateVal, recordId, valor, getCurrentOperator());
+  
+  // Atualizar indicador após o save
+  setTimeout(() => {
+    if (indicator && valor.trim()) {
+      indicator.className = 'auto-save-indicator saved';
+      indicator.textContent = 'Salvo';
+    } else if (indicator) {
+      indicator.className = 'auto-save-indicator';
+      indicator.textContent = 'Auto-save';
+    }
+  }, 2500);
+}
+
+// Auto-save aprimorado de observações
+function autoSaveObservacao(data, recordId, observacao, operador) {
+  // Salvar localmente imediatamente
+  salvarObservacaoLocal(data, recordId, observacao, operador);
+  
+  // Validar antes do Firestore
+  const validacao = validarObservacao(observacao);
+  if (!validacao.valido && observacao.trim()) {
+    console.warn('Observação inválida:', validacao.motivo);
+    return;
+  }
+  
+  // Debounce para Firestore (só salva após 3 segundos sem alteração)
+  clearTimeout(window._obsTimeout);
+  window._obsTimeout = setTimeout(async () => {
+    if (observacao.trim()) {
+      const sucesso = await salvarObservacao(data, recordId, observacao, operador);
+      if (!sucesso) {
+        console.warn('Erro no auto-save da observação');
+      }
+    }
+  }, 3000);
+}
+
+// ===== FUNÇÕES AUXILIARES PARA OBSERVAÇÕES =====
+
+// Obtém operador atual para observações
+function getCurrentOperator() {
+  const user = getCurrentUserSafe();
+  if (!user) return 'Operador Não Identificado';
+  
+  return user.userData?.nome || user.nome || user.email || 'Operador';
+}
+
+// Salvar observação manualmente (botão)
+async function salvarObservacaoManual(recordId, data) {
+  const textarea = document.getElementById(`obs-${recordId}-${data}`);
+  if (!textarea) {
+    toast('Campo de observação não encontrado', 'err');
+    return;
+  }
+  
+  const observacao = textarea.value.trim();
+  const operador = getCurrentOperator();
+  
+  if (!observacao) {
+    toast('Digite uma observação antes de salvar', 'warn');
+    return;
+  }
+  
+  if (observacao.length > 500) {
+    toast('Observação muito longa (máx 500 caracteres)', 'err');
+    return;
+  }
+  
+  const sucesso = await salvarObservacao(data, recordId, observacao, operador);
+  if (sucesso) {
+    toast('✅ Observação salva com sucesso', 'ok');
+    
+    // Adicionar indicador visual de salvo
+    const button = event.target;
+    const textoOriginal = button.textContent;
+    button.textContent = '✅ Salvo';
+    button.style.background = 'var(--green)';
+    button.style.color = '#000';
+    
+    setTimeout(() => {
+      button.textContent = textoOriginal;
+      button.style.background = 'var(--s2)';
+      button.style.color = 'var(--text2)';
+    }, 2000);
+  }
+}
+
+// Carregar observações existentes e preencher campos
+async function carregarObservacoesExistentes(dateVal) {
+  const textareas = document.querySelectorAll('.observacao-input');
+  
+  for (const textarea of textareas) {
+    const recordId = parseInt(textarea.dataset.rec);
+    const data = textarea.dataset.date;
+    
+    if (data === dateVal) {
+      const observacao = await getObservacaoComCache(data, recordId);
+      if (observacao && observacao.observacao) {
+        textarea.value = observacao.observacao;
+        
+        // Adicionar informação de quem criou
+        const infoDiv = textarea.parentElement.querySelector('.obs-info');
+        if (!infoDiv) {
+          const info = document.createElement('div');
+          info.className = 'obs-info';
+          info.style.cssText = 'font-size:9px;color:var(--text3);margin-top:2px;font-style:italic';
+          
+          const dataFormatada = observacao.criadoEm ? 
+            new Date(observacao.criadoEm.seconds * 1000).toLocaleString('pt-BR') : 
+            'data desconhecida';
+          
+          info.textContent = `Última alteração: ${observacao.operador} em ${dataFormatada}`;
+          textarea.parentElement.appendChild(info);
+        }
+      }
+    }
+  }
+}
+
+// Validar texto da observação
+function validarObservacao(texto) {
+  if (!texto || typeof texto !== 'string') {
+    return { valido: false, motivo: 'Texto inválido' };
+  }
+  
+  const textoLimpo = texto.trim();
+  
+  if (textoLimpo.length === 0) {
+    return { valido: true, motivo: 'Observação vazia (será removida)' };
+  }
+  
+  if (textoLimpo.length > 500) {
+    return { valido: false, motivo: 'Observação muito longa (máx 500 caracteres)' };
+  }
+  
+  // Filtro básico de conteúdo ofensivo (pode ser expandido)
+  const palavrasProibidas = ['#ERRO#', '<script>', 'javascript:', 'eval('];
+  const temConteudoProibido = palavrasProibidas.some(palavra => 
+    textoLimpo.toLowerCase().includes(palavra.toLowerCase())
+  );
+  
+  if (temConteudoProibido) {
+    return { valido: false, motivo: 'Conteúdo não permitido na observação' };
+  }
+  
+  return { valido: true, texto: textoLimpo };
+}
+
+// Exportar relatório com observações
+function exportarRelatorioComObservacoes() {
+  if (!isPCPLevel()) {
+    toast('Apenas PCP pode exportar relatórios!', 'err');
+    return;
+  }
+  
+  // TODO: Implementar exportação completa
+  toast('Funcionalidade de exportação com observações em desenvolvimento', 'info');
+}
+
+// Buscar observações por período
+async function buscarObservacoesPeriodo(dataInicio, dataFim) {
+  try {
+    const observacoes = await carregarObservacoes(dataInicio, dataFim);
+    
+    console.log('📝 Observações encontradas:', Object.keys(observacoes).length);
+    
+    // Agrupar por produto
+    const porProduto = {};
+    Object.entries(observacoes).forEach(([key, obs]) => {
+      const [data, recordId] = key.split('_');
+      const record = records.find(r => r.id == recordId);
+      
+      if (record) {
+        const produtoKey = record.produto;
+        if (!porProduto[produtoKey]) {
+          porProduto[produtoKey] = [];
+        }
+        
+        porProduto[produtoKey].push({
+          data: data,
+          observacao: obs.observacao,
+          operador: obs.operador,
+          maquina: record.maquina
+        });
+      }
+    });
+    
+    return porProduto;
+  } catch(e) {
+    console.error('Erro ao buscar observações:', e);
+    return {};
+  }
+}
 
 // ===== NOVA VERSÃO RENDERAPONTAMENTO COM FIRESTORE =====
 
