@@ -4281,6 +4281,7 @@ function _renderRealizadoControlado(dateVal, body) {
                 <th style="padding:5px 8px;text-align:center;color:var(--text3);font-weight:600;font-size:10px;min-width:64px;border-left:1px solid var(--border)">TOTAL DIA</th>
                 <th style="padding:5px 8px;text-align:center;color:var(--text3);font-weight:600;font-size:10px;min-width:72px">ACUMULADO</th>
                 <th style="padding:5px 8px;text-align:center;color:var(--text3);font-weight:600;font-size:10px;min-width:48px">SOLIC.</th>
+                <th style="padding:5px 8px;text-align:center;color:var(--text3);font-weight:600;font-size:10px;min-width:40px">OBS</th>
                 <th style="padding:5px 8px;text-align:center;color:var(--text3);font-weight:600;font-size:10px;min-width:40px"></th>
               </tr>
             </thead>
@@ -4343,24 +4344,19 @@ function _renderRealizadoControlado(dateVal, body) {
                 </td>
                 <td style="padding:6px 8px;text-align:center;color:var(--text2)">${meta}</td>
                 <td style="padding:6px 4px;text-align:center">
+                  <button id="obs-btn-${rec.id}-${dateVal}"
+                          onclick="pdAbrirObs(${rec.id},'${dateVal}')"
+                          title="Observação"
+                          style="background:var(--s2);border:1px solid ${(window._pdObsCache&&window._pdObsCache[rec.id+'_'+dateVal])?'var(--warn)':'var(--border)'};border-radius:4px;padding:3px 7px;font-size:12px;cursor:pointer;transition:all .15s"
+                          onmouseover="this.style.borderColor='var(--warn)'" onmouseout="if(!((window._pdObsCache||{})[${rec.id}+'_'+'${dateVal}']))this.style.borderColor='var(--border)'">
+                    📝
+                  </button>
+                </td>
+                <td style="padding:6px 4px;text-align:center">
                   <button onclick="realizadoSalvarLinha(${rec.id},'${dateVal}')"
                           title="Salvar" style="background:var(--green);color:#000;border:none;border-radius:4px;padding:3px 7px;font-size:10px;font-weight:700;cursor:pointer;font-family:'Space Grotesk',sans-serif">
                     ✓
                   </button>
-                </td>
-              </tr>
-              <!-- Linha de observação (expansível) -->
-              <tr id="obs-row-${rec.id}" style="display:none;background:${rowBg}">
-                <td colspan="${APON_HOURS.length + 5}" style="padding:6px 12px 8px 36px;border-bottom:1px solid var(--border)">
-                  <div style="display:flex;align-items:center;gap:8px">
-                    <textarea id="obs-${rec.id}-${dateVal}"
-                              placeholder="Observação do dia (opcional)..."
-                              oninput="handleObservacaoInput(this,'${dateVal}',${rec.id})"
-                              maxlength="500"
-                              style="flex:1;min-height:40px;max-height:80px;padding:6px 10px;border:1px solid var(--border);border-radius:6px;background:var(--s2);color:var(--text);font-size:11px;resize:vertical;font-family:'Space Grotesk',sans-serif"></textarea>
-                    <button onclick="salvarObservacaoManual(${rec.id},'${dateVal}')"
-                            style="background:var(--s2);border:1px solid var(--border);color:var(--text2);border-radius:4px;padding:4px 8px;font-size:10px;cursor:pointer;white-space:nowrap">💾 Obs</button>
-                  </div>
                 </td>
               </tr>`;
     });
@@ -4372,18 +4368,7 @@ function _renderRealizadoControlado(dateVal, body) {
 
         <!-- Rodapé: salvar todos + obs toggle -->
         <div style="display:flex;align-items:center;justify-content:space-between;padding:6px 10px;background:var(--s1);border:1px solid var(--border);border-top:none;border-radius:0 0 8px 8px;margin-top:-1px">
-          <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
-            <span style="font-size:10px;color:var(--text3)">Obs:</span>
-            ${recs.map(r=>{
-              const hasObs = !!(window._pdObsCache&&window._pdObsCache[r.id+'_'+dateVal]);
-              return `<button id="obs-btn-${r.id}-${dateVal}"
-                      onclick="pdAbrirObs(${r.id},'${dateVal}')"
-                      style="background:var(--s2);border:1px solid ${hasObs?'var(--warn)':'var(--border)'};border-radius:4px;padding:2px 7px;font-size:10px;color:${hasObs?'var(--warn)':'var(--text3)'};cursor:pointer;transition:all .15s"
-                      title="${r.produto}">
-                📝 ${r.produto.substring(0,14)}${r.produto.length>14?'…':''}
-              </button>`;
-            }).join('')}
-          </div>
+          <div style="font-size:10px;color:var(--text3)">📝 clique na coluna OBS por produto</div>
           <button onclick="realizadoSalvarMaquina('${maq}','${dateVal}')"
                   style="background:var(--green);color:#000;border:none;border-radius:6px;padding:5px 14px;font-size:11px;font-weight:700;cursor:pointer;font-family:'Space Grotesk',sans-serif">
             💾 Salvar ${maq}
@@ -5394,7 +5379,6 @@ async function renderWeeklySummary(body){
       }
 
       // ── Observações por dia ──────────────────────────────────────
-      // Coleta todas as observações desta semana para este produto
       const obsLinhas = workDays.map(d => {
         const ds  = dateStr(d);
         const key = `${ds}_${rec.id}`;
@@ -5404,25 +5388,23 @@ async function renderWeeklySummary(body){
         return { dayName, ds, texto: obs.observacao, operador: obs.operador };
       }).filter(Boolean);
 
+      // Célula de observações — uma linha por dia com obs
       const obsHTML = obsLinhas.length > 0
-        ? `<div style="margin-top:6px;display:flex;flex-direction:column;gap:3px">
-            ${obsLinhas.map(o => `
-              <div style="display:flex;align-items:flex-start;gap:6px;background:rgba(255,179,0,.06);border:1px solid rgba(255,179,0,.18);border-radius:5px;padding:4px 8px">
-                <span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:var(--warn);font-weight:700;white-space:nowrap;padding-top:1px">${o.dayName}</span>
-                <span style="font-size:10px;color:var(--text2);line-height:1.4;flex:1">${o.texto}</span>
-                ${o.operador ? `<span style="font-size:9px;color:var(--text3);white-space:nowrap;padding-top:1px">${o.operador.split('@')[0]}</span>` : ''}
-              </div>`).join('')}
-          </div>`
-        : '';
+        ? obsLinhas.map(o =>
+            `<div style="display:flex;align-items:flex-start;gap:5px;margin-bottom:3px">
+              <span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:var(--warn);font-weight:700;white-space:nowrap;min-width:22px">${o.dayName}</span>
+              <span style="font-size:10px;color:var(--text2);line-height:1.4">${o.texto}${o.operador?` <span style="color:var(--text3);font-size:9px">(${o.operador.split('@')[0]})</span>`:''}</span>
+            </div>`
+          ).join('')
+        : '<span style="color:var(--text3);font-size:10px">—</span>';
 
       const rowBg = isDone
         ? 'background:rgba(41,217,132,.05);border-left:3px solid var(--green)'
         : hasAny ? 'border-left:3px solid rgba(255,179,0,.5)' : '';
 
       rows += `<tr style="${rowBg}">
-        <td style="text-align:left;padding:9px 14px;max-width:280px;word-break:break-word;line-height:1.4">
+        <td style="text-align:left;padding:9px 14px;max-width:240px;word-break:break-word">
           <div style="font-size:11px;font-weight:600;color:${isDone?'var(--green)':hasAny?'var(--text)':'var(--text2)'}">${rec.produto}</div>
-          ${obsHTML}
         </td>
         <td style="text-align:center;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text2);padding:9px 10px">${needed}</td>
         <td style="text-align:center;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:600;color:${isDone?'var(--green)':hasAny?'var(--text)':'var(--text3)'};padding:9px 10px">${produced}</td>
@@ -5432,6 +5414,7 @@ async function renderWeeklySummary(body){
         </td>
         <td style="text-align:center;padding:9px 10px">${statusBadge}</td>
         <td style="text-align:center;padding:9px 10px">${finDayCell}</td>
+      <td style="text-align:left;padding:9px 14px;vertical-align:top">${obsHTML}</td>
       </tr>`;
     });
 
@@ -5447,12 +5430,13 @@ async function renderWeeklySummary(body){
       </div>
       <div style="overflow-x:auto">
         <table class="apon-table"><thead><tr>
-          <th class="col-prod" style="text-align:left;min-width:220px">Produto + Observações</th>
-          <th style="text-align:center;min-width:80px">Solicitado</th>
-          <th style="text-align:center;min-width:80px">Realizado</th>
-          <th style="text-align:center;min-width:120px">Taxa / Progresso</th>
-          <th style="text-align:center;min-width:120px">Status</th>
-          <th style="text-align:center;min-width:130px">Dia Finalizado</th>
+          <th class="col-prod" style="text-align:left;min-width:200px">Produto</th>
+          <th style="text-align:center;min-width:70px">Solic.</th>
+          <th style="text-align:center;min-width:70px">Realiz.</th>
+          <th style="text-align:center;min-width:110px">Taxa / Progresso</th>
+          <th style="text-align:center;min-width:90px">Status</th>
+          <th style="text-align:center;min-width:110px">Dia Final</th>
+          <th style="text-align:left;min-width:220px;color:var(--warn)">📝 Observações</th>
         </tr></thead>
         <tbody>${rows}</tbody>
         </table>
