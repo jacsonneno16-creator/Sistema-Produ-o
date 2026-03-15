@@ -7316,35 +7316,71 @@ function _usuarioFormHTML(u={}){
   const perms = u.permissoes || {};
 
   // Tabela de permissões granulares — uma seção por módulo
-  const permSections = MODULOS.map(m => {
-    const acoes   = MODULO_ACOES[m.key] || ['visualizar'];
-    const modPerm = _normPerm(perms[m.key], m.key);
-    const temAlgum = acoes.some(a => modPerm[a]);
-    const descs = MODULO_ACOES_DESC[m.key] || {};
+  // CSS do toggle iOS injetado uma vez
+  if (!document.getElementById('perm-toggle-style')) {
+    const st = document.createElement('style');
+    st.id = 'perm-toggle-style';
+    st.textContent = `
+      .perm-toggle{position:relative;display:inline-flex;width:32px;height:18px;flex-shrink:0;cursor:pointer}
+      .perm-toggle input{opacity:0;width:0;height:0;position:absolute}
+      .perm-toggle-track{position:absolute;inset:0;background:var(--border);border-radius:18px;transition:background .2s}
+      .perm-toggle input:checked+.perm-toggle-track{background:var(--toggle-color,var(--cyan))}
+      .perm-toggle-thumb{position:absolute;top:3px;left:3px;width:12px;height:12px;background:#fff;border-radius:50%;transition:transform .2s;box-shadow:0 1px 3px rgba(0,0,0,.35)}
+      .perm-toggle input:checked~.perm-toggle-thumb{transform:translateX(14px)}
+      .perm-acc-header{display:flex;align-items:center;justify-content:space-between;padding:9px 12px;cursor:pointer;border-radius:8px;transition:background .15s;user-select:none}
+      .perm-acc-header:hover{background:rgba(255,255,255,.04)}
+      .perm-acc-body{display:none;padding:0 12px 10px}
+      .perm-acc-body.open{display:block}
+      .perm-acc-chevron{font-size:10px;color:var(--text3);transition:transform .2s;display:inline-block}
+      .perm-acc-chevron.open{transform:rotate(90deg)}
+    `;
+    document.head.appendChild(st);
+  }
 
-    const checkboxes = acoes.map(acao => {
-      const checked = modPerm[acao] ? 'checked' : '';
-      const color   = ACAO_COLOR[acao];
-      const label   = ACAO_LABEL[acao];
-      const desc    = descs[acao] || '';
-      return `<label style="display:flex;align-items:flex-start;gap:9px;padding:7px 10px;border-radius:7px;background:var(--s3,rgba(255,255,255,.03));border:1px solid ${modPerm[acao]?'rgba(0,212,255,.3)':'var(--border)'};cursor:pointer;transition:all .15s" id="perm-lbl-${m.key}-${acao}">
-        <input type="checkbox" id="perm-${m.key}-${acao}" ${checked}
-               onchange="_onPermChange('${m.key}','${acao}')"
-               style="accent-color:${color};width:15px;height:15px;cursor:pointer;flex-shrink:0;margin-top:1px">
-        <div>
-          <div style="font-size:12px;font-weight:600;color:${color}">${label}</div>
-          ${desc ? `<div style="font-size:10px;color:var(--text3);margin-top:1px;line-height:1.4">${desc}</div>` : ''}
+  // Accordion sections — collapsed by default, expandem ao clicar
+  const permSections = MODULOS.map(m => {
+    const acoes    = MODULO_ACOES[m.key] || ['visualizar'];
+    const modPerm  = _normPerm(perms[m.key], m.key);
+    const temAlgum = acoes.some(a => modPerm[a]);
+    const descs    = MODULO_ACOES_DESC[m.key] || {};
+    const qtdAtiva = acoes.filter(a => modPerm[a]).length;
+
+    const toggles = acoes.map(acao => {
+      const on    = modPerm[acao] ? 'checked' : '';
+      const color = ACAO_COLOR[acao];
+      const label = ACAO_LABEL[acao];
+      const desc  = descs[acao] || '';
+      return `<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.04)">
+        <div style="min-width:0;flex:1;margin-right:12px">
+          <div style="font-size:11px;font-weight:600;color:${color};line-height:1.2">${label}</div>
+          ${desc?`<div style="font-size:10px;color:var(--text3);margin-top:1px;line-height:1.4">${desc}</div>`:''}
         </div>
-      </label>`;
+        <label class="perm-toggle" style="--toggle-color:${color}">
+          <input type="checkbox" id="perm-${m.key}-${acao}" ${on}
+                 onchange="_onPermChange('${m.key}','${acao}')">
+          <span class="perm-toggle-track"></span>
+          <span class="perm-toggle-thumb"></span>
+        </label>
+      </div>`;
     }).join('');
 
-    return `<div id="perm-row-${m.key}" style="border:1px solid ${temAlgum?'rgba(0,212,255,.2)':'var(--border)'};border-radius:9px;padding:10px 12px;background:${temAlgum?'rgba(0,212,255,.03)':'var(--s1)'}">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-        <span style="font-size:12px;font-weight:700;color:${temAlgum?'var(--text)':'var(--text3)'}">${m.label}</span>
-        ${temAlgum?`<span style="font-size:9px;color:var(--cyan);background:rgba(0,212,255,.12);border:1px solid rgba(0,212,255,.2);border-radius:10px;padding:1px 8px">Com acesso</span>`:`<span style="font-size:9px;color:var(--text3);background:var(--s2);border:1px solid var(--border);border-radius:10px;padding:1px 8px">Sem acesso</span>`}
+    return `<div id="perm-row-${m.key}" style="border:1px solid ${temAlgum?'rgba(0,212,255,.18)':'var(--border)'};border-radius:8px;background:${temAlgum?'rgba(0,212,255,.03)':'var(--s1)'};overflow:hidden;transition:border-color .2s">
+      <div class="perm-acc-header" onclick="_toggleAccordion('${m.key}')">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span class="perm-acc-chevron" id="perm-chev-${m.key}">›</span>
+          <span style="font-size:12px;font-weight:600;color:${temAlgum?'var(--text)':'var(--text3)'}" id="perm-title-${m.key}">${m.label}</span>
+        </div>
+        <span id="perm-badge-${m.key}" style="font-size:9px;padding:2px 8px;border-radius:10px;font-weight:600;white-space:nowrap;
+              ${temAlgum
+                ? `color:var(--cyan);background:rgba(0,212,255,.12);border:1px solid rgba(0,212,255,.2)`
+                : `color:var(--text3);background:var(--s2);border:1px solid var(--border)`}">
+          ${temAlgum ? qtdAtiva+'/'+acoes.length+' ativa'+(qtdAtiva>1?'s':'') : 'sem acesso'}
+        </span>
       </div>
-      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:6px">
-        ${checkboxes}
+      <div class="perm-acc-body" id="perm-body-${m.key}">
+        <div style="border-top:1px solid var(--border);padding-top:6px">
+          ${toggles}
+        </div>
       </div>
     </div>`;
   }).join('');
@@ -7408,7 +7444,7 @@ function _usuarioFormHTML(u={}){
                   style="background:var(--s2);border:1px solid var(--border);color:var(--text3);border-radius:6px;padding:3px 10px;font-size:11px;cursor:pointer;font-family:'Space Grotesk',sans-serif">✕ Revogar tudo</button>
         </div>
       </div>
-      <div style="display:flex;flex-direction:column;gap:8px">
+      <div style="display:flex;flex-direction:column;gap:4px">
         ${permSections}
       </div>
     </div>`;
@@ -7424,37 +7460,43 @@ function _togglePermBorder(cb, lblId){
   const lbl=document.getElementById(lblId);
   if(lbl) lbl.style.borderColor = cb.checked?'var(--cyan)':'var(--border)';
 }
-// Atualiza destaque do card e borda do label quando checkbox muda
+// Toggle accordion de módulo
+function _toggleAccordion(modKey) {
+  const body  = document.getElementById('perm-body-' + modKey);
+  const chev  = document.getElementById('perm-chev-' + modKey);
+  if (!body) return;
+  const open = body.classList.toggle('open');
+  if (chev) chev.classList.toggle('open', open);
+}
+window._toggleAccordion = _toggleAccordion;
+
+// Atualiza badge, borda e cor do título quando toggle muda
 function _onPermChange(modKey, acao) {
-  // Atualizar borda do label específico
-  if (acao) {
-    const lbl = document.getElementById(`perm-lbl-${modKey}-${acao}`);
-    const cb  = document.getElementById(`perm-${modKey}-${acao}`);
-    if (lbl && cb) {
-      lbl.style.borderColor = cb.checked ? 'rgba(0,212,255,.3)' : 'var(--border)';
-    }
-  }
-  // Atualizar destaque do card do módulo
-  const row = document.getElementById('perm-row-' + modKey);
-  if (!row) return;
   const acoes    = MODULO_ACOES[modKey] || ['visualizar'];
   const temAlgum = acoes.some(a => {
     const cb = document.getElementById(`perm-${modKey}-${a}`);
     return cb && cb.checked;
   });
-  row.style.border      = temAlgum ? '1px solid rgba(0,212,255,.2)' : '1px solid var(--border)';
-  row.style.background  = temAlgum ? 'rgba(0,212,255,.03)'          : 'var(--s1)';
-  // Atualizar badge "Com acesso" / "Sem acesso"
-  const badge = row.querySelector('span[style*="border-radius:10px"]');
-  if (badge) {
-    badge.textContent        = temAlgum ? 'Com acesso' : 'Sem acesso';
-    badge.style.color        = temAlgum ? 'var(--cyan)' : 'var(--text3)';
-    badge.style.background   = temAlgum ? 'rgba(0,212,255,.12)' : 'var(--s2)';
-    badge.style.borderColor  = temAlgum ? 'rgba(0,212,255,.2)' : 'var(--border)';
+  const qtdAtiva = acoes.filter(a => {
+    const cb = document.getElementById(`perm-${modKey}-${a}`);
+    return cb && cb.checked;
+  }).length;
+
+  // Atualizar card
+  const row   = document.getElementById('perm-row-' + modKey);
+  const badge = document.getElementById('perm-badge-' + modKey);
+  const title = document.getElementById('perm-title-' + modKey);
+  if (row) {
+    row.style.borderColor = temAlgum ? 'rgba(0,212,255,.18)' : 'var(--border)';
+    row.style.background  = temAlgum ? 'rgba(0,212,255,.03)' : 'var(--s1)';
   }
-  // Atualizar cor do título do módulo
-  const titulo = row.querySelector('span[style*="font-weight:700"]');
-  if (titulo) titulo.style.color = temAlgum ? 'var(--text)' : 'var(--text3)';
+  if (badge) {
+    badge.textContent  = temAlgum ? `${qtdAtiva}/${acoes.length} ativa${qtdAtiva>1?'s':''}` : 'sem acesso';
+    badge.style.color  = temAlgum ? 'var(--cyan)' : 'var(--text3)';
+    badge.style.background   = temAlgum ? 'rgba(0,212,255,.12)' : 'var(--s2)';
+    badge.style.borderColor  = temAlgum ? 'rgba(0,212,255,.2)'  : 'var(--border)';
+  }
+  if (title) title.style.color = temAlgum ? 'var(--text)' : 'var(--text3)';
 }
 // Marcar / limpar todas as permissões
 function _permSelectAll(val) {
