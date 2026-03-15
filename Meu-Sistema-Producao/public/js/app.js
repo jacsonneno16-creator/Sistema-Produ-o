@@ -4797,8 +4797,18 @@ function renderProducaoDiaControlado() {
           </div>
         </div>`;
 
-    // Seletor de funcionário por máquina dentro do dia
-    if (maqsNoDia.length > 0) {
+    // Cards dos produtos (lista compacta)
+    html += '<div class="pd-cards" style="padding:6px 8px;display:flex;flex-direction:column;gap:4px">';
+    dayRecs.forEach(r => {
+      html += pdCardControlado(r, ds, isOperador, isPCP);
+    });
+    if (dayRecs.length === 0) {
+      html += `<div style="text-align:center;padding:12px 8px;font-size:10px;color:var(--text3)">Nenhum produto</div>`;
+    }
+    html += '</div>';
+
+    // Rodapé: seletor de operador por máquina
+    if (maqsNoDia.length > 0 && (_funcProd||[]).length > 0) {
       maqsNoDia.forEach(maq => {
         const savedFunc = (window._pdFuncSel || {})[`${ds}_${maq}`] || '';
         const funcOpts  = (_funcProd || [])
@@ -4806,32 +4816,20 @@ function renderProducaoDiaControlado() {
           .filter(f => !f.maquinas || !f.maquinas.length || f.maquinas.includes(maq))
           .map(f => `<option value="${f.nome}" ${savedFunc===f.nome?'selected':''}>${f.nome}</option>`)
           .join('');
-
-        if (funcOpts) {
-          html += `
-            <div style="padding:6px 10px;border-bottom:1px solid rgba(255,255,255,.04);background:rgba(139,92,246,.04)">
-              <div style="display:flex;align-items:center;gap:6px">
-                <span style="font-size:9px;color:var(--purple);font-weight:700;white-space:nowrap">👷 ${maq.length>12?maq.substring(0,12)+'…':maq}</span>
-                <select onchange="pdSelecionarFunc(this,'${ds}','${maq}')"
-                        style="flex:1;background:var(--s2);border:1px solid var(--border);border-radius:5px;color:var(--text2);font-size:10px;padding:2px 4px">
-                  <option value="">— operador —</option>
-                  ${funcOpts}
-                </select>
-              </div>
-            </div>`;
-        }
+        if (!funcOpts) return;
+        html += `
+          <div style="padding:4px 8px;border-top:1px solid var(--border);background:rgba(139,92,246,.05);display:flex;align-items:center;gap:6px">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+            <span style="font-size:9px;color:var(--purple);white-space:nowrap">${maq.length>10?maq.substring(0,10)+'…':maq}</span>
+            <select onchange="pdSelecionarFunc(this,'${ds}','${maq}')"
+                    style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:10px;padding:2px 4px">
+              <option value="">— operador —</option>
+              ${funcOpts}
+            </select>
+          </div>`;
       });
     }
-
-    // Cards dos produtos
-    html += '<div class="pd-cards" style="padding:8px;display:flex;flex-direction:column;gap:6px">';
-    dayRecs.forEach(r => {
-      html += pdCardControlado(r, ds, isOperador, isPCP);
-    });
-    if (dayRecs.length === 0) {
-      html += `<div style="text-align:center;padding:16px 8px;font-size:11px;color:var(--text3)">Nenhum produto${filtros.maquina||filtros.busca||filtros.status?' com este filtro':''}</div>`;
-    }
-    html += '</div></div>';
+    html += '</div>';
   });
 
   html += '</div>';
@@ -4899,74 +4897,51 @@ async function _pdCarregarBadgesObs(weekRecs, workDays) {
   } catch(e) { /* silencioso */ }
 }
 
-// Versão controlada do card de produto
+// Versão controlada do card de produto (lista compacta)
 function pdCardControlado(r, ds, isOperador, isPCP) {
-  // Verificar status do produto
   const totalProduzido = calcularTotalProduzido(r.id);
   const meta = r.qntCaixas || 0;
-  const pct = meta > 0 ? Math.min(100, Math.round(totalProduzido / meta * 100)) : 0;
-  const status = determinarStatusProgramacao(r);
-  const statusInfo = getStatusInfo(status);
+  const pct  = meta > 0 ? Math.min(100, Math.round(totalProduzido / meta * 100)) : 0;
+  const isDone = totalProduzido >= meta && meta > 0;
+  const isOverflow = ds && (pdGetEffectiveDay(r.id) || r.dtDesejada || r.dtSolicitacao) < ds;
 
-  // Botão de finalizar só para PCP e se o produto não estiver concluído
-  let finBtn = '';
-  if (ds && isPCP && status !== STATUS_PROGRAMACAO.CONCLUIDO) {
-    finBtn = `
-      <button onclick="pdFinalize(${r.id})" 
-              style="width:100%;margin-top:8px;background:var(--green);color:#000;border:none;border-radius:6px;padding:5px 0;font-size:11px;font-weight:700;cursor:pointer">
-        ✓ Finalizar produção
-      </button>`;
-  }
+  const dotColor = isDone ? 'var(--green)' : totalProduzido > 0 ? 'var(--cyan)' : isOverflow ? 'var(--warn)' : 'var(--text3)';
 
-  // Botão de remover só para PCP
   let removeBtn = '';
   if (isPCP) {
-    removeBtn = `
-      <button onclick="pdUnassign(${r.id})" 
-              style="position:absolute;top:4px;right:4px;background:var(--red);color:#fff;border:none;border-radius:50%;width:20px;height:20px;font-size:10px;cursor:pointer;display:flex;align-items:center;justify-content:center">
-        ✕
-      </button>`;
+    removeBtn = `<button onclick="pdUnassign(${r.id})" title="Remover dia"
+      style="background:none;border:none;color:var(--text3);cursor:pointer;font-size:11px;padding:0 3px;flex-shrink:0"
+      onmouseover="this.style.color='var(--red)'" onmouseout="this.style.color='var(--text3)'">✕</button>`;
   }
 
-  // Indicador de progresso
-  const progressBar = `
-    <div style="margin-top:6px;display:flex;align-items:center;gap:6px">
-      <div style="flex:1;height:3px;background:var(--s1);border-radius:2px;overflow:hidden">
-        <div style="width:${pct}%;height:100%;background:${statusInfo.cor};border-radius:2px"></div>
-      </div>
-      <span style="font-size:9px;color:${statusInfo.cor};font-weight:600">${pct}%</span>
-    </div>`;
+  let finBtn = '';
+  if (ds && isPCP && !isDone) {
+    finBtn = `<button onclick="pdFinalize(${r.id})" title="Finalizar"
+      style="background:none;border:none;color:var(--text3);cursor:pointer;font-size:10px;padding:0 3px;flex-shrink:0"
+      onmouseover="this.style.color='var(--green)'" onmouseout="this.style.color='var(--text3)'">✓</button>`;
+  }
 
   return `
-    <div class="pd-card ${isOperador ? 'pd-card-readonly' : ''}" 
-         ${isPCP ? 'draggable="true"' : ''} 
-         id="pd-card-${r.id}" data-id="${r.id}" 
+    <div class="pd-card ${isOperador ? 'pd-card-readonly' : ''}"
+         ${isPCP ? 'draggable="true"' : ''}
+         id="pd-card-${r.id}" data-id="${r.id}"
          ${isPCP ? `ondragstart="pdDragStart(event,${r.id})"` : ''}
-         style="position:relative;background:var(--s2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;${isPCP ? 'cursor:grab;' : ''}user-select:none;transition:box-shadow .15s,opacity .25s,transform .25s">
-      
-      ${removeBtn}
-      
-      <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
-        <span style="color:${statusInfo.cor};font-size:14px">${statusInfo.icone}</span>
-        <div style="font-size:11px;font-weight:600;color:var(--text);line-height:1.4;flex:1">${r.produto}</div>
+         style="display:flex;align-items:center;gap:7px;padding:5px 8px;background:var(--s2);border:1px solid var(--border);border-radius:6px;${isPCP?'cursor:grab;':''}user-select:none;transition:opacity .2s;${isDone?'opacity:.55':''}">
+      <span style="width:6px;height:6px;border-radius:50%;background:${dotColor};flex-shrink:0"></span>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:10px;font-weight:600;color:${isDone?'var(--text3)':'var(--text)'};white-space:nowrap;overflow:hidden;text-overflow:ellipsis"
+             title="${r.produto}">${r.produto}</div>
+        <div style="font-size:9px;color:var(--text3);display:flex;gap:6px;margin-top:1px">
+          <span>${r.qntCaixas}cx</span>
+          ${totalProduzido > 0 ? `<span style="color:${dotColor}">${pct}%</span>` : ''}
+          ${isOverflow ? '<span style="color:var(--warn)">↷ overflow</span>' : ''}
+        </div>
       </div>
-      
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:6px">
-        <span style="font-size:10px;color:var(--purple);background:rgba(139,92,246,.12);border-radius:5px;padding:2px 7px">${r.maquina}</span>
-        <span style="font-size:10px;color:var(--text3)">${r.qntCaixas}cx</span>
-      </div>
-      
-      ${progressBar}
-      
-      <div style="margin-top:6px;font-size:9px;color:var(--text3)">
-        <span>${statusInfo.label}</span>
-        ${totalProduzido > 0 ? ` • ${totalProduzido.toLocaleString()} produzidas` : ''}
-      </div>
-      
       ${finBtn}
-
+      ${removeBtn}
     </div>`;
 }
+
 
 // ===== CSS PARA ELEMENTOS READONLY (OPERADORES) =====
 
@@ -9870,164 +9845,92 @@ function pdSelecionarFunc(sel, ds, maq) {
 })();
 
 // ── Modal de Observação do Produto ──────────────────────────────────
-async function pdAbrirObs(recId, ds) {
-  const rec = records.find(r => String(r.id) === String(recId));
-  if (!rec) { toast('Produto não encontrado.', 'err'); return; }
-
-  // Garante cache inicializado
-  if (!window._pdObsCache) window._pdObsCache = {};
-
-  const dateLabel = ds ? fmtDate(new Date(ds + 'T12:00:00')) : 'sem data';
-
-  // Busca obs existente do cache ou Firestore
-  let textoAtual = window._pdObsCache[`${recId}_${ds}`] || '';
-  if (!textoAtual && ds) {
-    try {
-      const obs = await getObservacaoComCache(ds, recId);
-      if (obs && obs.observacao) {
-        textoAtual = obs.observacao;
-        window._pdObsCache[`${recId}_${ds}`] = textoAtual;
-      }
-    } catch(e) {}
+function pdAbrirObs(recId, ds) {
+  // Abre linha de observação inline na tabela (sem modal)
+  const rowId = `obs-inline-${recId}-${ds}`;
+  let existing = document.getElementById(rowId);
+  if (existing) {
+    existing.style.display = existing.style.display === 'none' ? 'table-row' : 'none';
+    if (existing.style.display !== 'none') existing.querySelector('textarea')?.focus();
+    return;
   }
 
-  // Remove modal anterior se existir
-  document.getElementById('modal-pd-obs')?.remove();
+  // Encontra a <tr> do produto e insere linha logo abaixo
+  const btn  = document.getElementById(`obs-btn-${recId}-${ds}`);
+  const tr   = btn ? btn.closest('tr') : null;
+  if (!tr) { toast('Erro ao localizar produto na tabela.', 'err'); return; }
 
-  const modalHtml = `
-    <div id="modal-pd-obs" onclick="if(event.target===this)pdFecharObs()"
-         style="position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px">
-      <div style="background:var(--bg);border:1px solid var(--border);border-radius:14px;width:100%;max-width:480px;box-shadow:0 20px 60px rgba(0,0,0,.6)">
+  // Busca obs existente do cache
+  if (!window._pdObsCache) window._pdObsCache = {};
+  const textoAtual = window._pdObsCache[`${recId}_${ds}`] || '';
 
-        <!-- Header -->
-        <div style="padding:16px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between">
-          <div>
-            <div style="font-size:13px;font-weight:700;color:var(--text)">📝 Observação do Produto</div>
-            <div style="font-size:11px;color:var(--text3);margin-top:2px">${rec.produto.substring(0,50)}</div>
-          </div>
-          <button onclick="pdFecharObs()" style="background:var(--s2);border:1px solid var(--border);border-radius:6px;width:28px;height:28px;cursor:pointer;color:var(--text2);font-size:14px">✕</button>
-        </div>
+  const colspan = tr.querySelectorAll('td').length;
 
-        <!-- Info -->
-        <div style="padding:12px 20px;background:var(--s1);display:flex;gap:16px;flex-wrap:wrap">
-          <div style="font-size:11px;color:var(--text3)">
-            🏭 <span style="color:var(--text2)">${rec.maquina}</span>
-          </div>
-          <div style="font-size:11px;color:var(--text3)">
-            📅 <span style="color:var(--text2)">${dateLabel}</span>
-          </div>
-          <div style="font-size:11px;color:var(--text3)">
-            📦 <span style="color:var(--text2)">${rec.qntCaixas} cx solicitadas</span>
-          </div>
-        </div>
-
-        <!-- Textarea -->
-        <div style="padding:16px 20px">
-          <label style="font-size:11px;color:var(--text3);display:block;margin-bottom:6px">
-            Observação do dia — problemas, setup, qualidade, etc.
-          </label>
-          <textarea id="pd-obs-textarea"
-                    placeholder="Ex: Setup demorou 30min extras, troca de embalagem no turno da tarde, matéria-prima com umidade..."
+  const newRow = document.createElement('tr');
+  newRow.id = rowId;
+  newRow.style.background = 'var(--s1)';
+  newRow.innerHTML = `
+    <td colspan="${colspan}" style="padding:8px 14px;border-bottom:1px solid var(--border)">
+      <div style="display:flex;align-items:flex-start;gap:8px">
+        <div style="flex:1">
+          <textarea id="obs-txt-${recId}-${ds}"
+                    placeholder="Observação do dia — problemas, setup, qualidade, etc."
                     maxlength="500"
-                    style="width:100%;min-height:100px;max-height:180px;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:var(--s1);color:var(--text);font-size:12px;resize:vertical;font-family:'Space Grotesk',sans-serif;line-height:1.5;box-sizing:border-box;transition:border-color .15s"
+                    style="width:100%;min-height:48px;max-height:100px;padding:6px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:11px;resize:vertical;font-family:'Space Grotesk',sans-serif;line-height:1.4;box-sizing:border-box"
                     onfocus="this.style.borderColor='var(--cyan)'" onblur="this.style.borderColor='var(--border)'"
-                    oninput="document.getElementById('pd-obs-counter').textContent=this.value.length+'/500'"
           >${textoAtual}</textarea>
-          <div style="display:flex;justify-content:space-between;margin-top:4px">
-            <span style="font-size:10px;color:var(--text3)">Auto-salva ao confirmar</span>
-            <span id="pd-obs-counter" style="font-size:10px;color:var(--text3)">${textoAtual.length}/500</span>
-          </div>
+          <div style="font-size:9px;color:var(--text3);margin-top:2px">Max 500 caracteres</div>
         </div>
-
-        <!-- Botões -->
-        <div style="padding:0 20px 16px;display:flex;gap:8px;justify-content:flex-end">
-          <button onclick="pdFecharObs()"
-                  style="background:var(--s2);border:1px solid var(--border);color:var(--text2);border-radius:7px;padding:7px 16px;font-size:12px;cursor:pointer">
-            Cancelar
-          </button>
-          ${textoAtual ? `
-          <button onclick="pdLimparObs(${recId},'${ds}')"
-                  style="background:rgba(255,71,87,.1);border:1px solid rgba(255,71,87,.3);color:var(--red);border-radius:7px;padding:7px 16px;font-size:12px;cursor:pointer">
-            🗑 Apagar
-          </button>` : ''}
+        <div style="display:flex;flex-direction:column;gap:4px;flex-shrink:0">
           <button onclick="pdSalvarObs(${recId},'${ds}')"
-                  style="background:var(--cyan);color:#000;border:none;border-radius:7px;padding:7px 16px;font-size:12px;font-weight:700;cursor:pointer">
+                  style="background:var(--cyan);color:#000;border:none;border-radius:5px;padding:5px 12px;font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap">
             💾 Salvar
+          </button>
+          <button onclick="document.getElementById('${rowId}').style.display='none'"
+                  style="background:var(--s2);border:1px solid var(--border);color:var(--text2);border-radius:5px;padding:4px 12px;font-size:11px;cursor:pointer">
+            Fechar
           </button>
         </div>
       </div>
-    </div>`;
+    </td>`;
 
-  document.body.insertAdjacentHTML('beforeend', modalHtml);
-  setTimeout(() => document.getElementById('pd-obs-textarea')?.focus(), 80);
+  tr.after(newRow);
+  newRow.querySelector('textarea')?.focus();
 }
 
 function pdFecharObs() {
   document.getElementById('modal-pd-obs')?.remove();
 }
 
+
 async function pdSalvarObs(recId, ds) {
-  const textarea = document.getElementById('pd-obs-textarea');
-  if (!textarea) return;
+  if (!window._pdObsCache) window._pdObsCache = {};
+  const textarea = document.getElementById(`obs-txt-${recId}-${ds}`);
+  if (!textarea) { toast('Campo não encontrado.', 'err'); return; }
   const texto = textarea.value.trim();
-
-  if (!texto) {
-    toast('Digite uma observação antes de salvar.', 'warn');
-    return;
-  }
-
-  const btn = document.querySelector('#modal-pd-obs button[onclick*="pdSalvarObs"]');
-  if (btn) { btn.disabled = true; btn.textContent = '⏳ Salvando...'; }
+  if (!texto) { toast('Digite uma observação antes de salvar.', 'warn'); return; }
 
   const sucesso = await salvarObservacao(ds, recId, texto, getUserEmailSafe());
   if (sucesso) {
     window._pdObsCache[`${recId}_${ds}`] = texto;
-    // Invalida cache geral de observações
     _observacoesCache = {};
     toast('✅ Observação salva!', 'ok');
-    pdFecharObs();
-    // Atualiza badge no card
+    const row = document.getElementById(`obs-inline-${recId}-${ds}`);
+    if (row) row.style.display = 'none';
     _pdAtualizarBadgeObs(recId, ds, texto);
-  } else {
-    if (btn) { btn.disabled = false; btn.textContent = '💾 Salvar'; }
   }
 }
 
 async function pdLimparObs(recId, ds) {
-  if (!confirm('Apagar a observação deste produto neste dia?')) return;
+  if (!confirm('Apagar a observação?')) return;
   const sucesso = await salvarObservacao(ds, recId, '', getUserEmailSafe());
   if (sucesso) {
-    delete window._pdObsCache[`${recId}_${ds}`];
+    if (window._pdObsCache) delete window._pdObsCache[`${recId}_${ds}`];
     _observacoesCache = {};
     toast('Observação apagada.', 'info');
-    pdFecharObs();
+    const row = document.getElementById(`obs-inline-${recId}-${ds}`);
+    if (row) row.remove();
     _pdAtualizarBadgeObs(recId, ds, '');
-  }
-}
-
-function _pdAtualizarBadgeObs(recId, ds, texto) {
-  const hasObs = !!texto;
-  // 1. Botão no card do Produção Dia
-  const card = document.getElementById(`pd-card-${recId}`);
-  if (card) {
-    const obsBtn = card.querySelector(`button[onclick*="pdAbrirObs"]`);
-    if (obsBtn) {
-      obsBtn.style.borderColor = hasObs ? 'var(--warn)' : 'var(--border)';
-      obsBtn.style.color       = hasObs ? 'var(--warn)' : 'var(--text3)';
-      obsBtn.textContent       = hasObs ? '📝 Ver obs.' : '📝 Observação';
-    }
-  }
-  // 2. Botão no rodapé do Realizado
-  const footerBtn = document.getElementById(`obs-btn-${recId}-${ds}`);
-  if (footerBtn) {
-    footerBtn.style.borderColor = hasObs ? 'var(--warn)' : 'var(--border)';
-    footerBtn.style.color       = hasObs ? 'var(--warn)' : 'var(--text3)';
-  }
-  // Atualiza cache
-  if (hasObs) {
-    window._pdObsCache[`${recId}_${ds}`] = texto;
-  } else {
-    delete window._pdObsCache[`${recId}_${ds}`];
   }
 }
 
