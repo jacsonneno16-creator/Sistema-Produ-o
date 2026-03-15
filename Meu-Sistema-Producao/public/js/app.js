@@ -6125,47 +6125,234 @@ function renderProdutosCfg() {
           ${maqTags}
         </div>
       </div>
-      ${isExtra ? `<button onclick="deleteExtraProduto(${p.cod},'${p.maquina.replace(/'/g,"\\'")}','${p.descricao.replace(/'/g,"\\'")}')" style="background:none;border:1px solid var(--border);border-radius:6px;padding:3px 8px;font-size:11px;color:#ff6b6b;cursor:pointer;flex-shrink:0">🗑</button>` : '<span style="font-size:10px;color:var(--text3);flex-shrink:0">padrão</span>'}
+      <div style="display:flex;gap:6px;align-items:center">
+        <button onclick="editarProduto(${p.cod},'${p.maquina.replace(/'/g,"\\'")}','${p.descricao.replace(/'/g,"\\'")}')" 
+                style="background:none;border:1px solid var(--border);border-radius:6px;padding:3px 8px;font-size:11px;color:var(--cyan);cursor:pointer;flex-shrink:0"
+                title="Editar produto">
+          ✏️
+        </button>
+        <button onclick="excluirProduto(${p.cod},'${p.maquina.replace(/'/g,"\\'")}','${p.descricao.replace(/'/g,"\\'")}')" 
+                style="background:none;border:1px solid var(--border);border-radius:6px;padding:3px 8px;font-size:11px;color:#ff6b6b;cursor:pointer;flex-shrink:0"
+                title="Excluir produto">
+          🗑️
+        </button>
+        ${!isExtra ? '<span style="font-size:9px;color:var(--text3);margin-left:8px">padrão</span>' : ''}
+      </div>
     </div>`;
   }).join('');
   if (groups.length > 200) el.innerHTML += `<div style="padding:12px;color:var(--text3);font-size:12px">... e mais ${groups.length - 200} produtos.</div>`;
 }
 
+// ===== FUNÇÕES APRIMORADAS DE PRODUTOS COM EDIÇÃO E EXCLUSÃO =====
+
+// Variável global para o produto em edição
+let _produtoEditando = null;
+
 function openAddProduto() {
+  _produtoEditando = null; // Resetar modo edição
   const sel = document.getElementById('pm-maq');
   if (sel) sel.innerHTML = MAQUINAS.map(m => `<option value="${m}">${m}</option>`).join('');
   ['pm-cod','pm-desc','pm-unid','pm-pcmin'].forEach(id => { const el = document.getElementById(id); if(el) el.value = ''; });
+  
+  // Resetar título do modal
+  document.getElementById('maq-modal-title').textContent = 'Novo Produto';
+  
   document.getElementById('prod-modal').style.display = 'flex';
   setTimeout(() => { const el = document.getElementById('pm-cod'); if(el) el.focus(); }, 80);
 }
-function closeProdModal() { document.getElementById('prod-modal').style.display = 'none'; }
+
+function editarProduto(cod, maquina, descricao) {
+  // Encontrar o produto nos dados
+  const produtos = getAllProdutos();
+  const produto = produtos.find(p => String(p.cod) === String(cod) && p.maquina === maquina);
+  
+  if (!produto) {
+    toast('Produto não encontrado', 'err');
+    return;
+  }
+  
+  _produtoEditando = { ...produto };
+  
+  // Preencher modal de edição
+  document.getElementById('pm-cod').value = produto.cod;
+  document.getElementById('pm-desc').value = produto.descricao;
+  document.getElementById('pm-unid').value = produto.unid || '';
+  document.getElementById('pm-pcmin').value = produto.pc_min || '';
+  
+  // Popular máquinas no select
+  const sel = document.getElementById('pm-maq');
+  if (sel) {
+    sel.innerHTML = MAQUINAS.map(m => `<option value="${m}" ${m === maquina ? 'selected' : ''}>${m}</option>`).join('');
+  }
+  
+  // Mudar título do modal
+  const titleEl = document.getElementById('maq-modal-title');
+  if (titleEl) titleEl.textContent = 'Editar Produto';
+  
+  // Abrir modal
+  document.getElementById('prod-modal').style.display = 'flex';
+  setTimeout(() => { const el = document.getElementById('pm-desc'); if(el) el.focus(); }, 80);
+}
+
+function excluirProduto(cod, maquina, descricao) {
+  if (!confirm(`Tem certeza que deseja excluir o produto:\n\n${descricao} (${cod}) - ${maquina}\n\nEsta ação não pode ser desfeita.`)) {
+    return;
+  }
+  
+  try {
+    // Verificar se há registros de produção vinculados
+    const registrosVinculados = records.filter(r => String(r.codProduto) === String(cod) && r.maquina === maquina);
+    if (registrosVinculados.length > 0) {
+      if (!confirm(`ATENÇÃO: Este produto possui ${registrosVinculados.length} registro(s) de produção vinculados.\n\nExcluir o produto pode causar inconsistências no sistema.\n\nDeseja continuar mesmo assim?`)) {
+        return;
+      }
+    }
+    
+    // Remover produto dos arrays globais
+    let removidoSucesso = false;
+    
+    // Tentar remover do array de produtos extras
+    const extraIndex = PRODUTOS_EXTRA.findIndex(p => String(p.cod) === String(cod) && p.maquina === maquina);
+    if (extraIndex >= 0) {
+      PRODUTOS_EXTRA.splice(extraIndex, 1);
+      localStorage.setItem('produtos_extra', JSON.stringify(PRODUTOS_EXTRA));
+      removidoSucesso = true;
+    }
+    
+    // Tentar remover do array global de produtos (se existir)
+    if (typeof window.PRODUTOS !== 'undefined' && Array.isArray(window.PRODUTOS)) {
+      const globalIndex = window.PRODUTOS.findIndex(p => String(p.cod) === String(cod) && p.maquina === maquina);
+      if (globalIndex >= 0) {
+        window.PRODUTOS.splice(globalIndex, 1);
+        removidoSucesso = true;
+      }
+    }
+    
+    if (removidoSucesso) {
+      toast(`Produto "${descricao}" excluído com sucesso`, 'ok');
+      
+      // Recarregar lista
+      renderProdutosCfg();
+      
+      // Registrar auditoria
+      registrarAuditoria('PRODUTO_EXCLUIDO', {
+        cod: cod,
+        descricao: descricao,
+        maquina: maquina,
+        registrosVinculados: registrosVinculados.length
+      });
+      
+      // TODO: Remover do Firestore se implementado
+      // await deleteDoc(doc(lojaCol('produtos'), produtoId));
+      
+    } else {
+      toast('Produto não encontrado nos dados locais', 'warn');
+    }
+    
+  } catch(e) {
+    console.error('Erro ao excluir produto:', e);
+    toast('Erro ao excluir produto: ' + e.message, 'err');
+  }
+}
+
+function closeProdModal() { 
+  document.getElementById('prod-modal').style.display = 'none'; 
+  _produtoEditando = null;
+}
+
 function saveProdModal() {
   const cod = parseInt(document.getElementById('pm-cod').value);
   const desc = document.getElementById('pm-desc').value.trim();
   const unid = parseInt(document.getElementById('pm-unid').value);
   const pcmin = parseFloat(document.getElementById('pm-pcmin').value);
   const maq = document.getElementById('pm-maq').value;
-  if (!cod || !desc || !unid || !pcmin || !maq) { toast('Preencha todos os campos', 'err'); return; }
+  
+  if (!cod || !desc || !unid || !pcmin || !maq) { 
+    toast('Preencha todos os campos', 'err'); 
+    return; 
+  }
+  
+  // Verificar se já existe produto com mesmo código e máquina (apenas em modo criação)
+  if (!_produtoEditando) {
+    const produtos = getAllProdutos();
+    const produtoExistente = produtos.find(p => String(p.cod) === String(cod) && p.maquina === maq);
+    if (produtoExistente) {
+      toast('Já existe um produto com este código nesta máquina', 'err');
+      return;
+    }
+  }
+  
   const dados = { cod, descricao: desc, unid, kg_fd: 0, pc_min: pcmin, maquina: maq };
-  // Salva no Firestore (função assíncrona - não bloqueia)
-  salvarProdutoFirestore(dados).then(() => {
+  
+  try {
+    if (_produtoEditando) {
+      // Modo edição - atualizar produto existente
+      let atualizadoSucesso = false;
+      
+      // Atualizar no array de extras se for produto extra
+      const extraIndex = PRODUTOS_EXTRA.findIndex(p => 
+        String(p.cod) === String(_produtoEditando.cod) && p.maquina === _produtoEditando.maquina
+      );
+      if (extraIndex >= 0) {
+        PRODUTOS_EXTRA[extraIndex] = dados;
+        localStorage.setItem('produtos_extra', JSON.stringify(PRODUTOS_EXTRA));
+        atualizadoSucesso = true;
+      }
+      
+      // Atualizar no array global se existir
+      if (typeof window.PRODUTOS !== 'undefined' && Array.isArray(window.PRODUTOS)) {
+        const globalIndex = window.PRODUTOS.findIndex(p => 
+          String(p.cod) === String(_produtoEditando.cod) && p.maquina === _produtoEditando.maquina
+        );
+        if (globalIndex >= 0) {
+          window.PRODUTOS[globalIndex] = dados;
+          atualizadoSucesso = true;
+        }
+      }
+      
+      if (atualizadoSucesso) {
+        toast(`Produto "${desc}" atualizado com sucesso`, 'ok');
+        
+        registrarAuditoria('PRODUTO_EDITADO', {
+          produtoAnterior: _produtoEditando,
+          produtoNovo: dados
+        });
+      }
+      
+    } else {
+      // Modo criação - adicionar novo produto
+      PRODUTOS_EXTRA.push(dados);
+      localStorage.setItem('produtos_extra', JSON.stringify(PRODUTOS_EXTRA));
+      
+      toast(`Produto "${desc}" adicionado com sucesso`, 'ok');
+      
+      registrarAuditoria('PRODUTO_ADICIONADO', dados);
+    }
+    
+    // Tentar salvar no Firestore (se função existir)
+    if (typeof salvarProdutoFirestore === 'function') {
+      salvarProdutoFirestore(dados).then(() => {
+        console.log('Produto sincronizado com Firestore');
+      }).catch(e => {
+        console.warn('Erro ao salvar produto no Firestore:', e);
+        toast('Produto salvo localmente, mas erro ao sincronizar', 'warn');
+      });
+    }
+    
+    // Recarregar lista e fechar modal
     renderProdutosCfg();
-    toast('Produto salvo!', 'ok');
-  }).catch(() => {
-    // Fallback: salva no localStorage para não perder dados
-    PRODUTOS_EXTRA.push({ cod, descricao: desc, unid, kg_fd: 0, pc_min: pcmin, maquina: maq });
-    saveExtraProdutos();
-    renderProdutosCfg();
-    toast('Produto adicionado (local)!', 'ok');
-  });
-  closeProdModal();
+    closeProdModal();
+    
+  } catch(e) {
+    console.error('Erro ao salvar produto:', e);
+    toast('Erro ao salvar produto: ' + e.message, 'err');
+  }
 }
+
+// Manter compatibilidade com função antiga
 function deleteExtraProduto(cod, maq, desc) {
-  const idx = PRODUTOS_EXTRA.findIndex(p => p.cod === cod && p.maquina === maq && p.descricao === desc);
-  if (idx < 0) return;
-  PRODUTOS_EXTRA.splice(idx, 1);
-  saveExtraProdutos();
-  renderProdutosCfg();
+  excluirProduto(cod, maq, desc);
+}
   toast('Produto removido', 'ok');
 }
 function importProdutosExcel(input) {
@@ -7796,13 +7983,71 @@ function renderProjecao(){ calcularProjecao(); }
 
 let paResultados = [];
 
-function hoursOnMachineDay(machine, d){
-  const mhrs = machineHours[machine];
-  if(mhrs && Array.isArray(mhrs)){
-    const v = mhrs[d.getDay()];
-    if(v != null) return v;
+// Horários específicos por máquina (se não definido, usa horário geral)
+let machineHours = {};
+
+// Carrega horários específicos das máquinas do localStorage
+function carregarHorariosMaquinas() {
+  try {
+    const saved = localStorage.getItem('machineHours');
+    if (saved) {
+      machineHours = JSON.parse(saved);
+      console.log('Horários das máquinas carregados:', Object.keys(machineHours).length, 'máquinas');
+    } else {
+      console.log('Nenhum horário específico de máquina encontrado, usando padrão');
+    }
+  } catch(e) {
+    console.warn('Erro ao carregar horários das máquinas:', e);
+    machineHours = {};
   }
-  return hoursOnDay(d);
+}
+
+// Inicializar horários das máquinas quando o script carregar
+if (typeof window !== 'undefined') {
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', carregarHorariosMaquinas);
+  } else {
+    carregarHorariosMaquinas();
+  }
+}
+
+// Salva horários específicos das máquinas no localStorage
+function salvarHorariosMaquinas() {
+  try {
+    localStorage.setItem('machineHours', JSON.stringify(machineHours));
+  } catch(e) {
+    console.warn('Erro ao salvar horários das máquinas:', e);
+  }
+}
+
+// Define horários específicos para uma máquina
+function definirHorariosMaquina(machine, hoursArray) {
+  if (!Array.isArray(hoursArray) || hoursArray.length !== 7) {
+    console.error('hoursArray deve ser um array de 7 elementos (dom a sáb)');
+    return;
+  }
+  
+  machineHours[machine] = hoursArray;
+  salvarHorariosMaquinas();
+}
+
+function hoursOnMachineDay(machine, d){
+  try {
+    const mhrs = machineHours[machine];
+    if(mhrs && Array.isArray(mhrs) && mhrs.length === 7){
+      const dayOfWeek = d.getDay(); // 0 = domingo, 1 = segunda, etc.
+      const v = mhrs[dayOfWeek];
+      if(v != null && typeof v === 'number' && v >= 0) {
+        return v;
+      }
+    }
+    
+    // Fallback: usar horário geral do dia
+    return hoursOnDay(d);
+  } catch(e) {
+    console.warn('Erro em hoursOnMachineDay:', e);
+    return hoursOnDay(d);
+  }
 }
 
 function weekHrsForMachine(machine, monday){
@@ -9208,6 +9453,108 @@ window.exportarApontamentos = exportarApontamentos;
 window.renderProducaoDiaControlado = renderProducaoDiaControlado;
 window.pdCardControlado = pdCardControlado;
 window.adicionarEstilosControlados = adicionarEstilosControlados;
+window.editarProduto = editarProduto;
+window.excluirProduto = excluirProduto;
+window.carregarHorariosMaquinas = carregarHorariosMaquinas;
+window.salvarHorariosMaquinas = salvarHorariosMaquinas;
+window.definirHorariosMaquina = definirHorariosMaquina;
+window.getCurrentUserSafe = getCurrentUserSafe;
+window.isOperadorLevel = isOperadorLevel;
+window.isPCPLevel = isPCPLevel;
+window.getUserEmailSafe = getUserEmailSafe;
+
+// ===== INICIALIZAÇÃO FINAL DO SISTEMA =====
+
+// Função para inicializar sistema controlado
+function inicializarSistemaControlado() {
+  try {
+    console.log('🎯 Inicializando Sistema DT Produção Controlado...');
+    
+    // 1. Carregar horários das máquinas
+    carregarHorariosMaquinas();
+    
+    // 2. Adicionar estilos CSS controlados
+    adicionarEstilosControlados();
+    
+    // 3. Verificar usuário autenticado
+    const user = getCurrentUserSafe();
+    if (user) {
+      console.log('👤 Usuário identificado:', user.email, '- Nível:', user.userData?.nivel || 'operador');
+    } else {
+      console.warn('⚠️ Usuário não identificado, usando configurações padrão');
+    }
+    
+    // 4. Configurar modo operacional
+    const isOp = isOperadorLevel();
+    const isPCP = isPCPLevel();
+    
+    console.log('🔐 Modo operacional:', isOp ? 'OPERADOR (limitado)' : isPCP ? 'PCP (completo)' : 'PADRÃO');
+    
+    // 5. Mostrar status das principais funcionalidades
+    const funcionalidades = {
+      'Firestore': typeof addDoc !== 'undefined',
+      'Auth': typeof auth !== 'undefined',
+      'Records': Array.isArray(records),
+      'Máquinas': Array.isArray(MAQUINAS) && MAQUINAS.length > 0,
+      'Produtos': typeof getAllProdutos === 'function' && getAllProdutos().length > 0
+    };
+    
+    console.log('📊 Status do sistema:', funcionalidades);
+    
+    // 6. Configurar notificações se suportado
+    if ('Notification' in window && Notification.permission === 'default') {
+      console.log('🔔 Notificações disponíveis - solicite permissão se necessário');
+    }
+    
+    console.log('✅ Sistema DT Produção Controlado inicializado com sucesso!');
+    
+    return true;
+  } catch(e) {
+    console.error('❌ Erro na inicialização do sistema:', e);
+    return false;
+  }
+}
+
+// Executar inicialização quando DOM estiver pronto
+if (typeof window !== 'undefined') {
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', inicializarSistemaControlado);
+  } else {
+    // DOM já carregado, executar imediatamente
+    setTimeout(inicializarSistemaControlado, 100);
+  }
+}
+
+// Exportar função de inicialização
+window.inicializarSistemaControlado = inicializarSistemaControlado;
+
+// ===== UTILITÁRIOS EXTRAS =====
+
+// Função para debug do sistema
+window.debugSistema = function() {
+  console.log('=== DEBUG SISTEMA DT PRODUÇÃO ===');
+  console.log('Usuario:', getCurrentUserSafe());
+  console.log('Nível operador:', isOperadorLevel());
+  console.log('Nível PCP:', isPCPLevel());
+  console.log('Records:', records.length);
+  console.log('Máquinas:', MAQUINAS);
+  console.log('Produtos:', getAllProdutos().length);
+  console.log('Machine Hours:', machineHours);
+  console.log('Semana selecionada:', prodBaseMonday);
+  console.log('================================');
+};
+
+// Função para resetar configurações (emergência)
+window.resetarConfiguracoes = function() {
+  if (confirm('Tem certeza que deseja resetar todas as configurações? Esta ação não pode ser desfeita.')) {
+    localStorage.removeItem('machineHours');
+    localStorage.removeItem('produtos_extra');
+    localStorage.removeItem('currentUser');
+    
+    // Recarregar página
+    window.location.reload();
+  }
+};
 
 // ===== NOVA VERSÃO RENDERAPONTAMENTO COM FIRESTORE =====
 
