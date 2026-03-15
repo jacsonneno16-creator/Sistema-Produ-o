@@ -226,8 +226,8 @@ function verificarProgramacaoValida(record, maquina, data) {
   }
   
   // Permitir produção na semana programada
-  const semanaRecord = getWeekStart(new Date(dataDesejada + 'T12:00:00'));
-  const semanaProduzindo = getWeekStart(new Date(data + 'T12:00:00'));
+  const semanaRecord = getWeekMonday(new Date(dataDesejada + 'T12:00:00'));
+  const semanaProduzindo = getWeekMonday(new Date(data + 'T12:00:00'));
   
   if (dateStr(semanaRecord) !== dateStr(semanaProduzindo)) {
     return { 
@@ -242,7 +242,7 @@ function verificarProgramacaoValida(record, maquina, data) {
 // Verifica sequência na máquina
 function verificarSequenciaMaquina(record, maquina, data) {
   // Buscar todos os produtos programados para esta máquina nesta semana
-  const weekStart = getWeekStart(new Date(data + 'T12:00:00'));
+  const weekStart = getWeekMonday(new Date(data + 'T12:00:00'));
   const weekEnd = addDays(weekStart, 6);
   
   const produtosMaquina = records.filter(r => 
