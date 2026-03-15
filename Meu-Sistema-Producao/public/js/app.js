@@ -1859,6 +1859,8 @@ function populateMaqSelect(){
 }
 
 function openForm(rec){
+  if(rec && !can('programacao','editar')){ toast('Sem permissão para editar solicitações.','err'); return; }
+  if(!rec && !can('programacao','criar')){ toast('Sem permissão para criar solicitações.','err'); return; }
   populateMaqSelect();
   document.getElementById('edit-id').value=rec?rec.id:'';
   document.getElementById('form-title').textContent=rec?'Editar Solicitação':'Nova Solicitação';
@@ -1989,6 +1991,9 @@ function editRec(id){
 }
 
 async function saveForm(){
+  const isEdit = !!(document.getElementById('edit-id')?.value);
+  if(isEdit && !can('programacao','editar')){ toast('Sem permissão para editar.','err'); return; }
+  if(!isEdit && !can('programacao','criar')){ toast('Sem permissão para criar.','err'); return; }
   const pCod=document.getElementById('p-cod').value;
   const pMaq=document.getElementById('p-maq-val').value;
   const pcMin=parseFloat(document.getElementById('p-pcmin-val').value)||0;
@@ -2037,6 +2042,7 @@ function askDel(id){delId=String(id);document.getElementById('conf-overlay').cla
 function closeConf(){document.getElementById('conf-overlay').classList.remove('on');delId=null}
 async function doDelete(){
   if(!delId) return;
+  if(!can('programacao','excluir')){ toast('Sem permissão para excluir solicitações.','err'); closeConf(); return; }
   // delId is always a string (Firestore doc ID)
   const r=records.find(x=>String(x.id)===String(delId));
   if(!r){ toast('Registro não encontrado.','err'); closeConf(); return; }
@@ -3350,6 +3356,7 @@ let reorderMaq='';
 let dragSrc=null;
 
 function openReorderModal(){
+  if(!can('gantt','reordenar')){ toast('Sem permissão para reordenar a produção.','err'); return; }
   const sel=document.getElementById('reorder-maq-sel');
   sel.innerHTML='<option value="">— Selecione a máquina —</option>';
   MAQUINAS.forEach(m=>{
@@ -4520,8 +4527,8 @@ function realizadoPermitirFaltaSequencia() {
 
 // Função para PCP resetar apontamentos do dia
 function realizadoResetarDia(data) {
-  if (!isPCPLevel()) {
-    toast('Apenas usuários PCP podem resetar dados!', 'err');
+  if (!can('realizado','resetar')) {
+    toast('Sem permissão para resetar apontamentos.', 'err');
     return;
   }
   
@@ -5941,6 +5948,7 @@ async function salvarMaquinaFirestore(dados) {
 }
 
 async function excluirMaquinaFirestore(nome) {
+  if(!can('maquinas','excluir')){ toast('Sem permissão para excluir máquinas.','err'); return; }
   try {
     const snap = await getDocs(lojaCol('maquinas'));
     const found = snap.docs.find(d => d.data().nome === nome);
@@ -6180,6 +6188,9 @@ function renderMaqProdsLista() {
 }
 
 async function saveMaquinaModal() {
+  const isEdit = !!(document.getElementById('maq-edit-nome')?.value || document.getElementById('maq-modal-title')?.textContent?.includes('Editar'));
+  if(isEdit && !can('maquinas','editar')){ toast('Sem permissão para editar máquinas.','err'); return; }
+  if(!isEdit && !can('maquinas','criar')){ toast('Sem permissão para criar máquinas.','err'); return; }
   const nome = (document.getElementById('maq-nome-inp').value || '').trim();
   if (!nome) { toast('Informe o nome da máquina', 'err'); return; }
 
@@ -7144,17 +7155,174 @@ async function renderUsuariosSistema(){
 }
 
 
+// Ações disponíveis por módulo — define quais colunas aparecem na tabela de permissões
+// ── Permissões granulares por módulo ──────────────────────────────────────
+// Cada entrada define as AÇÕES disponíveis e o que cada uma libera
+const MODULO_ACOES = {
+  dashboard    : ['visualizar'],
+  programacao  : ['visualizar','criar','editar','excluir'],
+  maquinas     : ['visualizar','criar','editar','excluir'],
+  gantt        : ['visualizar','editar','reordenar','finalizar'],
+  realizado    : ['visualizar','apontar','finalizar','resetar'],
+  insumos_maq  : ['visualizar','editar'],
+  insumos_geral: ['visualizar','editar'],
+  calculos     : ['visualizar','editar'],
+  projecao     : ['visualizar','editar'],
+  ficha_tecnica: ['visualizar','editar','criar'],
+  importacao   : ['visualizar','importar','exportar'],
+  configuracoes: ['visualizar','editar','administrar'],
+  funcionarios : ['visualizar','editar','criar','excluir'],
+  usuarios     : ['visualizar','editar','criar','excluir','administrar'],
+};
+
+// Descrição detalhada do que cada ação libera em cada módulo
+const MODULO_ACOES_DESC = {
+  dashboard    : { visualizar: 'Ver o painel de indicadores e resumos' },
+  programacao  : {
+    visualizar : 'Ver a lista de solicitações de produção',
+    criar      : 'Criar novas solicitações de produção',
+    editar     : 'Editar solicitações existentes (datas, quantidades, máquina)',
+    excluir    : 'Excluir solicitações de produção',
+  },
+  maquinas     : {
+    visualizar : 'Ver fichas de máquinas e capacidades',
+    criar      : 'Cadastrar novas máquinas',
+    editar     : 'Editar dados e turnos das máquinas',
+    excluir    : 'Remover máquinas do sistema',
+  },
+  gantt        : {
+    visualizar : 'Ver o Gantt visual de programação',
+    editar     : 'Arrastar produtos entre dias no Gantt',
+    reordenar  : 'Alterar a sequência de produção por máquina',
+    finalizar  : 'Marcar produtos como finalizados / desfinalizar',
+  },
+  realizado    : {
+    visualizar : 'Ver apontamentos de produção',
+    apontar    : 'Preencher quantidades por hora e salvar apontamentos',
+    finalizar  : 'Finalizar ou desfinalizar um produto',
+    resetar    : 'Apagar todos os apontamentos de um dia (Reset)',
+  },
+  insumos_maq  : {
+    visualizar : 'Ver estoque de insumos por máquina',
+    editar     : 'Lançar e atualizar quantidades de insumos',
+  },
+  insumos_geral: {
+    visualizar : 'Ver relatório geral de insumos e cobertura',
+    editar     : 'Editar dados do estoque geral de insumos',
+  },
+  calculos     : {
+    visualizar : 'Ver programação automática calculada',
+    editar     : 'Ajustar parâmetros e aplicar programação automática',
+  },
+  projecao     : {
+    visualizar : 'Ver projeções de vendas e histórico',
+    editar     : 'Editar e importar dados de projeção',
+  },
+  ficha_tecnica: {
+    visualizar : 'Ver fichas técnicas de produtos',
+    editar     : 'Editar insumos e quantidades da ficha técnica',
+    criar      : 'Criar novas fichas técnicas',
+  },
+  importacao   : {
+    visualizar : 'Ver histórico de importações',
+    importar   : 'Importar dados via Excel ou API',
+    exportar   : 'Exportar relatórios em PDF e XLSX',
+  },
+  configuracoes: {
+    visualizar : 'Acessar configurações do sistema',
+    editar     : 'Alterar configurações gerais (jornada, lojas)',
+    administrar: 'Gerenciar todas as configurações avançadas',
+  },
+  funcionarios : {
+    visualizar : 'Ver lista de funcionários',
+    editar     : 'Editar dados e status dos funcionários',
+    criar      : 'Cadastrar novos funcionários',
+    excluir    : 'Remover funcionários do sistema',
+  },
+  usuarios     : {
+    visualizar : 'Ver usuários do sistema',
+    editar     : 'Editar nome, cargo e permissões de usuários',
+    criar      : 'Criar novos usuários com acesso ao sistema',
+    excluir    : 'Excluir usuários permanentemente',
+    administrar: 'Forçar reset de senha e ativar/desativar contas',
+  },
+};
+
+const ACAO_LABEL = {
+  visualizar : '👁 Ver',
+  criar      : '➕ Criar',
+  editar     : '✏️ Editar',
+  excluir    : '🗑 Excluir',
+  apontar    : '📝 Apontar',
+  finalizar  : '🏁 Finalizar',
+  resetar    : '🔄 Resetar',
+  reordenar  : '⇅ Reordenar',
+  importar   : '📥 Importar',
+  exportar   : '📤 Exportar',
+  administrar: '⚙️ Admin',
+};
+const ACAO_COLOR = {
+  visualizar : 'var(--cyan)',
+  criar      : 'var(--green)',
+  editar     : 'var(--warn)',
+  excluir    : 'var(--red)',
+  apontar    : 'var(--cyan)',
+  finalizar  : 'var(--green)',
+  resetar    : 'var(--red)',
+  reordenar  : 'var(--warn)',
+  importar   : 'var(--cyan)',
+  exportar   : 'var(--cyan)',
+  administrar: 'var(--red)',
+};
+
+// Normaliza permissão (suporta formato legado true/false e novo {visualizar,editar,...})
+function _normPerm(raw) {
+  if (!raw) return {};
+  if (raw === true) return { visualizar: true, editar: true, criar: true, administrar: true };
+  if (typeof raw === 'object') return raw;
+  return {};
+}
+
 function _usuarioFormHTML(u={}){
-  const tipo = u.tipo || 'usuario';
+  const tipo  = u.tipo || 'usuario';
   const perms = u.permissoes || {};
-  const checkboxes = MODULOS.map(m => `
-    <label style="display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:7px;background:var(--s2);border:1px solid ${perms[m.key]?'var(--cyan)':'var(--border)'};cursor:pointer;transition:border .15s" id="perm-lbl-${m.key}">
-      <input type="checkbox" id="perm-${m.key}" ${perms[m.key]?'checked':''} onchange="_togglePermBorder(this,'perm-lbl-${m.key}')" style="accent-color:var(--cyan);width:14px;height:14px">
-      <span style="font-size:12px;color:var(--text)">${m.label}</span>
-    </label>`).join('');
+
+  // Tabela de permissões granulares — uma seção por módulo
+  const permSections = MODULOS.map(m => {
+    const acoes   = MODULO_ACOES[m.key] || ['visualizar'];
+    const modPerm = _normPerm(perms[m.key]);
+    const temAlgum = acoes.some(a => modPerm[a]);
+    const descs = MODULO_ACOES_DESC[m.key] || {};
+
+    const checkboxes = acoes.map(acao => {
+      const checked = modPerm[acao] ? 'checked' : '';
+      const color   = ACAO_COLOR[acao];
+      const label   = ACAO_LABEL[acao];
+      const desc    = descs[acao] || '';
+      return `<label style="display:flex;align-items:flex-start;gap:9px;padding:7px 10px;border-radius:7px;background:var(--s3,rgba(255,255,255,.03));border:1px solid ${modPerm[acao]?'rgba(0,212,255,.3)':'var(--border)'};cursor:pointer;transition:all .15s" id="perm-lbl-${m.key}-${acao}">
+        <input type="checkbox" id="perm-${m.key}-${acao}" ${checked}
+               onchange="_onPermChange('${m.key}','${acao}')"
+               style="accent-color:${color};width:15px;height:15px;cursor:pointer;flex-shrink:0;margin-top:1px">
+        <div>
+          <div style="font-size:12px;font-weight:600;color:${color}">${label}</div>
+          ${desc ? `<div style="font-size:10px;color:var(--text3);margin-top:1px;line-height:1.4">${desc}</div>` : ''}
+        </div>
+      </label>`;
+    }).join('');
+
+    return `<div id="perm-row-${m.key}" style="border:1px solid ${temAlgum?'rgba(0,212,255,.2)':'var(--border)'};border-radius:9px;padding:10px 12px;background:${temAlgum?'rgba(0,212,255,.03)':'var(--s1)'}">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+        <span style="font-size:12px;font-weight:700;color:${temAlgum?'var(--text)':'var(--text3)'}">${m.label}</span>
+        ${temAlgum?`<span style="font-size:9px;color:var(--cyan);background:rgba(0,212,255,.12);border:1px solid rgba(0,212,255,.2);border-radius:10px;padding:1px 8px">Com acesso</span>`:`<span style="font-size:9px;color:var(--text3);background:var(--s2);border:1px solid var(--border);border-radius:10px;padding:1px 8px">Sem acesso</span>`}
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:6px">
+        ${checkboxes}
+      </div>
+    </div>`;
+  }).join('');
 
   return `
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px">
       <div>
         <label class="flbl">Nome completo *</label>
         <input class="finp" id="us-nome" value="${u.nome||''}" placeholder="Ex: Maria Santos" style="width:100%;box-sizing:border-box;margin-top:6px">
@@ -7177,7 +7345,7 @@ function _usuarioFormHTML(u={}){
       <div style="grid-column:1/-1">
         <label class="flbl">Tipo de Acesso *</label>
         <select class="finp" id="us-tipo" onchange="_togglePermsWrap(this.value)" style="width:100%;box-sizing:border-box;margin-top:6px">
-          <option value="usuario" ${tipo!=='admin'?'selected':''}>Usuário — acesso manual por módulo</option>
+          <option value="usuario" ${tipo!=='admin'?'selected':''}>Usuário — permissões por módulo</option>
           <option value="admin" ${tipo==='admin'?'selected':''}>Admin — acesso total automático</option>
         </select>
       </div>
@@ -7189,10 +7357,19 @@ function _usuarioFormHTML(u={}){
         </select>
       </div>`:''}
     </div>
+
     <div id="us-perms-wrap" style="display:${tipo==='admin'?'none':'block'}">
-      <label class="flbl" style="margin-bottom:8px;display:block">Módulos com acesso</label>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
-        ${checkboxes}
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:8px">
+        <label class="flbl" style="margin:0">Permissões por módulo</label>
+        <div style="display:flex;gap:6px">
+          <button type="button" onclick="_permSelectAll(true)"
+                  style="background:rgba(0,212,255,.12);border:1px solid rgba(0,212,255,.3);color:var(--cyan);border-radius:6px;padding:3px 10px;font-size:11px;cursor:pointer;font-family:'Space Grotesk',sans-serif">✓ Liberar tudo</button>
+          <button type="button" onclick="_permSelectAll(false)"
+                  style="background:var(--s2);border:1px solid var(--border);color:var(--text3);border-radius:6px;padding:3px 10px;font-size:11px;cursor:pointer;font-family:'Space Grotesk',sans-serif">✕ Revogar tudo</button>
+        </div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        ${permSections}
       </div>
     </div>`;
 }
@@ -7207,8 +7384,53 @@ function _togglePermBorder(cb, lblId){
   const lbl=document.getElementById(lblId);
   if(lbl) lbl.style.borderColor = cb.checked?'var(--cyan)':'var(--border)';
 }
-window._togglePermsWrap = _togglePermsWrap;
+// Atualiza destaque do card e borda do label quando checkbox muda
+function _onPermChange(modKey, acao) {
+  // Atualizar borda do label específico
+  if (acao) {
+    const lbl = document.getElementById(`perm-lbl-${modKey}-${acao}`);
+    const cb  = document.getElementById(`perm-${modKey}-${acao}`);
+    if (lbl && cb) {
+      lbl.style.borderColor = cb.checked ? 'rgba(0,212,255,.3)' : 'var(--border)';
+    }
+  }
+  // Atualizar destaque do card do módulo
+  const row = document.getElementById('perm-row-' + modKey);
+  if (!row) return;
+  const acoes    = MODULO_ACOES[modKey] || ['visualizar'];
+  const temAlgum = acoes.some(a => {
+    const cb = document.getElementById(`perm-${modKey}-${a}`);
+    return cb && cb.checked;
+  });
+  row.style.border      = temAlgum ? '1px solid rgba(0,212,255,.2)' : '1px solid var(--border)';
+  row.style.background  = temAlgum ? 'rgba(0,212,255,.03)'          : 'var(--s1)';
+  // Atualizar badge "Com acesso" / "Sem acesso"
+  const badge = row.querySelector('span[style*="border-radius:10px"]');
+  if (badge) {
+    badge.textContent        = temAlgum ? 'Com acesso' : 'Sem acesso';
+    badge.style.color        = temAlgum ? 'var(--cyan)' : 'var(--text3)';
+    badge.style.background   = temAlgum ? 'rgba(0,212,255,.12)' : 'var(--s2)';
+    badge.style.borderColor  = temAlgum ? 'rgba(0,212,255,.2)' : 'var(--border)';
+  }
+  // Atualizar cor do título do módulo
+  const titulo = row.querySelector('span[style*="font-weight:700"]');
+  if (titulo) titulo.style.color = temAlgum ? 'var(--text)' : 'var(--text3)';
+}
+// Marcar / limpar todas as permissões
+function _permSelectAll(val) {
+  MODULOS.forEach(m => {
+    const acoes = MODULO_ACOES[m.key] || ['visualizar'];
+    acoes.forEach(a => {
+      const cb = document.getElementById(`perm-${m.key}-${a}`);
+      if (cb) cb.checked = val;
+    });
+    _onPermChange(m.key);
+  });
+}
+window._togglePermsWrap  = _togglePermsWrap;
 window._togglePermBorder = _togglePermBorder;
+window._onPermChange     = _onPermChange;
+window._permSelectAll    = _permSelectAll;
 
 function openAddUsuario(){
   if(!can('usuarios','criar')){toast('Sem permissão para criar usuário.','err');return;}
@@ -7236,12 +7458,19 @@ async function saveUsuarioModal(){
   const tipo=document.getElementById('us-tipo')?.value||'usuario';
   const cargo=(document.getElementById('us-cargo')?.value||'').trim();
   if(!nome){alert('Informe o nome.');return;}
-  // Coleta permissões manuais (só relevante se tipo=usuario)
+  // Coleta permissões granulares (por módulo e por ação)
   const permissoes={};
   if(tipo!=='admin'){
     MODULOS.forEach(m=>{
-      const cb=document.getElementById('perm-'+m.key);
-      if(cb) permissoes[m.key]=cb.checked;
+      const acoes = MODULO_ACOES[m.key] || ['visualizar'];
+      const modPerms = {};
+      acoes.forEach(acao => {
+        const cb = document.getElementById(`perm-${m.key}-${acao}`);
+        if(cb) modPerms[acao] = cb.checked;
+      });
+      // Só salva o módulo se pelo menos uma ação estiver marcada
+      const temAlgum = Object.values(modPerms).some(v => v);
+      permissoes[m.key] = temAlgum ? modPerms : false;
     });
   }
   try{
@@ -7473,6 +7702,7 @@ function switchTabSidebar(name) {
   if(name==='api-sync') renderApiSync();
   if(name==='calculos'||name==='prog-auto') renderCalculos();
   if(name==='projecao') renderProjecao();
+  if(name==='usuarios') setTimeout(()=>renderUsuariosSistema(), 50);
 }
 
 // Keep old switchTab for backward compatibility (called from tab buttons if any)
@@ -7614,6 +7844,17 @@ document.addEventListener('DOMContentLoaded', () => {
       avEl.style.background = user.tipo==='admin' ? '#e74c3c' : 'var(--cyan)';
       avEl.style.color = user.tipo==='admin' ? '#fff' : '#000';
     }
+    // Atualizar dropdown do topo (hd-menu) com dados do usuário
+    const hdAv = document.getElementById('hd-menu-avatar');
+    const hdNm = document.getElementById('hd-menu-nome');
+    const hdBg = document.getElementById('hd-menu-badge');
+    if(hdAv) {
+      hdAv.textContent = (user.nome||user.email||'?')[0].toUpperCase();
+      hdAv.style.background = user.tipo==='admin' ? '#e74c3c' : 'var(--cyan)';
+      hdAv.style.color = user.tipo==='admin' ? '#fff' : '#000';
+    }
+    if(hdNm) hdNm.textContent = user.nome || user.email || '—';
+    if(hdBg) hdBg.innerHTML = perfilBadge(user.tipo || 'usuario');
     // Show app
     if(loadingScreen) loadingScreen.style.display = 'none';
     if(loginScreen) loginScreen.style.display = 'none';
@@ -9068,6 +9309,75 @@ window.saveUsuarioModal = saveUsuarioModal;
 window.toggleUsuarioAtivo = toggleUsuarioAtivo;
 window.renderUsuariosSistema = renderUsuariosSistema;
 window.confirmarExcluirUsuario = confirmarExcluirUsuario;
+
+// ── Meu Perfil ────────────────────────────────────────────────────────
+function abrirMeuPerfil() {
+  const user = getCurrentUserSafe();
+  if (!user) return;
+  const mp = id => document.getElementById(id);
+  if(mp('mp-nome'))           mp('mp-nome').value           = user.nome  || '';
+  if(mp('mp-cargo'))          mp('mp-cargo').value          = user.cargo || '';
+  if(mp('mp-nova-senha'))     mp('mp-nova-senha').value     = '';
+  if(mp('mp-confirma-senha')) mp('mp-confirma-senha').value = '';
+  const inicial = (user.nome||user.email||'?')[0].toUpperCase();
+  const isAdmin = user.tipo === 'admin';
+  if(mp('mp-avatar')) {
+    mp('mp-avatar').textContent   = inicial;
+    mp('mp-avatar').style.background = isAdmin ? '#e74c3c' : 'var(--cyan)';
+    mp('mp-avatar').style.color      = isAdmin ? '#fff'    : '#000';
+  }
+  if(mp('mp-nome-display'))  mp('mp-nome-display').textContent  = user.nome  || user.email || '—';
+  if(mp('mp-email-display')) mp('mp-email-display').textContent = user.email || '—';
+  if(mp('mp-badge-display')) mp('mp-badge-display').innerHTML   = perfilBadge(user.tipo || 'usuario');
+  const msgEl = mp('mp-msg');
+  if(msgEl) { msgEl.style.display='none'; msgEl.textContent=''; }
+  document.getElementById('meu-perfil-modal').style.display = 'flex';
+  setTimeout(() => mp('mp-nome')?.focus(), 80);
+}
+
+function closeMeuPerfil() {
+  document.getElementById('meu-perfil-modal').style.display = 'none';
+}
+
+async function salvarMeuPerfil() {
+  const mp    = id => document.getElementById(id);
+  const msgEl = mp('mp-msg');
+  const nome  = (mp('mp-nome')?.value  || '').trim();
+  const cargo = (mp('mp-cargo')?.value || '').trim();
+  const novaSenha     = mp('mp-nova-senha')?.value     || '';
+  const confirmaSenha = mp('mp-confirma-senha')?.value || '';
+  const showMsg = (txt, ok) => {
+    if(!msgEl) return;
+    msgEl.style.display='block';
+    msgEl.style.color = ok ? 'var(--green)' : 'var(--red)';
+    msgEl.textContent = txt;
+  };
+  if (!nome)                                { showMsg('Informe seu nome.', false); return; }
+  if (novaSenha && novaSenha.length < 6)    { showMsg('Nova senha deve ter ao menos 6 caracteres.', false); return; }
+  if (novaSenha && novaSenha !== confirmaSenha) { showMsg('As senhas não coincidem.', false); return; }
+  try {
+    const user = getCurrentUserSafe();
+    if (!user?.uid) throw new Error('Usuário não identificado.');
+    await atualizarUsuarioSistema(user.uid, { nome, cargo });
+    if (novaSenha) {
+      const { updatePassword, getAuth } = await import('https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js');
+      await updatePassword(getAuth().currentUser, novaSenha);
+    }
+    user.nome = nome; user.cargo = cargo;
+    // Atualizar visual
+    ['sb-avatar','hd-menu-avatar'].forEach(id => { const el=document.getElementById(id); if(el) el.textContent=nome[0].toUpperCase(); });
+    ['sb-uname','hd-menu-nome'].forEach(id => { const el=document.getElementById(id); if(el) el.textContent=nome; });
+    const ndEl=mp('mp-nome-display'); if(ndEl) ndEl.textContent=nome;
+    const avMp=mp('mp-avatar');       if(avMp) avMp.textContent=nome[0].toUpperCase();
+    showMsg(novaSenha ? '✅ Perfil e senha atualizados!' : '✅ Perfil atualizado!', true);
+    mp('mp-nova-senha').value=''; mp('mp-confirma-senha').value='';
+    toast('Perfil salvo!', 'ok');
+  } catch(e) { showMsg('Erro: '+(e.message||e), false); }
+}
+
+window.abrirMeuPerfil  = abrirMeuPerfil;
+window.closeMeuPerfil  = closeMeuPerfil;
+window.salvarMeuPerfil = salvarMeuPerfil;
 window.openReorderModal = openReorderModal;
 window.openSettings = openSettings;
 window.carregarMaquinasFirestore = carregarMaquinasFirestore;
@@ -9885,8 +10195,8 @@ function gerarRelatorioProducao() {
 }
 
 function exportarApontamentos() {
-  if (!isPCPLevel()) {
-    toast('Apenas PCP pode exportar dados!', 'err');
+  if (!can('importacao','exportar')) {
+    toast('Sem permissão para exportar dados.', 'err');
     return;
   }
   
@@ -10056,6 +10366,7 @@ window.pdLimparObs       = pdLimparObs;
 
 // ── Finalizar produção de um produto na aba Realizado ────────────────
 function realizadoFinalizarProducao(recId, dateVal) {
+  if(!can('gantt','finalizar') && !can('realizado','finalizar')){ toast('Sem permissão para finalizar produção.','err'); return; }
   const record = records.find(r => String(r.id) === String(recId));
   const nome   = record ? record.produto : recId;
   const meta   = record ? (record.qntCaixas || 0) : 0;
@@ -10100,6 +10411,7 @@ window.realizadoFinalizarProducao = realizadoFinalizarProducao;
 
 // ── Desfinalizar — libera edição e volta o produto para a lista ──────
 function realizadoDesfinalizar(recId) {
+  if(!can('gantt','finalizar') && !can('realizado','finalizar')){ toast('Sem permissão para desfinalizar.','err'); return; }
   const record = records.find(r => String(r.id) === String(recId));
   const nome   = record ? record.produto : recId;
 
@@ -10154,6 +10466,7 @@ function realizadoInputChange(inp) {
 
 // ── Salva linha individual ────────────────────────────────────────────
 function realizadoSalvarLinha(recId, dateVal) {
+  if(!can('realizado','apontar')){ toast('Sem permissão para apontar produção.','err'); return; }
   const all  = document.querySelectorAll(`[data-rec="${recId}"].apon-input-controlado`);
   const data = {};
   let dayTotal = 0;
