@@ -9394,6 +9394,56 @@ function renderPainelAlertas() {
 }
 
 // Modal para liberação fora de sequência
+// ── Sistema de Liberação Temporária de Sequência ──────────────────────
+// Liberações ficam ativas por 24h e são salvas no localStorage.
+// Estrutura: { [recordId]: { expira: timestamp, motivo: string, usuario: string } }
+
+function _getLiberacoes() {
+  try {
+    return JSON.parse(localStorage.getItem('_liberacoes_seq') || '{}');
+  } catch(e) { return {}; }
+}
+
+function _saveLiberacoes(obj) {
+  localStorage.setItem('_liberacoes_seq', JSON.stringify(obj));
+}
+
+function temLiberacaoTemporaria(recordId) {
+  const libs = _getLiberacoes();
+  const lib = libs[String(recordId)];
+  if (!lib) return false;
+  if (Date.now() > lib.expira) {
+    // expirou — limpa
+    delete libs[String(recordId)];
+    _saveLiberacoes(libs);
+    return false;
+  }
+  return true;
+}
+
+function liberarProdutoFaltaSequencia(recordId, motivo, usuario) {
+  try {
+    const libs = _getLiberacoes();
+    libs[String(recordId)] = {
+      expira: Date.now() + 24 * 60 * 60 * 1000, // 24h
+      motivo: motivo,
+      usuario: usuario || 'sistema'
+    };
+    _saveLiberacoes(libs);
+    registrarAuditoria('LIBERACAO_SEQUENCIA', {
+      recordId: recordId,
+      motivo: motivo,
+      usuario: usuario,
+      expira: new Date(libs[String(recordId)].expira).toISOString()
+    });
+    toast('✅ Produto liberado para produção por 24h!', 'ok');
+    return true;
+  } catch(e) {
+    toast('Erro ao liberar produto: ' + e.message, 'err');
+    return false;
+  }
+}
+
 function abrirModalLiberacaoSequencia(recordId) {
   if (!isPCPLevel()) {
     toast('Apenas PCP pode liberar fora de sequência!', 'err');
