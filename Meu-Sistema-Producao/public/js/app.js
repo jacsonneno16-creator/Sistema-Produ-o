@@ -4099,13 +4099,16 @@ function _renderRealizadoControlado(dateVal, body) {
 
   // Registros que devem aparecer neste dia:
   //   1. Dia programado == dateVal (início normal), OU
-  //   2. Dia programado < dateVal E produto ainda não concluído (overflow para dias seguintes)
-  // Nunca aparece antes do dia programado.
+  //   2. Dia programado < dateVal E produto ainda não finalizado (overflow para dias seguintes)
+  // Nunca aparece antes do dia programado. Finalizados nunca fazem overflow.
   const dayRecs = records.filter(r => {
     if (r.status === 'Cancelado') return false;
-    const produzido = calcularTotalProduzido(r.id);
-    const meta      = r.qntCaixas || 0;
-    const isDoneFilt = produzido >= meta && meta > 0;
+    // Finalizados nunca aparecem em dias seguintes (mas aparecem no dia em que foram finalizados)
+    if (pdIsFin(r.id)) {
+      // Ainda mostra no dia em que está programado (para o usuário ver o status finalizado)
+      const eff = pdGetEffectiveDay(r.id) || r.dtDesejada || r.dtSolicitacao;
+      return eff === dateVal;
+    }
 
     const eff = pdGetEffectiveDay(r.id) || r.dtDesejada || r.dtSolicitacao;
     if (!eff) return false;
@@ -4113,16 +4116,13 @@ function _renderRealizadoControlado(dateVal, body) {
     // Não aparece antes do dia programado
     if (eff > dateVal) return false;
 
-    // Aparece no dia programado (incluindo concluídos)
+    // Aparece no dia programado (incluindo concluídos não-finalizados)
     if (eff === dateVal) return true;
 
-    // Overflow: dia programado já passou
+    // Overflow: dia programado já passou e não foi finalizado — aparece nos dias seguintes
     const dateValDate = new Date(dateVal + 'T12:00:00');
-    if (eff < dateVal && hoursOnDay(dateValDate) > 0) {
-      // Concluídos só aparecem no overflow se foram finalizados hoje ou se ainda não foram finalizados
-      // (ou seja: sempre aparecem, o usuário decide quando finalizar)
-      return true;
-    }
+    if (eff < dateVal && hoursOnDay(dateValDate) > 0) return true;
+
     return false;
   })
   // Ordenar: não-concluídos primeiro, concluídos/finalizados por último
@@ -4295,49 +4295,89 @@ function _renderRealizadoControlado(dateVal, body) {
             <tbody>`;
 
     recs.forEach((rec, idx) => {
-      const totalProd  = calcularTotalProduzido(rec.id);
-      const meta       = rec.qntCaixas || 0;
-      const todayData  = aponStorageGet(aponKey(dateVal, rec.id)) || {};
-      const todayTotal = APON_HOURS.reduce((s,h) => s + (parseInt(todayData[h])||0), 0);
-      const isDone     = totalProd >= meta;
+      const totalProd   = calcularTotalProduzido(rec.id);
+      const meta        = rec.qntCaixas || 0;
+      const todayData   = aponStorageGet(aponKey(dateVal, rec.id)) || {};
+      const todayTotal  = APON_HOURS.reduce((s,h) => s + (parseInt(todayData[h])||0), 0);
+      const isDone      = meta > 0 && totalProd >= meta;
       const isAndamento = totalProd > 0 && !isDone;
-      const prevTotal  = aponGetPrevTotal(rec.id, dateVal);
+      const isFin       = pdIsFin(rec.id);
 
-      // Cor da linha
-      const isFin  = pdIsFin(rec.id);
-      let rowBg = isDone
-        ? 'background:rgba(41,217,132,.06)'
-        : idx % 2 === 0 ? 'var(--bg)' : 'var(--s1)';
-      let leftBorder = '';
-      if (isFin)         leftBorder = 'border-left:3px solid var(--green)';
-      else if (isDone)   leftBorder = 'border-left:3px solid var(--green)';
-      else if (isAndamento) leftBorder = 'border-left:2px solid var(--cyan)';
+      // Cores da linha
+      let rowBg, leftBorder, nomeColor;
+      if (isFin) {
+        rowBg      = 'background:rgba(41,217,132,.13)';
+        leftBorder = 'border-left:3px solid var(--green)';
+        nomeColor  = 'var(--green)';
+      } else if (isDone) {
+        rowBg      = 'background:rgba(41,217,132,.06)';
+        leftBorder = 'border-left:3px solid var(--green)';
+        nomeColor  = 'var(--green)';
+      } else if (isAndamento) {
+        rowBg      = idx % 2 === 0 ? 'var(--bg)' : 'var(--s1)';
+        leftBorder = 'border-left:2px solid var(--cyan)';
+        nomeColor  = 'var(--text)';
+      } else {
+        rowBg      = idx % 2 === 0 ? 'var(--bg)' : 'var(--s1)';
+        leftBorder = '';
+        nomeColor  = 'var(--text2)';
+      }
 
-      // Status badge compacto
-      const statusDot = isDone
-        ? `<span style="color:var(--green);font-size:9px">●</span>`
-        : isAndamento
-          ? `<span style="color:var(--cyan);font-size:9px">●</span>`
-          : `<span style="color:var(--text3);font-size:9px">○</span>`;
+      // Status dot
+      const statusDot = isFin
+        ? `<span style="color:var(--green);font-size:12px;font-weight:700">✓</span>`
+        : isDone
+          ? `<span style="color:var(--green);font-size:9px">●</span>`
+          : isAndamento
+            ? `<span style="color:var(--cyan);font-size:9px">●</span>`
+            : `<span style="color:var(--text3);font-size:9px">○</span>`;
 
-      // Inputs por hora
+      // Inputs — bloqueados quando finalizado
+      const inputDisabled = isFin ? 'disabled' : '';
+      const inputStyle    = isFin
+        ? 'width:46px;padding:4px 2px;border:1px solid rgba(41,217,132,.3);border-radius:4px;text-align:center;font-size:11px;background:rgba(41,217,132,.08);color:var(--green);font-family:\'JetBrains Mono\',monospace;-moz-appearance:textfield;cursor:not-allowed;opacity:.7'
+        : 'width:46px;padding:4px 2px;border:1px solid var(--border);border-radius:4px;text-align:center;font-size:11px;background:var(--s2);color:var(--text);font-family:\'JetBrains Mono\',monospace;-moz-appearance:textfield';
       const horaInputs = APON_HOURS.map(h => {
         const val = todayData[h] || '';
         return `<td style="padding:3px 4px;text-align:center;border-left:1px solid rgba(255,255,255,.04)">
           <input type="number" min="0"
                  data-rec="${rec.id}" data-hr="${h}" data-date="${dateVal}"
-                 value="${val}" placeholder="0"
+                 value="${val}" placeholder="0" ${inputDisabled}
                  oninput="salvarApontamentoCompleto('${rec.id}')"
-                 style="width:46px;padding:4px 2px;border:1px solid var(--border);border-radius:4px;text-align:center;font-size:11px;background:var(--s2);color:var(--text);font-family:'JetBrains Mono',monospace;-moz-appearance:textfield"
+                 style="${inputStyle}"
                  class="apon-input apon-input-controlado">
         </td>`;
       }).join('');
 
+      // Botão de ação (última coluna)
+      let actionBtn;
+      if (isFin) {
+        actionBtn = `
+          <div style="display:flex;align-items:center;gap:3px;justify-content:center">
+            <span style="font-size:9px;font-weight:700;color:var(--green);background:rgba(41,217,132,.15);border:1px solid rgba(41,217,132,.3);border-radius:4px;padding:3px 6px;white-space:nowrap">✓ Finalizado</span>
+            <button onclick="realizadoDesfinalizar('${rec.id}')"
+                    title="Desfinalizar e liberar edição"
+                    style="background:rgba(255,71,87,.15);border:1px solid rgba(255,71,87,.4);color:var(--red);border-radius:4px;width:22px;height:22px;font-size:13px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;flex-shrink:0">✕</button>
+          </div>`;
+      } else if (isDone) {
+        actionBtn = `
+          <button onclick="realizadoFinalizarProducao('${rec.id}','${dateVal}')"
+                  title="Finalizar produção"
+                  style="background:var(--green);color:#000;border:none;border-radius:4px;padding:3px 8px;font-size:10px;font-weight:700;cursor:pointer;font-family:'Space Grotesk',sans-serif;white-space:nowrap">
+            🏁 Finalizar
+          </button>`;
+      } else {
+        actionBtn = `
+          <button onclick="realizadoSalvarLinha('${rec.id}','${dateVal}')"
+                  title="Salvar"
+                  style="background:var(--s2);border:1px solid var(--border);color:var(--text2);border-radius:4px;padding:3px 7px;font-size:10px;font-weight:700;cursor:pointer;font-family:'Space Grotesk',sans-serif">✓</button>`;
+      }
+
       html += `
-              <tr style="background:${rowBg};${leftBorder};border-bottom:1px solid rgba(255,255,255,.04)" data-record-id="${rec.id}">
-                <td style="padding:6px 8px;color:var(--text3);text-align:center">${statusDot}</td>
+              <tr style="${rowBg};${leftBorder};border-bottom:1px solid rgba(255,255,255,.04)" data-record-id="${rec.id}">
+                <td style="padding:6px 8px;text-align:center">${statusDot}</td>
                 <td style="padding:6px 8px">
-                  <div style="font-size:11px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:220px" title="${rec.produto}">
+                  <div style="font-size:11px;font-weight:600;color:${nomeColor};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:220px" title="${rec.produto}">
                     ${rec.produto}
                   </div>
                   ${rec.obs_dia ? `<div style="font-size:9px;color:var(--text3);margin-top:1px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${rec.obs_dia}</div>` : ''}
@@ -4349,7 +4389,7 @@ function _renderRealizadoControlado(dateVal, body) {
                   </span>
                 </td>
                 <td style="padding:6px 8px;text-align:center">
-                  <span id="realizado-acum-${rec.id}" style="font-weight:700;color:${isDone?'var(--green)':totalProd>0?'var(--text)':'var(--text3)'}">
+                  <span id="realizado-acum-${rec.id}" style="font-weight:700;color:${isFin||isDone?'var(--green)':totalProd>0?'var(--text)':'var(--text3)'}">
                     ${totalProd > 0 ? totalProd : '—'}
                   </span>
                 </td>
@@ -4362,20 +4402,7 @@ function _renderRealizadoControlado(dateVal, body) {
                     📝
                   </button>
                 </td>
-                <td style="padding:6px 4px;text-align:center">
-                  ${isDone
-                    ? (pdIsFin(rec.id)
-                        ? `<span style="font-size:9px;font-weight:700;color:var(--green);background:rgba(41,217,132,.15);border:1px solid rgba(41,217,132,.3);border-radius:4px;padding:3px 8px;white-space:nowrap">✓ Finalizado</span>`
-                        : `<button onclick="realizadoFinalizarProducao('${rec.id}','${dateVal}')"
-                                   title="Finalizar produção" style="background:var(--green);color:#000;border:none;border-radius:4px;padding:3px 8px;font-size:10px;font-weight:700;cursor:pointer;font-family:'Space Grotesk',sans-serif;white-space:nowrap">
-                             🏁 Finalizar
-                           </button>`)
-                    : `<button onclick="realizadoSalvarLinha('${rec.id}','${dateVal}')"
-                               title="Salvar" style="background:var(--s2);border:1px solid var(--border);color:var(--text2);border-radius:4px;padding:3px 7px;font-size:10px;font-weight:700;cursor:pointer;font-family:'Space Grotesk',sans-serif">
-                         ✓
-                       </button>`
-                  }
-                </td>
+                <td style="padding:6px 4px;text-align:center">${actionBtn}</td>
               </tr>`;
     });
 
@@ -10025,9 +10052,23 @@ window.pdLimparObs       = pdLimparObs;
 // ── Finalizar produção de um produto na aba Realizado ────────────────
 function realizadoFinalizarProducao(recId, dateVal) {
   const record = records.find(r => String(r.id) === String(recId));
-  const nome = record ? record.produto : recId;
+  const nome   = record ? record.produto : recId;
+  const meta   = record ? (record.qntCaixas || 0) : 0;
+  const totalProd = calcularTotalProduzido(recId);
+  const faltam    = meta - totalProd;
 
-  if (!confirm(`Confirma a finalização de "${nome}"?\n\nO produto ficará marcado como finalizado e irá para o final da lista.`)) return;
+  // Se não bateu a meta, pede confirmação extra
+  if (meta > 0 && totalProd < meta) {
+    const pct = Math.round(totalProd / meta * 100);
+    if (!confirm(
+      `⚠️ Atenção: "${nome}" ainda não atingiu a quantidade solicitada!\n\n` +
+      `Produzido: ${totalProd} de ${meta} (${pct}%) — faltam ${faltam} caixas.\n\n` +
+      `Deseja finalizar mesmo assim?\n` +
+      `O produto NÃO aparecerá nos dias seguintes.`
+    )) return;
+  } else {
+    if (!confirm(`Confirma a finalização de "${nome}"?\n\nO produto ficará marcado como finalizado e não aparecerá nos próximos dias.`)) return;
+  }
 
   // Salva apontamento atual antes de finalizar
   realizadoSalvarLinha(recId, dateVal);
@@ -10038,18 +10079,40 @@ function realizadoFinalizarProducao(recId, dateVal) {
   // Registra auditoria
   const user = getCurrentUserSafe();
   registrarAuditoria('PRODUCAO_FINALIZADA', {
-    recordId : recId,
-    produto  : nome,
-    data     : dateVal,
-    usuario  : user ? (user.email || '') : ''
+    recordId   : recId,
+    produto    : nome,
+    data       : dateVal,
+    produzido  : totalProd,
+    meta       : meta,
+    incompleto : totalProd < meta,
+    usuario    : user ? (user.email || '') : ''
   });
 
   toast(`✅ "${nome}" finalizado!`, 'ok');
-
-  // Recarrega a aba para reordenar
   setTimeout(() => renderApontamento(), 300);
 }
 window.realizadoFinalizarProducao = realizadoFinalizarProducao;
+
+// ── Desfinalizar — libera edição e volta o produto para a lista ──────
+function realizadoDesfinalizar(recId) {
+  const record = records.find(r => String(r.id) === String(recId));
+  const nome   = record ? record.produto : recId;
+
+  if (!confirm(`Desfinalizar "${nome}"?\n\nO produto voltará para a lista e os campos de quantidade serão liberados para edição.`)) return;
+
+  pdSetFin(recId, false);
+
+  const user = getCurrentUserSafe();
+  registrarAuditoria('PRODUCAO_DESFINALIZADA', {
+    recordId : recId,
+    produto  : nome,
+    usuario  : user ? (user.email || '') : ''
+  });
+
+  toast(`↩️ "${nome}" desfianlizado — edição liberada.`, 'info');
+  setTimeout(() => renderApontamento(), 300);
+}
+window.realizadoDesfinalizar = realizadoDesfinalizar;
 
 // ── Realizado: atualiza totais em tempo real ao digitar ──────────────
 function realizadoInputChange(inp) {
