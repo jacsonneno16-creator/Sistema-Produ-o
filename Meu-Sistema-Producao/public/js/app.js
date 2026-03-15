@@ -4583,6 +4583,284 @@ function pdSetAssign(recId, ds){ if(ds) localStorage.setItem(pdAssignKey(recId),
 function pdIsFin(recId){ return localStorage.getItem(pdFinKey(recId))==='1'; }
 function pdSetFin(recId, v){ if(v) localStorage.setItem(pdFinKey(recId),'1'); else localStorage.removeItem(pdFinKey(recId)); }
 
+// ===== VERSÃO CONTROLADA DA ABA PRODUÇÃO DIA =====
+
+function renderProducaoDiaControlado() {
+  if (!prodBaseMonday) { 
+    document.getElementById('apon-body').innerHTML = '<div class="empty"><div class="ei">📅</div>Selecione uma semana</div>'; 
+    return; 
+  }
+
+  const isOperador = isOperadorLevel();
+  const isPCP = isPCPLevel();
+
+  const weekDays = getWeekDays(prodBaseMonday);
+  const weekStart = dateStr(weekDays[0]);
+  const weekEnd = dateStr(weekDays[6]);
+  const workDays = weekDays.filter(function(d) { return hoursOnDay(d) > 0; });
+
+  const weekRecs = records.filter(function(r) {
+    const dt = r.dtDesejada || r.dtSolicitacao;
+    return dt && dt >= weekStart && dt <= weekEnd;
+  });
+
+  const finCount = weekRecs.filter(function(r) { return pdIsFin(r.id); }).length;
+
+  let html = '<div>';
+
+  // Cabeçalho com controles diferenciados
+  html += `
+    <div style="margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">
+      <div>
+        <div style="font-size:14px;font-weight:700;color:var(--text)">
+          📅 Produção por Dia - ${fmtDate(weekDays[0])} a ${fmtDate(weekDays[6])}
+        </div>
+        <div style="font-size:11px;color:var(--text2);margin-top:4px">
+          ${isOperador ? '🔒 Modo Operador - Visualização da programação' : '🔧 Modo PCP - Gestão completa'}
+        </div>
+      </div>
+      ${isPCP ? `
+        <div style="display:flex;gap:8px">
+          <button onclick="pdRestoreAll()" 
+                  style="background:var(--orange);color:#000;border:none;border-radius:6px;padding:6px 12px;font-size:11px;cursor:pointer">
+            🔄 Restaurar Finalizados
+          </button>
+        </div>
+      ` : ''}
+    </div>`;
+
+  // Alerta de produtos finalizados (se houver)
+  if (finCount > 0) {
+    html += `
+      <div style="background:rgba(251,146,60,.1);border:1px solid var(--orange);border-radius:10px;padding:10px 16px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between">
+        <span style="font-size:12px;color:var(--orange)">${finCount} produto(s) finalizado(s) e ocultos</span>
+        ${isPCP ? `
+          <button onclick="pdRestoreAll()" 
+                  style="background:var(--orange);color:#000;border:none;border-radius:6px;padding:5px 14px;font-size:12px;font-weight:700;cursor:pointer">
+            ↩ Restaurar todos
+          </button>
+        ` : ''}
+      </div>`;
+  }
+
+  // Aviso para operadores
+  if (isOperador) {
+    html += `
+      <div style="background:rgba(0,212,255,.08);border:1px solid var(--cyan);border-radius:8px;padding:12px;margin-bottom:16px;font-size:12px;color:var(--cyan)">
+        ℹ️ <strong>Visualização:</strong> Esta é a programação definida pelo PCP. Para produzir, use a aba <strong>"Realizado"</strong>.
+      </div>`;
+  }
+
+  // Grid de dias
+  html += `<div style="display:grid;grid-template-columns:repeat(${workDays.length},1fr);gap:10px;align-items:start">`;
+
+  workDays.forEach(function(d) {
+    const ds = dateStr(d);
+    const dayName = DAY_NAMES[d.getDay()];
+    const dateLabel = fmtDate(d);
+    const isToday = ds === dateStr(new Date());
+
+    const dayRecs = weekRecs.filter(function(r) {
+      return pdGetAssign(r.id) === ds && !pdIsFin(r.id);
+    });
+
+    const borderColor = isToday ? 'var(--cyan)' : 'var(--border)';
+    const headerColor = isToday ? 'var(--cyan)' : 'var(--text2)';
+
+    // Coluna do dia com controles diferenciados
+    html += `
+      <div class="pd-col ${isOperador ? 'pd-col-readonly' : ''}" data-date="${ds}" 
+           ${isPCP ? `ondragover="pdDragOver(event)" ondrop="pdDrop(this,event)" ondragleave="pdDragLeave(event)"` : ''}
+           style="background:var(--s1);border:1px solid ${borderColor};border-radius:12px;min-height:160px;transition:border-color .2s,background .2s">`;
+
+    // Cabeçalho do dia
+    html += `
+      <div style="padding:12px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between">
+        <div>
+          <div style="font-weight:700;font-size:13px;color:${headerColor}">${dayName}</div>
+          <div style="font-size:10px;color:var(--text3)">${dateLabel}</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="background:var(--s2);border:1px solid var(--border);border-radius:10px;font-size:10px;padding:2px 8px;color:var(--text3)">
+            ${dayRecs.length}
+          </span>
+          ${isToday ? '<span style="color:var(--cyan);font-size:10px">HOJE</span>' : ''}
+        </div>
+      </div>`;
+
+    // Cards dos produtos
+    html += '<div class="pd-cards" style="padding:10px;display:flex;flex-direction:column;gap:7px">';
+    dayRecs.forEach(function(r) { 
+      html += pdCardControlado(r, ds, isOperador, isPCP); 
+    });
+    html += '</div>';
+    html += '</div>';
+  });
+
+  html += '</div>';
+
+  // Produtos não atribuídos (só PCP pode ver e mover)
+  const unassigned = weekRecs.filter(function(r) {
+    const a = pdGetAssign(r.id);
+    const isWD = workDays.some(function(wd) { return dateStr(wd) === a; });
+    return !pdIsFin(r.id) && (!a || !isWD);
+  });
+
+  if (unassigned.length > 0 && isPCP) {
+    html += `
+      <div style="margin-top:16px">
+        <div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px">
+          Sem dia definido — arraste para um dia
+        </div>
+        <div class="pd-col pd-pool" data-date="" 
+             ondragover="pdDragOver(event)" ondrop="pdDrop(this,event)" ondragleave="pdDragLeave(event)" 
+             style="background:var(--s1);border:1px dashed var(--border);border-radius:12px;padding:10px;display:flex;flex-wrap:wrap;gap:7px;min-height:60px">`;
+    unassigned.forEach(function(r) { 
+      html += pdCardControlado(r, null, isOperador, isPCP); 
+    });
+    html += '</div></div>';
+  } else if (unassigned.length > 0 && isOperador) {
+    html += `
+      <div style="margin-top:16px;background:rgba(255,179,0,.08);border:1px solid var(--warn);border-radius:8px;padding:12px;font-size:12px;color:var(--warn)">
+        ⚠️ <strong>Atenção:</strong> Existem ${unassigned.length} produto(s) sem dia definido. Consulte o PCP.
+      </div>`;
+  }
+
+  html += '</div>';
+  document.getElementById('apon-body').innerHTML = html;
+}
+
+// Versão controlada do card de produto
+function pdCardControlado(r, ds, isOperador, isPCP) {
+  // Verificar status do produto
+  const totalProduzido = calcularTotalProduzido(r.id);
+  const meta = r.qntCaixas || 0;
+  const pct = meta > 0 ? Math.min(100, Math.round(totalProduzido / meta * 100)) : 0;
+  const status = determinarStatusProgramacao(r);
+  const statusInfo = getStatusInfo(status);
+
+  // Botão de finalizar só para PCP e se o produto não estiver concluído
+  let finBtn = '';
+  if (ds && isPCP && status !== STATUS_PROGRAMACAO.CONCLUIDO) {
+    finBtn = `
+      <button onclick="pdFinalize(${r.id})" 
+              style="width:100%;margin-top:8px;background:var(--green);color:#000;border:none;border-radius:6px;padding:5px 0;font-size:11px;font-weight:700;cursor:pointer">
+        ✓ Finalizar produção
+      </button>`;
+  }
+
+  // Botão de remover só para PCP
+  let removeBtn = '';
+  if (isPCP) {
+    removeBtn = `
+      <button onclick="pdUnassign(${r.id})" 
+              style="position:absolute;top:4px;right:4px;background:var(--red);color:#fff;border:none;border-radius:50%;width:20px;height:20px;font-size:10px;cursor:pointer;display:flex;align-items:center;justify-content:center">
+        ✕
+      </button>`;
+  }
+
+  // Indicador de progresso
+  const progressBar = `
+    <div style="margin-top:6px;display:flex;align-items:center;gap:6px">
+      <div style="flex:1;height:3px;background:var(--s1);border-radius:2px;overflow:hidden">
+        <div style="width:${pct}%;height:100%;background:${statusInfo.cor};border-radius:2px"></div>
+      </div>
+      <span style="font-size:9px;color:${statusInfo.cor};font-weight:600">${pct}%</span>
+    </div>`;
+
+  return `
+    <div class="pd-card ${isOperador ? 'pd-card-readonly' : ''}" 
+         ${isPCP ? 'draggable="true"' : ''} 
+         id="pd-card-${r.id}" data-id="${r.id}" 
+         ${isPCP ? `ondragstart="pdDragStart(event,${r.id})"` : ''}
+         style="position:relative;background:var(--s2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;${isPCP ? 'cursor:grab;' : ''}user-select:none;transition:box-shadow .15s,opacity .25s,transform .25s">
+      
+      ${removeBtn}
+      
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
+        <span style="color:${statusInfo.cor};font-size:14px">${statusInfo.icone}</span>
+        <div style="font-size:11px;font-weight:600;color:var(--text);line-height:1.4;flex:1">${r.produto}</div>
+      </div>
+      
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:6px">
+        <span style="font-size:10px;color:var(--purple);background:rgba(139,92,246,.12);border-radius:5px;padding:2px 7px">${r.maquina}</span>
+        <span style="font-size:10px;color:var(--text3)">${r.qntCaixas}cx</span>
+      </div>
+      
+      ${progressBar}
+      
+      <div style="margin-top:6px;font-size:9px;color:var(--text3)">
+        <span>${statusInfo.label}</span>
+        ${totalProduzido > 0 ? ` • ${totalProduzido.toLocaleString()} produzidas` : ''}
+      </div>
+      
+      ${finBtn}
+    </div>`;
+}
+
+// ===== CSS PARA ELEMENTOS READONLY (OPERADORES) =====
+
+function adicionarEstilosControlados() {
+  const styleId = 'estilos-producao-controlada';
+  if (document.getElementById(styleId)) return; // Já adicionado
+
+  const style = document.createElement('style');
+  style.id = styleId;
+  style.textContent = `
+    /* Estilos para modo operador (readonly) */
+    .pd-col-readonly {
+      opacity: 0.8;
+      cursor: not-allowed !important;
+    }
+    
+    .pd-card-readonly {
+      cursor: default !important;
+      opacity: 0.9;
+    }
+    
+    .pd-card-readonly:hover {
+      transform: none !important;
+      box-shadow: none !important;
+    }
+    
+    /* Indicador visual de item não arrastável */
+    .pd-card-readonly::after {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0,0,0,0.01);
+      pointer-events: none;
+      border-radius: 8px;
+    }
+    
+    /* Alerta de modo operador */
+    .modo-operador-alert {
+      background: rgba(0,212,255,.08);
+      border: 1px solid var(--cyan);
+      border-radius: 8px;
+      padding: 12px;
+      margin-bottom: 16px;
+      font-size: 12px;
+      color: var(--cyan);
+    }
+  `;
+  document.head.appendChild(style);
+}
+
+// Chamar ao carregar a página
+if (typeof window !== 'undefined') {
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', adicionarEstilosControlados);
+  } else {
+    adicionarEstilosControlados();
+  }
+}
+
+// ===== FUNÇÃO ORIGINAL (preservada para compatibilidade) =====
+
 function renderProducaoDia(){
   if(!prodBaseMonday){ document.getElementById('apon-body').innerHTML='<div class="empty"><div class="ei">&#128197;</div>Selecione uma semana</div>'; return; }
 
@@ -8927,6 +9205,9 @@ window.solicitarPermissaoNotificacoes = solicitarPermissaoNotificacoes;
 window.salvarApontamentoCompleto = salvarApontamentoCompleto;
 window.gerarRelatorioProducao = gerarRelatorioProducao;
 window.exportarApontamentos = exportarApontamentos;
+window.renderProducaoDiaControlado = renderProducaoDiaControlado;
+window.pdCardControlado = pdCardControlado;
+window.adicionarEstilosControlados = adicionarEstilosControlados;
 
 // ===== NOVA VERSÃO RENDERAPONTAMENTO COM FIRESTORE =====
 
