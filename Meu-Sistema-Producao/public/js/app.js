@@ -4306,7 +4306,7 @@ function _renderRealizadoControlado(dateVal, body) {
           <input type="number" min="0"
                  data-rec="${rec.id}" data-hr="${h}" data-date="${dateVal}"
                  value="${val}" placeholder="0"
-                 oninput="salvarApontamentoCompleto(${rec.id})"
+                 oninput="salvarApontamentoCompleto('${rec.id}')"
                  style="width:46px;padding:4px 2px;border:1px solid var(--border);border-radius:4px;text-align:center;font-size:11px;background:var(--s2);color:var(--text);font-family:'JetBrains Mono',monospace;-moz-appearance:textfield"
                  class="apon-input apon-input-controlado">
         </td>`;
@@ -4335,14 +4335,14 @@ function _renderRealizadoControlado(dateVal, body) {
                 <td style="padding:6px 8px;text-align:center;color:var(--text2)">${meta}</td>
                 <td style="padding:6px 4px;text-align:center">
                   <button id="obs-btn-${rec.id}-${dateVal}"
-                          onclick="pdAbrirObs(${rec.id},'${dateVal}')"
+                          onclick="pdAbrirObs('${rec.id}','${dateVal}')"
                           title="Observação"
                           style="background:var(--s2);border:1px solid var(--border);border-radius:4px;padding:3px 7px;font-size:12px;cursor:pointer;transition:all .15s">
                     📝
                   </button>
                 </td>
                 <td style="padding:6px 4px;text-align:center">
-                  <button onclick="realizadoSalvarLinha(${rec.id},'${dateVal}')"
+                  <button onclick="realizadoSalvarLinha('${rec.id}','${dateVal}')"
                           title="Salvar" style="background:var(--green);color:#000;border:none;border-radius:4px;padding:3px 7px;font-size:10px;font-weight:700;cursor:pointer;font-family:'Space Grotesk',sans-serif">
                     ✓
                   </button>
@@ -9226,8 +9226,7 @@ async function carregarApontamentosSemana(prodBaseMonday) {
       lojaCol('apontamentos_producao'),
       where('data', '>=', weekStart),
       where('data', '<=', weekEnd),
-      orderBy('data'),
-      orderBy('criadoEm')
+      orderBy('data')
     );
     
     const snap = await getDocs(q);
@@ -9937,7 +9936,7 @@ function pdAbrirObs(recId, ds) {
           <div style="font-size:9px;color:var(--text3);margin-top:2px">Max 500 caracteres</div>
         </div>
         <div style="display:flex;flex-direction:column;gap:4px;flex-shrink:0">
-          <button onclick="pdSalvarObs(${recId},'${ds}')"
+          <button onclick="pdSalvarObs('${recId}','${ds}')"
                   style="background:var(--cyan);color:#000;border:none;border-radius:5px;padding:5px 12px;font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap">
             💾 Salvar
           </button>
@@ -10069,7 +10068,7 @@ function realizadoSalvarLinha(recId, dateVal) {
     .catch(function(e) { console.error('[aponFS] Erro ao salvar no Firestore:', e.message); toast('Aviso: dado salvo localmente, erro no servidor: ' + e.message, 'warn'); });
 
   // 4. Feedback visual no botão
-  const btn = document.querySelector(`button[onclick="realizadoSalvarLinha(${recId},'${dateVal}')"]`);
+  const btn = document.querySelector(`button[onclick="realizadoSalvarLinha('${recId}','${dateVal}')"]`);
   if (btn) {
     const orig = btn.innerHTML;
     btn.innerHTML = '✓✓';
@@ -10320,8 +10319,7 @@ async function carregarObservacoes(dataInicio, dataFim) {
       lojaCol('observacoes_producao'),
       where('data', '>=', dataInicio),
       where('data', '<=', dataFim),
-      orderBy('data'),
-      orderBy('criadoEm')
+      orderBy('data')
     );
     
     const snap = await getDocs(q);
