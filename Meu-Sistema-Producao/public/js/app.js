@@ -4054,22 +4054,53 @@ function renderApontamento(){
 
 // Nova função para renderizar aba Realizado de forma controlada
 function renderRealizadoControlado(dateVal, body) {
+  try {
+    _renderRealizadoControlado(dateVal, body);
+  } catch(e) {
+    console.error('Erro em renderRealizadoControlado:', e);
+    body.innerHTML = `<div class="empty" style="flex-direction:column;gap:12px">
+      <div class="ei">⚠️</div>
+      <div style="color:var(--red)">Erro ao carregar apontamentos.</div>
+      <div style="font-size:11px;color:var(--text3)">${e.message}</div>
+      <button onclick="renderApontamento()" style="margin-top:8px;background:var(--s2);border:1px solid var(--border);color:var(--text);padding:6px 16px;border-radius:6px;cursor:pointer">🔄 Tentar novamente</button>
+    </div>`;
+  }
+}
+
+// Estado dos filtros do Realizado (persiste durante a sessão)
+window._realizadoFiltros = window._realizadoFiltros || { maquina: '', status: '', busca: '' };
+
+function _renderRealizadoControlado(dateVal, body) {
   const isOperador = isOperadorLevel();
   const isPCP = isPCPLevel();
-  
-  // Filtra registros da semana
-  const weekDays = getWeekDays(prodBaseMonday);
-  const weekStart = dateStr(weekDays[0]);
-  const weekEnd = dateStr(weekDays[6]);
-  
-  function recIsInWeek(r){
-    const dt = r.dtDesejada || r.dtSolicitacao;
-    return dt && dt >= weekStart && dt <= weekEnd;
+
+  // ── Filtros ──────────────────────────────────────────────
+  const filtros = window._realizadoFiltros;
+
+  // ── Gantt: calcular quais produtos têm segmento neste dia ──
+  let scheduleMap = {}; // recId → segments[]
+  try {
+    const { schedule } = buildSchedule(prodBaseMonday);
+    for (const maq of MAQUINAS) {
+      for (const entry of (schedule[maq] || [])) {
+        scheduleMap[entry.rec.id] = entry.segments || [];
+      }
+    }
+  } catch(e) {
+    console.warn('buildSchedule falhou, mostrando tudo da semana:', e);
   }
 
-  // CONTROLE: Só mostra produtos PROGRAMADOS para a semana
-  const weekRecs = records.filter(recIsInWeek);
-  
+  // ── Filtrar registros da semana ──
+  const weekDays = getWeekDays(prodBaseMonday);
+  const weekStart = dateStr(weekDays[0]);
+  const weekEnd   = dateStr(weekDays[6]);
+
+  const weekRecs = records.filter(r => {
+    if (r.status === 'Concluído') return false;
+    const dt = r.dtDesejada || r.dtSolicitacao;
+    return dt && dt >= weekStart && dt <= weekEnd;
+  });
+
   if (!weekRecs.length) {
     body.innerHTML = `
       <div class="empty" style="flex-direction:column;gap:12px">
@@ -4082,99 +4113,59 @@ function renderRealizadoControlado(dateVal, body) {
     return;
   }
 
-  // Renderizar cabeçalho com indicadores
-  const dateLabel = fmtDate(new Date(dateVal+'T12:00:00'));
-  const isHoje = dateVal === dateStr(new Date());
-
-  let html = `
-    <!-- Dashboard de Indicadores -->
-    ${renderDashboardIndicadores()}
-    
-    <!-- Painel de Alertas -->
-    ${renderPainelAlertas()}
-    
-    <!-- Cabeçalho Principal -->
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:12px">
-      <div>
-        <div style="font-family:'JetBrains Mono',monospace;font-size:12px;text-transform:uppercase;letter-spacing:1px;color:var(--text3)">
-          ${dateLabel} ${isHoje ? '(HOJE)' : ''}
-        </div>
-        <div style="font-size:13px;color:var(--text2);margin-top:4px;display:flex;align-items:center;gap:8px">
-          ${isOperador ? '🔒 <span style="color:var(--warn)">Modo Operador</span> - Produção Controlada' : '🔧 <span style="color:var(--cyan)">Modo PCP</span> - Gestão Completa'}
-          <button onclick="solicitarPermissaoNotificacoes()" 
-                  style="background:none;border:1px solid var(--border);color:var(--text3);padding:2px 8px;border-radius:4px;font-size:10px;cursor:pointer"
-                  title="Ativar notificações de alerta">
-            🔔
-          </button>
-        </div>
-      </div>
-      ${isPCP ? `
-        <div style="display:flex;gap:8px;align-items:center">
-          <button onclick="gerarRelatorioProducao()" 
-                  style="background:var(--purple);color:#fff;border:none;border-radius:6px;padding:6px 12px;font-size:11px;cursor:pointer">
-            📊 Relatório
-          </button>
-          <button onclick="exportarApontamentos()" 
-                  style="background:var(--s2);border:1px solid var(--border);border-radius:6px;padding:6px 12px;font-size:11px;cursor:pointer">
-            📤 Exportar
-          </button>
-          <button onclick="realizadoResetarDia('${dateVal}')" 
-                  style="background:var(--red);color:#fff;border:none;border-radius:6px;padding:6px 12px;font-size:11px;cursor:pointer">
-            🗑 Reset Dia
-          </button>
-        </div>
-      ` : ''}
-    </div>`;
-
-  // Agrupar por máquina e aplicar CONTROLES DE SEQUÊNCIA
+  // ── Montar grupos por máquina aplicando filtro de dia (Gantt) ──
   const machineGroups = [];
-  
-  for(let mi=0; mi<MAQUINAS.length; mi++){
-    const maq = MAQUINAS[mi];
-    
-    // Produtos desta máquina na semana, ordenados por SEQUÊNCIA PROGRAMADA
+
+  for (const maq of MAQUINAS) {
+    if (filtros.maquina && filtros.maquina !== maq) continue;
+
     let recs = weekRecs.filter(r => r.maquina === maq)
       .sort((a, b) => {
-        // Ordenar por prioridade, depois por data desejada
         if (a.prioridade !== b.prioridade) return a.prioridade - b.prioridade;
         return (a.dtDesejada || a.dtSolicitacao).localeCompare(b.dtDesejada || b.dtSolicitacao);
       });
-    
-    if(!recs.length) continue;
 
-    // CONTROLE: Para operador, só mostra produtos do dia atual ou em andamento
+    if (!recs.length) continue;
+
+    // ── FILTRO DE DIA — usa Gantt (mesmo critério da aba Realizado por dia) ──
+    recs = recs.filter(r => {
+      const segs = scheduleMap[r.id] || [];
+      return prodShouldShowOnDay(r, segs, dateVal);
+    });
+
+    if (!recs.length) continue;
+
+    // Operador: só vê produtos do dia / em andamento / próximo / liberado
     if (isOperador) {
       recs = recs.filter(r => {
-        const dataRecord = r.dtDesejada || r.dtSolicitacao;
         const totalProduzido = calcularTotalProduzido(r.id);
-        
-        // Mostrar se:
-        // 1. É para hoje
-        // 2. Está em andamento (já começou)
-        // 3. É o próximo da sequência liberada
-        // 4. Tem liberação temporária
-        return dataRecord === dateVal || 
+        return (r.dtDesejada || r.dtSolicitacao) === dateVal ||
                totalProduzido > 0 ||
                isProximoDaSequencia(r, recs) ||
                temLiberacaoTemporaria(r.id);
       });
+      if (!recs.length) continue;
     }
 
-    const items = recs.map(function(rec, seqIdx){
-      const status = determinarStatusProgramacao(rec);
-      const validacao = validarProducaoPermitida(rec, maq, dateVal);
+    // ── Filtro de busca ──
+    if (filtros.busca) {
+      const busca = filtros.busca.toLowerCase();
+      recs = recs.filter(r => r.produto.toLowerCase().includes(busca));
+      if (!recs.length) continue;
+    }
+
+    const items = recs.map((rec, seqIdx) => {
+      const status       = determinarStatusProgramacao(rec);
+      const validacao    = validarProducaoPermitida(rec, maq, dateVal);
       const totalProduzido = calcularTotalProduzido(rec.id);
-      const necessario = rec.qntCaixas || 0;
-      const restante = Math.max(0, necessario - totalProduzido);
-      const pct = necessario > 0 ? Math.min(100, Math.round(totalProduzido/necessario*100)) : 0;
+      const necessario   = rec.qntCaixas || 0;
+      const restante     = Math.max(0, necessario - totalProduzido);
+      const pct          = necessario > 0 ? Math.min(100, Math.round(totalProduzido / necessario * 100)) : 0;
       const temLiberacao = temLiberacaoTemporaria(rec.id);
-
-      // Dados do dia atual
-      const todayData = aponStorageGet(aponKey(dateVal, rec.id)) || {};
+      const todayData    = aponStorageGet(aponKey(dateVal, rec.id)) || {};
       let todayTotal = 0;
-      APON_HOURS.forEach(h => { todayTotal += parseInt(todayData[h])||0; });
-
-      return { 
+      APON_HOURS.forEach(h => { todayTotal += parseInt(todayData[h]) || 0; });
+      return {
         rec, seqIdx, status, validacao, totalProduzido, necessario, restante, pct,
         todayData, todayTotal, temLiberacao,
         bloqueado: !validacao.permitido && !temLiberacao && isOperador,
@@ -4182,76 +4173,167 @@ function renderRealizadoControlado(dateVal, body) {
       };
     });
 
-    if (items.length > 0) {
-      machineGroups.push({maq: maq, items: items});
-    }
+    // ── Filtro de status ──
+    const itemsFiltrados = filtros.status
+      ? items.filter(it => {
+          if (filtros.status === 'concluido')   return it.status === STATUS_PROGRAMACAO.CONCLUIDO;
+          if (filtros.status === 'andamento')   return it.status === STATUS_PROGRAMACAO.EM_PRODUCAO;
+          if (filtros.status === 'bloqueado')   return it.bloqueado;
+          if (filtros.status === 'pendente')    return it.status === STATUS_PROGRAMACAO.PENDENTE && !it.bloqueado;
+          return true;
+        })
+      : items;
+
+    if (itemsFiltrados.length > 0) machineGroups.push({ maq, items: itemsFiltrados });
   }
 
-  if(!machineGroups.length){
+  // ── Header ──
+  const dateLabel = fmtDate(new Date(dateVal + 'T12:00:00'));
+  const isHoje    = dateVal === dateStr(new Date());
+  const maqsNaSemana = [...new Set(weekRecs.map(r => r.maquina))].filter(Boolean).sort();
+
+  let html = `
+    ${renderDashboardIndicadores()}
+    ${renderPainelAlertas()}
+
+    <div style="margin-bottom:16px">
+      <!-- Linha 1: título + botões -->
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:12px">
+        <div>
+          <div style="font-family:'JetBrains Mono',monospace;font-size:12px;text-transform:uppercase;letter-spacing:1px;color:var(--text3)">
+            ${dateLabel} ${isHoje ? '(HOJE)' : ''}
+          </div>
+          <div style="font-size:13px;color:var(--text2);margin-top:4px;display:flex;align-items:center;gap:8px">
+            ${isOperador
+              ? '🔒 <span style="color:var(--warn)">Modo Operador</span> — Produção Controlada'
+              : '🔧 <span style="color:var(--cyan)">Modo PCP</span> — Gestão Completa'}
+            <button onclick="solicitarPermissaoNotificacoes()"
+                    style="background:none;border:1px solid var(--border);color:var(--text3);padding:2px 8px;border-radius:4px;font-size:10px;cursor:pointer"
+                    title="Ativar notificações">🔔</button>
+          </div>
+        </div>
+        ${isPCP ? `
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <button onclick="gerarRelatorioProducao()"
+                  style="background:var(--purple);color:#fff;border:none;border-radius:6px;padding:6px 12px;font-size:11px;cursor:pointer">
+            📊 Relatório
+          </button>
+          <button onclick="exportarApontamentos()"
+                  style="background:var(--s2);border:1px solid var(--border);border-radius:6px;padding:6px 12px;font-size:11px;cursor:pointer">
+            📤 Exportar
+          </button>
+          <button onclick="realizadoResetarDia('${dateVal}')"
+                  style="background:var(--red);color:#fff;border:none;border-radius:6px;padding:6px 12px;font-size:11px;cursor:pointer">
+            🗑 Reset Dia
+          </button>
+        </div>` : ''}
+      </div>
+
+      <!-- Linha 2: filtros -->
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;background:var(--s1);border:1px solid var(--border);border-radius:10px;padding:10px 14px">
+        <!-- Busca -->
+        <div style="display:flex;align-items:center;gap:6px;flex:1;min-width:160px">
+          <span style="font-size:14px">🔍</span>
+          <input type="text" id="realizado-busca"
+                 placeholder="Buscar produto..."
+                 value="${filtros.busca}"
+                 oninput="realizadoFiltrar()"
+                 style="background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px;padding:5px 10px;flex:1;min-width:0">
+        </div>
+
+        <!-- Filtro máquina -->
+        <div style="display:flex;align-items:center;gap:6px">
+          <span style="font-size:11px;color:var(--text3)">Máquina:</span>
+          <select id="realizado-filtro-maq" onchange="realizadoFiltrar()"
+                  style="background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px;padding:5px 8px">
+            <option value="">Todas</option>
+            ${maqsNaSemana.map(m => `<option value="${m}" ${filtros.maquina === m ? 'selected' : ''}>${m}</option>`).join('')}
+          </select>
+        </div>
+
+        <!-- Filtro status -->
+        <div style="display:flex;align-items:center;gap:6px">
+          <span style="font-size:11px;color:var(--text3)">Status:</span>
+          <select id="realizado-filtro-status" onchange="realizadoFiltrar()"
+                  style="background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px;padding:5px 8px">
+            <option value="">Todos</option>
+            <option value="pendente"  ${filtros.status === 'pendente'  ? 'selected' : ''}>⏳ Pendente</option>
+            <option value="andamento" ${filtros.status === 'andamento' ? 'selected' : ''}>🔄 Em andamento</option>
+            <option value="concluido" ${filtros.status === 'concluido' ? 'selected' : ''}>✅ Concluído</option>
+            <option value="bloqueado" ${filtros.status === 'bloqueado' ? 'selected' : ''}>🔒 Bloqueado</option>
+          </select>
+        </div>
+
+        <!-- Limpar filtros -->
+        ${(filtros.maquina || filtros.status || filtros.busca) ? `
+        <button onclick="realizadoLimparFiltros()"
+                style="background:var(--s2);border:1px solid var(--border);color:var(--text2);border-radius:6px;padding:5px 10px;font-size:11px;cursor:pointer;white-space:nowrap">
+          ✕ Limpar
+        </button>` : ''}
+
+        <!-- Contador -->
+        <div style="font-size:11px;color:var(--text3);margin-left:auto;white-space:nowrap">
+          ${machineGroups.reduce((s, g) => s + g.items.length, 0)} produto(s)
+        </div>
+      </div>
+    </div>`;
+
+  // ── Sem resultados após filtros ──
+  if (!machineGroups.length) {
     body.innerHTML = html + `
       <div class="empty" style="flex-direction:column;gap:12px">
         <div class="ei">⏰</div>
-        <div>Nenhum produto liberado para produção neste dia.</div>
+        <div>Nenhum produto para este dia${filtros.maquina || filtros.status || filtros.busca ? ' com os filtros selecionados' : ''}.</div>
         <div style="font-size:11px;color:var(--text3)">
-          ${isOperador ? 'Aguarde liberação da sequência ou consulte o PCP.' : 'Use "Produção Dia" para distribuir produtos pelos dias.'}
+          ${isOperador
+            ? 'Aguarde liberação da sequência ou consulte o PCP.'
+            : 'Verifique o Gantt Visual para confirmar a programação.'}
         </div>
+        ${(filtros.maquina || filtros.status || filtros.busca)
+          ? `<button onclick="realizadoLimparFiltros()" style="margin-top:4px;background:var(--s2);border:1px solid var(--border);color:var(--text);padding:5px 14px;border-radius:6px;font-size:11px;cursor:pointer">✕ Limpar filtros</button>`
+          : ''}
       </div>`;
     return;
   }
 
-  // Renderizar máquinas com interface aprimorada
-  for(let gi=0; gi<machineGroups.length; gi++){
-    const grp = machineGroups[gi];
+  // ── Cards por máquina ──
+  for (const grp of machineGroups) {
     const items = grp.items;
-
-    // Contadores de status
-    const concluidos = items.filter(it => it.status === STATUS_PROGRAMACAO.CONCLUIDO).length;
+    const concluidos  = items.filter(it => it.status === STATUS_PROGRAMACAO.CONCLUIDO).length;
     const emAndamento = items.filter(it => it.status === STATUS_PROGRAMACAO.EM_PRODUCAO).length;
-    const bloqueados = items.filter(it => it.bloqueado).length;
+    const bloqueados  = items.filter(it => it.bloqueado).length;
     const comLiberacao = items.filter(it => it.temLiberacao).length;
-
-    // Calcular eficiência da máquina
     let metaTotal = 0, produzidoTotal = 0;
-    items.forEach(it => {
-      metaTotal += it.necessario;
-      produzidoTotal += it.totalProduzido;
-    });
-    const eficienciaMaq = metaTotal > 0 ? Math.round((produzidoTotal / metaTotal) * 100) : 0;
+    items.forEach(it => { metaTotal += it.necessario; produzidoTotal += it.totalProduzido; });
+    const eficiencia = metaTotal > 0 ? Math.round((produzidoTotal / metaTotal) * 100) : 0;
 
     html += `
       <div class="apon-section" style="margin-bottom:20px;background:var(--s1);border:1px solid var(--border);border-radius:12px;overflow:hidden">
-        <!-- Cabeçalho da máquina aprimorado -->
         <div class="apon-section-header" style="padding:14px 18px;border-bottom:1px solid var(--border);background:var(--s2)">
           <div style="display:flex;align-items:center;justify-content:space-between">
             <div style="display:flex;align-items:center;gap:16px">
               <div style="display:flex;align-items:center;gap:10px">
                 <span style="font-weight:700;font-size:15px;color:var(--text)">🏭 ${grp.maq}</span>
                 <div style="background:var(--s1);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:11px;color:var(--text2)">
-                  ${eficienciaMaq}% eficiência
+                  ${eficiencia}% eficiência
                 </div>
               </div>
-              
               <div style="display:flex;gap:8px;font-size:10px">
-                ${concluidos > 0 ? `<span style="background:var(--green);color:#000;padding:3px 7px;border-radius:4px;font-weight:600">${concluidos} ✅</span>` : ''}
+                ${concluidos  > 0 ? `<span style="background:var(--green);color:#000;padding:3px 7px;border-radius:4px;font-weight:600">${concluidos} ✅</span>` : ''}
                 ${emAndamento > 0 ? `<span style="background:var(--cyan);color:#000;padding:3px 7px;border-radius:4px;font-weight:600">${emAndamento} 🔄</span>` : ''}
-                ${bloqueados > 0 ? `<span style="background:var(--warn);color:#000;padding:3px 7px;border-radius:4px;font-weight:600">${bloqueados} 🔒</span>` : ''}
+                ${bloqueados  > 0 ? `<span style="background:var(--warn);color:#000;padding:3px 7px;border-radius:4px;font-weight:600">${bloqueados} 🔒</span>` : ''}
                 ${comLiberacao > 0 ? `<span style="background:var(--purple);color:#fff;padding:3px 7px;border-radius:4px;font-weight:600">${comLiberacao} 🔀</span>` : ''}
               </div>
             </div>
-            
             <div style="display:flex;align-items:center;gap:12px">
-              <!-- Seletor de operador -->
               <div style="display:flex;align-items:center;gap:6px">
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" stroke-width="2">
-                  <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
-                  <circle cx="12" cy="7" r="4"/>
+                  <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>
                 </svg>
                 <select style="background:var(--s1);border:1px solid var(--border);border-radius:4px;color:var(--text2);font-size:11px;padding:4px 8px;max-width:140px">
                   <option>Selecionar operador...</option>
-                  <!-- TODO: Lista de funcionários -->
                 </select>
               </div>
-              
               <div style="font-size:11px;color:var(--text3);text-align:right">
                 <div>${items.length} produto(s)</div>
                 <div>${Math.round(produzidoTotal)} de ${Math.round(metaTotal)} cx</div>
@@ -4259,66 +4341,48 @@ function renderRealizadoControlado(dateVal, body) {
             </div>
           </div>
         </div>
-        
         <div style="padding:0">`;
 
-    // Renderizar produtos da máquina com interface avançada
-    for(let ii=0; ii<items.length; ii++){
+    for (let ii = 0; ii < items.length; ii++) {
       const it = items[ii];
       const statusInfo = getStatusInfo(it.status);
-      const isProximo = ii === 0 || items.slice(0, ii).every(prev => prev.status === STATUS_PROGRAMACAO.CONCLUIDO);
-      
-      // Estilo da linha baseado no status
+      const isProximo  = ii === 0 || items.slice(0, ii).every(prev => prev.status === STATUS_PROGRAMACAO.CONCLUIDO);
+
       let rowStyle = 'border-bottom:1px solid var(--border)';
-      let rowClass = '';
-      
-      if (it.status === STATUS_PROGRAMACAO.CONCLUIDO) {
-        rowStyle += ';background:rgba(41,217,132,.06);border-left:3px solid var(--green)';
-      } else if (it.temLiberacao) {
-        rowStyle += ';background:rgba(139,92,246,.06);border-left:3px solid var(--purple)';
-        rowClass = 'liberado';
-      } else if (it.bloqueado) {
-        rowStyle += ';background:rgba(255,179,0,.06);border-left:3px solid var(--warn)';
-        rowClass = 'bloqueado';
-      } else if (it.status === STATUS_PROGRAMACAO.EM_PRODUCAO) {
-        rowStyle += ';background:rgba(0,212,255,.06);border-left:3px solid var(--cyan)';
-      } else if (isProximo) {
-        rowStyle += ';background:rgba(0,255,204,.06);border-left:3px solid var(--green)';
-      }
+      if      (it.status === STATUS_PROGRAMACAO.CONCLUIDO) rowStyle += ';background:rgba(41,217,132,.06);border-left:3px solid var(--green)';
+      else if (it.temLiberacao)                            rowStyle += ';background:rgba(139,92,246,.06);border-left:3px solid var(--purple)';
+      else if (it.bloqueado)                               rowStyle += ';background:rgba(255,179,0,.06);border-left:3px solid var(--warn)';
+      else if (it.status === STATUS_PROGRAMACAO.EM_PRODUCAO) rowStyle += ';background:rgba(0,212,255,.06);border-left:3px solid var(--cyan)';
+      else if (isProximo)                                  rowStyle += ';background:rgba(0,255,204,.06);border-left:3px solid var(--green)';
 
       html += `
-        <div class="produto-row ${rowClass}" style="${rowStyle};padding:16px 18px" data-record-id="${it.rec.id}">
+        <div class="produto-row" style="${rowStyle};padding:16px 18px" data-record-id="${it.rec.id}">
           <div style="display:flex;align-items:center;gap:16px;margin-bottom:12px">
-            <!-- Sequência e status -->
             <div style="display:flex;align-items:center;gap:12px;min-width:60px">
               <div style="background:var(--s2);border:1px solid var(--border);border-radius:6px;padding:4px 8px;text-align:center;min-width:32px">
                 <div style="font-size:10px;color:var(--text3)">SEQ</div>
-                <div style="font-weight:700;color:var(--text)">${ii+1}</div>
+                <div style="font-weight:700;color:var(--text)">${ii + 1}</div>
               </div>
               <span style="color:${statusInfo.cor};font-size:18px">${statusInfo.icone}</span>
             </div>
-            
-            <!-- Informações do produto -->
             <div style="min-width:0;flex:1">
               <div style="font-weight:600;font-size:13px;color:var(--text);margin-bottom:4px">${it.rec.produto}</div>
-              <div style="font-size:11px;color:var(--text3);display:flex;align-items:center;gap:12px">
+              <div style="font-size:11px;color:var(--text3);display:flex;align-items:center;gap:12px;flex-wrap:wrap">
                 <span>${statusInfo.label}</span>
                 <span>Pri. ${it.rec.prioridade || 'N/A'}</span>
                 ${it.temLiberacao ? '<span style="color:var(--purple)">🔀 LIBERAÇÃO ATIVA</span>' : ''}
                 ${isProximo && !it.bloqueado && it.status !== STATUS_PROGRAMACAO.CONCLUIDO ? '<span style="color:var(--green)">👉 PRÓXIMO</span>' : ''}
               </div>
             </div>
-            
-            <!-- Indicadores visuais -->
-            <div style="display:flex;align-items:center;gap:20px">
-              <!-- Progresso circular -->
+            <div style="display:flex;align-items:center;gap:20px;flex-wrap:wrap">
               <div style="text-align:center;min-width:80px">
                 <div style="font-size:10px;color:var(--text3);margin-bottom:4px">Progresso</div>
                 <div style="position:relative;width:50px;height:50px;margin:0 auto">
                   <svg width="50" height="50" style="transform:rotate(-90deg)">
                     <circle cx="25" cy="25" r="20" fill="none" stroke="var(--s2)" stroke-width="4"/>
-                    <circle cx="25" cy="25" r="20" fill="none" stroke="${statusInfo.cor}" stroke-width="4" 
-                            stroke-dasharray="${2 * Math.PI * 20}" stroke-dashoffset="${2 * Math.PI * 20 * (1 - it.pct/100)}"
+                    <circle cx="25" cy="25" r="20" fill="none" stroke="${statusInfo.cor}" stroke-width="4"
+                            stroke-dasharray="${(2 * Math.PI * 20).toFixed(2)}"
+                            stroke-dashoffset="${(2 * Math.PI * 20 * (1 - it.pct / 100)).toFixed(2)}"
                             style="transition:stroke-dashoffset 0.5s"/>
                   </svg>
                   <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-size:11px;font-weight:700;color:${statusInfo.cor}">
@@ -4326,8 +4390,6 @@ function renderRealizadoControlado(dateVal, body) {
                   </div>
                 </div>
               </div>
-              
-              <!-- Quantidades -->
               <div style="text-align:center;min-width:120px">
                 <div style="font-size:10px;color:var(--text3);margin-bottom:4px">Produzido / Meta</div>
                 <div style="font-weight:700;color:var(--text);font-size:14px">
@@ -4335,24 +4397,16 @@ function renderRealizadoControlado(dateVal, body) {
                   <span style="color:var(--text3)"> / </span>
                   <span>${it.necessario.toLocaleString()}</span>
                 </div>
-                ${it.restante > 0 ? `
-                  <div style="font-size:10px;color:var(--warn);margin-top:2px">
-                    Faltam ${it.restante.toLocaleString()} caixas
-                  </div>
-                ` : ''}
+                ${it.restante > 0 ? `<div style="font-size:10px;color:var(--warn);margin-top:2px">Faltam ${it.restante.toLocaleString()} caixas</div>` : ''}
               </div>
-
-              <!-- Ações -->
               ${isPCP && it.bloqueado ? `
-                <button onclick="abrirModalLiberacaoSequencia(${it.rec.id})" 
-                        style="background:var(--purple);color:#fff;border:none;border-radius:6px;padding:6px 12px;font-size:11px;cursor:pointer;white-space:nowrap">
-                  🔀 Liberar
-                </button>
-              ` : ''}
+              <button onclick="abrirModalLiberacaoSequencia(${it.rec.id})"
+                      style="background:var(--purple);color:#fff;border:none;border-radius:6px;padding:6px 12px;font-size:11px;cursor:pointer;white-space:nowrap">
+                🔀 Liberar
+              </button>` : ''}
             </div>
           </div>`;
 
-      // Área de apontamento (só se permitido)
       if (!it.bloqueado || it.temLiberacao) {
         if (it.status !== STATUS_PROGRAMACAO.CONCLUIDO) {
           html += `
@@ -4367,16 +4421,14 @@ function renderRealizadoControlado(dateVal, body) {
                   💾 Salvar
                 </button>
               </div>
-              
               <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(70px,1fr));gap:10px">`;
 
-          // Inputs por hora com validação
           APON_HOURS.forEach(h => {
-            const val = it.todayData[h]||'';
+            const val = it.todayData[h] || '';
             html += `
               <div style="text-align:center">
                 <div style="font-size:10px;color:var(--text3);margin-bottom:4px;font-weight:600">${String(h).padStart(2,'0')}h</div>
-                <input class="apon-input-controlado" type="number" min="0" max="${Math.min(it.restante, 100)}" 
+                <input class="apon-input-controlado" type="number" min="0" max="${Math.min(it.restante, 100)}"
                        data-rec="${it.rec.id}" data-hr="${h}" value="${val}" placeholder="0"
                        oninput="aponRecalcRowControlado('${it.rec.id}')"
                        style="width:60px;padding:6px;border:1px solid var(--border);border-radius:6px;text-align:center;font-size:12px;background:var(--bg)">
@@ -4385,25 +4437,21 @@ function renderRealizadoControlado(dateVal, body) {
 
           html += `
               </div>
-              
-              <!-- Coluna de Observação -->
               <div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border)">
                 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
                   <label style="font-size:12px;font-weight:600;color:var(--text);display:flex;align-items:center;gap:6px">
                     📝 Observações do Dia
                     <span style="font-size:10px;color:var(--text3);font-weight:400">(opcional)</span>
                   </label>
-                  <div class="auto-save-indicator" id="autosave-${it.rec.id}-${dateVal}">
-                    Auto-save
-                  </div>
+                  <div class="auto-save-indicator" id="autosave-${it.rec.id}-${dateVal}">Auto-save</div>
                 </div>
                 <div style="position:relative">
-                  <textarea 
-                    id="obs-${it.rec.id}-${dateVal}" 
+                  <textarea
+                    id="obs-${it.rec.id}-${dateVal}"
                     class="observacao-input"
-                    data-rec="${it.rec.id}" 
+                    data-rec="${it.rec.id}"
                     data-date="${dateVal}"
-                    placeholder="Ex: Máquina com ruído no turno da manhã, setup demorou 20min extras, matéria-prima com qualidade inferior..."
+                    placeholder="Ex: Máquina com ruído no turno da manhã, setup demorou 20min extras..."
                     oninput="handleObservacaoInput(this, '${dateVal}', ${it.rec.id})"
                     maxlength="500"
                     style="width:100%;min-height:60px;max-height:120px;padding:8px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:11px;resize:vertical;font-family:inherit;line-height:1.4">
@@ -4411,64 +4459,48 @@ function renderRealizadoControlado(dateVal, body) {
                   <div class="obs-counter" id="counter-${it.rec.id}-${dateVal}">0/500</div>
                 </div>
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px">
-                  <div style="font-size:10px;color:var(--text3)">
-                    💡 Descreva problemas, setup, qualidade, etc.
-                  </div>
-                  <button onclick="salvarObservacaoManual(${it.rec.id}, '${dateVal}')" 
-                          class="obs-save-btn"
-                          id="save-obs-${it.rec.id}-${dateVal}"
+                  <div style="font-size:10px;color:var(--text3)">💡 Descreva problemas, setup, qualidade, etc.</div>
+                  <button onclick="salvarObservacaoManual(${it.rec.id}, '${dateVal}')"
+                          class="obs-save-btn" id="save-obs-${it.rec.id}-${dateVal}"
                           style="background:var(--s2);border:1px solid var(--border);color:var(--text2);border-radius:4px;padding:3px 8px;font-size:10px;cursor:pointer">
                     💾 Salvar Obs
                   </button>
                 </div>
               </div>
-              
               ${it.restante <= 20 ? `
-                <div style="background:rgba(255,179,0,.15);border:1px solid var(--warn);border-radius:6px;padding:10px;margin-top:12px;font-size:11px;color:var(--warn)">
-                  ⚠️ <strong>Próximo da conclusão!</strong> Faltam apenas ${it.restante} caixas para atingir a meta.
-                </div>
-              ` : ''}
-              
+              <div style="background:rgba(255,179,0,.15);border:1px solid var(--warn);border-radius:6px;padding:10px;margin-top:12px;font-size:11px;color:var(--warn)">
+                ⚠️ <strong>Próximo da conclusão!</strong> Faltam apenas ${it.restante} caixas.
+              </div>` : ''}
               ${it.temLiberacao ? `
-                <div style="background:rgba(139,92,246,.15);border:1px solid var(--purple);border-radius:6px;padding:10px;margin-top:12px;font-size:11px;color:var(--purple)">
-                  🔀 <strong>Liberação ativa:</strong> Este produto foi liberado para produção fora de sequência.
-                </div>
-              ` : ''}
+              <div style="background:rgba(139,92,246,.15);border:1px solid var(--purple);border-radius:6px;padding:10px;margin-top:12px;font-size:11px;color:var(--purple)">
+                🔀 <strong>Liberação ativa:</strong> Este produto foi liberado para produção fora de sequência.
+              </div>` : ''}
             </div>`;
         } else {
-          // Produto concluído - mostrar resumo
           html += `
             <div style="background:rgba(41,217,132,.1);border:1px solid var(--green);border-radius:8px;padding:12px;margin-top:12px;font-size:12px;color:var(--green)">
-              ✅ <strong>Produção concluída!</strong> 
-              Produto finalizado automaticamente ao atingir ${it.necessario.toLocaleString()} caixas.
+              ✅ <strong>Produção concluída!</strong> Produto finalizado ao atingir ${it.necessario.toLocaleString()} caixas.
               ${it.totalProduzido > it.necessario ? `<br>📈 Produção excedente: +${(it.totalProduzido - it.necessario).toLocaleString()} caixas` : ''}
             </div>`;
         }
       } else {
-        // Produto bloqueado
         html += `
           <div style="background:rgba(255,179,0,.1);border:1px solid var(--warn);border-radius:6px;padding:12px;margin-top:12px;font-size:12px;color:var(--warn)">
             🔒 <strong>Produção bloqueada:</strong> ${it.motivoBloqueio}
             ${isPCP ? `<br><br><button onclick="abrirModalLiberacaoSequencia(${it.rec.id})" style="background:var(--purple);color:#fff;border:none;border-radius:4px;padding:4px 8px;font-size:10px;cursor:pointer">🔀 Liberar Exceção</button>` : ''}
           </div>`;
       }
-
       html += '</div>';
     }
-
     html += '</div></div>';
   }
 
   body.innerHTML = html;
   body._machineGroups = machineGroups;
   body._dateVal = dateVal;
-  
-  // Carregar observações existentes para os campos
-  setTimeout(() => {
-    carregarObservacoesExistentes(dateVal);
-  }, 100);
-  
-  // Inicializar notificações se ainda não foi feito
+
+  setTimeout(() => { carregarObservacoesExistentes(dateVal); }, 100);
+
   if (typeof _notificacoesInicializadas === 'undefined') {
     iniciarNotificacoesTempoReal();
     window._notificacoesInicializadas = true;
@@ -9673,6 +9705,21 @@ window.salvarApontamentoCompleto = salvarApontamentoCompleto;
 window.gerarRelatorioProducao = gerarRelatorioProducao;
 window.exportarApontamentos = exportarApontamentos;
 window.renderProducaoDiaControlado = renderProducaoDiaControlado;
+// Funções de filtro do Realizado
+function realizadoFiltrar() {
+  const busca  = (document.getElementById('realizado-busca') || {}).value || '';
+  const maq    = (document.getElementById('realizado-filtro-maq') || {}).value || '';
+  const status = (document.getElementById('realizado-filtro-status') || {}).value || '';
+  window._realizadoFiltros = { busca, maquina: maq, status };
+  renderApontamento();
+}
+function realizadoLimparFiltros() {
+  window._realizadoFiltros = { busca: '', maquina: '', status: '' };
+  renderApontamento();
+}
+window.realizadoFiltrar      = realizadoFiltrar;
+window.realizadoLimparFiltros = realizadoLimparFiltros;
+
 window.pdCardControlado = pdCardControlado;
 window.adicionarEstilosControlados = adicionarEstilosControlados;
 window.editarProduto = editarProduto;
