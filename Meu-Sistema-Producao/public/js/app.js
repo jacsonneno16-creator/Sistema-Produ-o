@@ -812,6 +812,10 @@ async function appInit() {
   document.addEventListener('click', e => {
     if(!e.target.closest('.ac-rel')) closeAC();
   });
+  // Pre-carrega mapa do Gantt + overrides Firestore assim que dados estão prontos
+  // Resolve problema de Produção Dia / Realizado ficarem em branco na primeira abertura
+  const _bootMonday = getWeekMonday(new Date());
+  pdLoadWeek(_bootMonday).catch(e => console.warn('pdLoadWeek boot:', e));
   // Start clock
   updateClock();
   setInterval(updateClock, 1000);
@@ -824,6 +828,14 @@ async function reload() {
 
   records = await dbAll();
   if(!Array.isArray(records)) records = [];
+  // Invalida cache do Gantt quando registros são recarregados
+  // pdLoadWeek será chamado na próxima abertura de dia/produção-dia
+  _pdCacheWeek = null;
+  _pdGanttMap = {};
+  // Reconstrói mapa imediatamente se prodBaseMonday já está definido
+  if(prodBaseMonday && typeof pdBuildGanttMap === 'function') {
+    pdBuildGanttMap(prodBaseMonday);
+  }
   updateHeader();
   renderDashboard();
   renderTable();
@@ -4048,7 +4060,14 @@ function renderApontamento(){
     return;
   }
 
-  // NOVA VERSÃO CONTROLADA DA ABA REALIZADO
+  // Dias da semana: garantir que o mapa do Gantt + overrides estão carregados
+  // antes de renderizar (resolve problema de primeira abertura)
+  if(_pdCacheWeek !== dateStr(getWeekMonday(new Date(dateVal+'T12:00:00')))){
+    body.innerHTML='<div class="empty"><div class="ei">⏳</div>Carregando...</div>';
+    pdLoadWeek(prodBaseMonday).then(function(){ renderRealizadoControlado(dateVal, body); });
+    return;
+  }
+
   renderRealizadoControlado(dateVal, body);
 }
 
@@ -4077,26 +4096,19 @@ function _renderRealizadoControlado(dateVal, body) {
   // ── Filtros ──────────────────────────────────────────────
   const filtros = window._realizadoFiltros;
 
-  // ── Gantt: calcular quais produtos têm segmento neste dia ──
-  let scheduleMap = {}; // recId → segments[]
-  try {
-    const { schedule } = buildSchedule(prodBaseMonday);
-    for (const maq of MAQUINAS) {
-      for (const entry of (schedule[maq] || [])) {
-        scheduleMap[entry.rec.id] = entry.segments || [];
-      }
-    }
-  } catch(e) {
-    console.warn('buildSchedule falhou, mostrando tudo da semana:', e);
-  }
+  // ── Garantir mapa do Gantt atualizado ──
+  pdBuildGanttMap(prodBaseMonday);
 
   // ── Filtrar registros da semana ──
   const weekDays = getWeekDays(prodBaseMonday);
   const weekStart = dateStr(weekDays[0]);
   const weekEnd   = dateStr(weekDays[6]);
 
+  // Inclui registros cujo dia efetivo (Gantt ou override) cai nesta semana
   const weekRecs = records.filter(r => {
     if (r.status === 'Concluído') return false;
+    const eff = pdGetEffectiveDay(r.id);
+    if (eff && eff >= weekStart && eff <= weekEnd) return true;
     const dt = r.dtDesejada || r.dtSolicitacao;
     return dt && dt >= weekStart && dt <= weekEnd;
   });
@@ -4127,10 +4139,13 @@ function _renderRealizadoControlado(dateVal, body) {
 
     if (!recs.length) continue;
 
-    // ── FILTRO DE DIA — usa Gantt (mesmo critério da aba Realizado por dia) ──
+    // ── FILTRO DE DIA — usa pdGetEffectiveDay (Gantt + overrides Firestore) ──
     recs = recs.filter(r => {
-      const segs = scheduleMap[r.id] || [];
-      return prodShouldShowOnDay(r, segs, dateVal);
+      const eff = pdGetEffectiveDay(r.id);
+      if (eff) return eff === dateVal;
+      // fallback: se não tem dia definido no mapa, verifica dtDesejada
+      const dt = r.dtDesejada || r.dtSolicitacao;
+      return dt === dateVal;
     });
 
     if (!recs.length) continue;
@@ -4713,6 +4728,7 @@ let _pdGanttMap = {}; // { recId: 'YYYY-MM-DD' }
 
 function pdBuildGanttMap(monday) {
   _pdGanttMap = {};
+  if (!monday || !records.length) return;
   try {
     const { schedule } = buildSchedule(monday);
     for (const maq of MAQUINAS) {
@@ -4721,11 +4737,35 @@ function pdBuildGanttMap(monday) {
         const firstSeg = entry.segments && entry.segments.length > 0 ? entry.segments[0] : null;
         if (firstSeg) {
           _pdGanttMap[String(entry.rec.id)] = firstSeg.date;
+        } else if (entry.rec) {
+          // Produto sem segmento na semana (ex: semana futura) → usa dtDesejada
+          const dt = entry.rec.dtDesejada || entry.rec.dtSolicitacao;
+          if (dt) _pdGanttMap[String(entry.rec.id)] = dt;
         }
       }
     }
+    // Fallback para registros não cobertos pelo buildSchedule desta semana
+    // (produtos de outras semanas que não aparecem no schedule)
+    const weekStart = dateStr(getWeekDays(monday)[0]);
+    const weekEnd   = dateStr(getWeekDays(monday)[6]);
+    records.forEach(r => {
+      if (_pdGanttMap[String(r.id)]) return; // já tem
+      const dt = r.dtDesejada || r.dtSolicitacao;
+      if (dt && dt >= weekStart && dt <= weekEnd) {
+        _pdGanttMap[String(r.id)] = dt;
+      }
+    });
   } catch(e) {
     console.error('Erro em pdBuildGanttMap:', e);
+    // Fallback total: usar dtDesejada diretamente
+    const weekStart = dateStr(getWeekDays(monday)[0]);
+    const weekEnd   = dateStr(getWeekDays(monday)[6]);
+    records.forEach(r => {
+      const dt = r.dtDesejada || r.dtSolicitacao;
+      if (dt && dt >= weekStart && dt <= weekEnd) {
+        _pdGanttMap[String(r.id)] = dt;
+      }
+    });
   }
 }
 
