@@ -1036,7 +1036,7 @@ function renderTable(){
   } else {
     tbody.innerHTML=slice.map((r,i)=>{
       const n=(pg-1)*PER+i+1;
-      const tempo=calcTempoStr(r.maquina,r.qntCaixas,r.qntUnid,r.pcMin,r.unidPorCx);
+      const tempo=calcTempoStr(r.maquina,r.qntCaixas,r.qntUnid,r.pcMin,r.unidPorCx,r.produto);
       const insumosLista = calcConsumoInsumosRegistro(r);
       const temInsumos = insumosLista.length > 0;
       const faltaInsumo = insumosLista.some(i => i.falta);
@@ -1176,16 +1176,43 @@ async function confirmClearAll(){
   }catch(e){alert('Erro ao limpar: '+e);}
 }
 
-function calcTempoStr(maq,caixas,unid,pcMinRec,unidRec){
+function calcTempoStr(maq,caixas,unid,pcMinRec,unidRec,produtoNome){
   let pcMin = pcMinRec;
+  
+  // Priority 1: Use stored pcMin from record
+  if (pcMin && pcMin > 0) {
+    // usar valor já armazenado
+  }
+  // Priority 2: Look for specific product velocity in machine's produtosCompativeis
+  else if (!pcMin && maq && produtoNome && window.MAQUINAS_DATA) {
+    const maqData = window.MAQUINAS_DATA[maq];
+    if (maqData && Array.isArray(maqData.produtosCompativeis)) {
+      const produtoEntry = maqData.produtosCompativeis.find(p => 
+        p.produto === produtoNome || 
+        produtoNome.includes(p.produto) ||
+        p.produto.includes(produtoNome)
+      );
+      if (produtoEntry && produtoEntry.velocidade && produtoEntry.velocidade > 0) {
+        pcMin = produtoEntry.velocidade;
+      }
+    }
+  }
+  // Priority 3: Use machine default velocity
   if (!pcMin && maq && window.MAQUINAS_DATA) {
     const maqData = window.MAQUINAS_DATA[maq];
     if (maqData && maqData.pcMin) pcMin = maqData.pcMin;
   }
-  if (!pcMin) pcMin = (getAllProdutos().find(x=>x.maquina===maq)||{pc_min:1}).pc_min;
-  const unidCx=unidRec||(getAllProdutos().find(x=>x.maquina===maq)||{unid:1}).unid;
+  // Priority 4: Use product catalog velocity
+  if (!pcMin) {
+    const produto = getAllProdutos().find(x => x.maquina === maq && 
+      (produtoNome ? (x.descricao === produtoNome || produtoNome.includes(x.descricao)) : true)
+    );
+    pcMin = produto ? produto.pc_min : 1;
+  }
+  
+  const unidCx = unidRec || (getAllProdutos().find(x=>x.maquina===maq)||{unid:1}).unid;
   if(!caixas) return '—';
-  const u=unid||(caixas*unidCx);
+  const u = unid || (caixas * unidCx);
   return fmtHrs(u/pcMin/60);
 }
 
@@ -1217,11 +1244,39 @@ function getProdInfo(rec){
   // Priority 1: match by product code (most reliable)
   if(rec.prodCod){
     const byCode=all.find(x=>x.cod===rec.prodCod);
-    if(byCode) return byCode;
+    if(byCode) {
+      // Check if machine has specific velocity for this product
+      const maqData = getMaquinaData(rec.maquina);
+      if (maqData && Array.isArray(maqData.produtosCompativeis)) {
+        const produtoEntry = maqData.produtosCompativeis.find(p => 
+          p.produto === byCode.descricao || 
+          byCode.descricao.includes(p.produto) ||
+          p.produto.includes(byCode.descricao)
+        );
+        if (produtoEntry && produtoEntry.velocidade && produtoEntry.velocidade > 0) {
+          return { ...byCode, pc_min: produtoEntry.velocidade };
+        }
+      }
+      return byCode;
+    }
   }
   // Priority 2: match by machine + product name prefix
   const byName=all.find(x=>x.maquina===rec.maquina&&rec.produto&&rec.produto.startsWith(x.descricao.substring(0,22)));
-  if(byName) return byName;
+  if(byName) {
+    // Check for specific velocity in machine
+    const maqData = getMaquinaData(rec.maquina);
+    if (maqData && Array.isArray(maqData.produtosCompativeis)) {
+      const produtoEntry = maqData.produtosCompativeis.find(p => 
+        p.produto === byName.descricao || 
+        byName.descricao.includes(p.produto) ||
+        p.produto.includes(byName.descricao)
+      );
+      if (produtoEntry && produtoEntry.velocidade && produtoEntry.velocidade > 0) {
+        return { ...byName, pc_min: produtoEntry.velocidade };
+      }
+    }
+    return byName;
+  }
   // Priority 3: use stored pcMin/unidPorCx from record itself
   if(rec.pcMin&&rec.unidPorCx) return {pc_min:rec.pcMin, unid:rec.unidPorCx};
   // Priority 4: check machine data from Firestore
@@ -5157,8 +5212,11 @@ function importProdutosExcel(input) {
       const wb = XLSX.read(e.target.result, { type: 'binary' });
       const ws = wb.Sheets[wb.SheetNames[0]];
       const rows = XLSX.utils.sheet_to_json(ws);
-      let added = 0, erros = 0;
-      const promises = [];
+      
+      let addedProds = 0, addedMaqs = 0, updatedMaqs = 0, erros = 0;
+      const maquinasMap = new Map(); // Para agrupar produtos por máquina
+      
+      // Primeiro passa: organizar dados por máquina
       rows.forEach(row => {
         const cod = parseInt(row['cod'] || row['Cod'] || row['COD'] || 0);
         const desc = (row['descricao'] || row['nome'] || row['Descricao'] || row['DESCRICAO'] || '').toString().trim();
@@ -5168,18 +5226,99 @@ function importProdutosExcel(input) {
         const categoria = (row['categoria'] || row['Categoria'] || '').toString().trim();
         const coberturaDias = parseInt(row['coberturaDias'] || row['CobDias'] || 0);
         const estoqueMinimo = parseFloat(row['estoqueMinimo'] || row['EstMin'] || 0);
-        if (!cod || !desc || !unid) { erros++; return; }
-        const dados = { cod, descricao: desc, unid, kg_fd: 0, pc_min: pcmin, maquina: maq, categoria, coberturaDias, estoqueMinimo, ativo: true };
-        promises.push(salvarProdutoFirestore(dados));
-        added++;
+        
+        if (!cod || !desc || !unid || !maq) { erros++; return; }
+        
+        const maqUpper = maq.toUpperCase();
+        if (!maquinasMap.has(maqUpper)) {
+          maquinasMap.set(maqUpper, {
+            nome: maqUpper,
+            produtos: [],
+            velocidades: []
+          });
+        }
+        
+        maquinasMap.get(maqUpper).produtos.push({
+          cod, descricao: desc, unid, pc_min: pcmin, maquina: maq, 
+          categoria, coberturaDias, estoqueMinimo, ativo: true
+        });
+        
+        if (pcmin > 0) {
+          maquinasMap.get(maqUpper).velocidades.push(pcmin);
+        }
       });
-      await Promise.all(promises);
+      
+      // Segunda passa: criar/atualizar máquinas com produtos vinculados
+      const snapMaquinas = await getDocs(lojaCol('maquinas'));
+      const maquinasExistentes = new Map();
+      snapMaquinas.docs.forEach(d => {
+        const data = d.data();
+        if (data.nome) maquinasExistentes.set(data.nome.toUpperCase(), {id: d.id, data});
+      });
+      
+      for (const [nomeMaq, info] of maquinasMap) {
+        // Calcular velocidade média da máquina
+        const velMedia = info.velocidades.length > 0 
+          ? Math.round((info.velocidades.reduce((a,b) => a+b, 0) / info.velocidades.length) * 100) / 100
+          : 0;
+        
+        // Criar produtos compatíveis com velocidades específicas
+        const produtosCompativeis = info.produtos.map(p => ({
+          produto: p.descricao,
+          velocidade: p.pc_min > 0 ? p.pc_min : null
+        }));
+        
+        const maqData = {
+          nome: nomeMaq,
+          tipo: 'Empacotadeira',
+          setor: 'Embalagem',
+          status: 'ativa',
+          pcMin: velMedia,
+          eficiencia: 100,
+          hTurno: 8,
+          nTurnos: 1,
+          tempoSetupPadrao: 0,
+          produtosCompativeis: produtosCompativeis,
+          atualizadoEm: new Date().toISOString()
+        };
+        
+        if (maquinasExistentes.has(nomeMaq)) {
+          // Atualizar máquina existente
+          const existing = maquinasExistentes.get(nomeMaq);
+          await setDoc(lojaDoc('maquinas', existing.id), {
+            ...maqData,
+            criadoEm: existing.data.criadoEm || new Date().toISOString()
+          });
+          updatedMaqs++;
+        } else {
+          // Criar nova máquina
+          await addDoc(lojaCol('maquinas'), {
+            ...maqData,
+            criadoEm: new Date().toISOString()
+          });
+          addedMaqs++;
+        }
+        
+        // Salvar cada produto
+        for (const produto of info.produtos) {
+          await salvarProdutoFirestore(produto);
+          addedProds++;
+        }
+      }
+      
+      await carregarMaquinasFirestore();
       await carregarProdutosFirestore();
       renderProdutosCfg();
-      let msg = added + ' produto(s) importado(s)!';
-      if (erros) msg += ' (' + erros + ' linha(s) ignoradas)';
+      renderCadastroMaquinas();
+      
+      let msg = `✅ ${addedProds} produto(s), ${addedMaqs} máquina(s) criada(s), ${updatedMaqs} máquina(s) atualizada(s)`;
+      if (erros) msg += ` (${erros} linha(s) com erro ignoradas)`;
       toast(msg, erros ? 'warn' : 'ok');
-    } catch(err) { toast('Erro ao ler Excel: ' + err.message, 'err'); }
+      
+    } catch(err) { 
+      toast('Erro ao ler Excel: ' + err.message, 'err'); 
+      console.error('Erro na importação:', err);
+    }
     input.value = '';
   };
   reader.readAsBinaryString(file);
@@ -5188,11 +5327,14 @@ function downloadProdTemplate(e) {
   e.preventDefault();
   const ws = XLSX.utils.aoa_to_sheet([
     ['cod','descricao','maquina','pc_min','unid','categoria','coberturaDias','estoqueMinimo'],
-    [12345,'EXEMPLO PRODUTO 500G - CX 12','ALFATECK 14',28.05,12,'ESPECIARIA',15,100]
+    [12345,'POLVILHO AZEDO 500G - CX 12','SELGRON 01',46.75,12,'ESPECIARIA',15,100],
+    [12346,'COCO RALADO 100G - CX 24','SELGRON 01',52.30,24,'ESPECIARIA',10,50],
+    [12347,'FARINHA MILHO 1KG - CX 10','ALFATECK 14',28.05,10,'FARINHA',20,75],
+    [12348,'BICARBONATO 250G - CX 20','ALFATECK 14',31.80,20,'ESPECIARIA',12,40]
   ]);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Produtos');
-  XLSX.writeFile(wb, 'template_produtos.xlsx');
+  XLSX.writeFile(wb, 'template_produtos_e_maquinas.xlsx');
 }
 
 function downloadMaqTemplate(e) {
@@ -5204,7 +5346,7 @@ function downloadMaqTemplate(e) {
   ]);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Maquinas');
-  XLSX.writeFile(wb, 'template_maquinas.xlsx');
+  XLSX.writeFile(wb, 'template_maquinas_simples.xlsx');
 }
 
 // ── Funcionários ──
