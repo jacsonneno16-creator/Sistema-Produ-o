@@ -1409,7 +1409,7 @@ function buildMaqCardDetail(nomeMaq) {
   let html = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 10px;font-size:11px;font-family:\'JetBrains Mono\',monospace;margin-bottom:8px">'
     + '<div><span style="color:var(--text3)">Setor:</span> <span style="color:var(--text2)">' + (d.setor || '—') + '</span></div>'
     + '<div><span style="color:var(--text3)">Status:</span> <span style="color:' + statusColor + ';font-weight:700">' + ((d.status || 'ativa').toUpperCase()) + '</span></div>'
-    + '<div><span style="color:var(--text3)">Vel. padrão:</span> <span style="color:var(--warn);font-weight:700">' + (d.pcMin ? d.pcMin + ' saq/min' : '<span style="color:#ff6b6b">⚠ não config.</span>') + '</span></div>'
+    + '<div><span style="color:var(--text3)">Vel. padrão:</span> <span style="color:var(--warn);font-weight:700">' + (d.pcMin ? d.pcMin + ' und/min' : '<span style="color:#ff6b6b">⚠ não config.</span>') + '</span></div>'
     + '<div><span style="color:var(--text3)">Eficiência:</span> <span>' + (d.eficiencia != null ? d.eficiencia + '%' : '—') + '</span></div>'
     + '<div><span style="color:var(--text3)">Turnos/dia:</span> <span>' + (d.nTurnos || '—') + '</span></div>'
     + '<div><span style="color:var(--text3)">Hrs/turno:</span> <span>' + (d.hTurno || '—') + '</span></div>'
@@ -1427,7 +1427,7 @@ function buildMaqCardDetail(nomeMaq) {
     html += '<div style="font-size:10px;text-transform:uppercase;letter-spacing:.7px;color:var(--purple);font-weight:700;margin-bottom:4px;margin-top:2px">Produtos (' + prods.length + ')</div>';
     html += prods.map(function(p) {
       const vel = p.velocidade != null
-        ? '<span style="color:var(--cyan);font-family:\'JetBrains Mono\',monospace">' + p.velocidade + ' saq/min</span>'
+        ? '<span style="color:var(--cyan);font-family:\'JetBrains Mono\',monospace">' + p.velocidade + ' und/min</span>'
         : '<span style="color:var(--text3)">padrão' + (d.pcMin ? ' (' + d.pcMin + ')' : '') + '</span>';
       return '<div style="display:flex;justify-content:space-between;align-items:center;padding:3px 0;border-bottom:1px solid rgba(255,255,255,.04);font-size:11px">'
         + '<span style="color:var(--text2);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-right:8px">' + p.produto + '</span>'
@@ -1526,7 +1526,7 @@ function renderProdGrid(maq, filter){
       onmouseover="this.style.borderColor='var(--cyan)';this.style.background='rgba(0,229,204,.07)'"
       onmouseout="this.style.borderColor='var(--border)';this.style.background='var(--s2)'">
       <div style="font-size:11px;color:var(--text);line-height:1.4">${p.descricao}</div>
-      <div style="font-size:10px;color:var(--text3);font-family:'JetBrains Mono',monospace;margin-top:4px">Cód:${p.cod} · ${p.pc_min}pc/min · ${p.unid}un/cx</div>
+      <div style="font-size:10px;color:var(--text3);font-family:'JetBrains Mono',monospace;margin-top:4px">Cód:${p.cod} · ${p.pc_min}und/min · ${p.unid}un/cx</div>
     </div>`).join('');
   grid._prods=prods;
 }
@@ -1545,7 +1545,7 @@ function setProdSelected(p){
   document.getElementById('p-pcmin-val').value=p.pc_min;
   document.getElementById('p-unid-val').value=p.unid;
   document.getElementById('sel-nome').textContent=p.descricao;
-  document.getElementById('sel-info').textContent=`Cód:${p.cod} · ${p.maquina} · ${p.pc_min}pc/min · ${p.unid}un/cx`;
+  document.getElementById('sel-info').textContent=`Cód:${p.cod} · ${p.maquina} · ${p.pc_min}und/min · ${p.unid}un/cx`;
   document.getElementById('prod-selected').style.display='block';
   document.getElementById('prod-grid').style.display='none';
   document.getElementById('p-search').style.display='none';
@@ -4571,7 +4571,7 @@ function renderCadastroMaquinas() {
     </div>`;
     if (nProds > 0) {
       const prodsRows = d.produtosCompativeis.map(p => {
-        const vel = p.velocidade != null ? `<span style="color:var(--cyan);font-family:'JetBrains Mono',monospace">${p.velocidade} saq/min</span>` : `<span style="color:var(--text3)">padrão${d.pcMin ? ' (' + d.pcMin + ')' : ''}</span>`;
+        const vel = p.velocidade != null ? `<span style="color:var(--cyan);font-family:'JetBrains Mono',monospace">${p.velocidade} und/min</span>` : `<span style="color:var(--text3)">padrão${d.pcMin ? ' (' + d.pcMin + ')' : ''}</span>`;
         return `<div style="display:grid;grid-template-columns:1fr auto;gap:8px;padding:5px 0;border-bottom:1px solid rgba(255,255,255,.04);font-size:11px">
           <span style="color:var(--text2)">${p.produto}</span>
           <span>${vel}</span>
@@ -4593,7 +4593,7 @@ function renderCadastroMaquinas() {
     return `<tr style="border-bottom:1px solid var(--border)" onmouseover="this.style.background='var(--s2)'" onmouseout="this.style.background=''">
       <td style="padding:10px 14px;font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--text1);font-weight:600">${m}${d.codigo ? `<span style="font-size:10px;color:var(--text3);font-weight:400;margin-left:6px">${d.codigo}</span>` : ''}</td>
       <td style="padding:10px 10px;font-size:12px;color:var(--text2)">${tipoSetor}</td>
-      <td style="padding:10px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--warn)">${d.pcMin ? d.pcMin + ' pc/min' : '<span style="color:var(--text3)">—</span>'}</td>
+      <td style="padding:10px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--warn)">${d.pcMin ? d.pcMin + ' und/min' : '<span style="color:var(--text3)">—</span>'}</td>
       <td style="padding:10px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--cyan)">${capHora}</td>
       <td style="padding:10px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--cyan)">${capDia}</td>
       <td style="padding:10px 10px;text-align:center">${statusBadge}</td>
@@ -4745,7 +4745,7 @@ function renderMaqProdsLista() {
   el.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:11px">
     <thead><tr style="background:var(--s2)">
       <th style="padding:6px 10px;text-align:left;color:var(--text3)">Produto</th>
-      <th style="padding:6px 10px;text-align:right;color:var(--text3)">Velocidade (saq/min)</th>
+      <th style="padding:6px 10px;text-align:right;color:var(--text3)">Velocidade (und/min)</th>
       <th style="padding:6px 4px;text-align:right;color:var(--text3)"></th>
     </tr></thead>
     <tbody>` +
@@ -4768,7 +4768,7 @@ async function saveMaquinaModal() {
   // Avisar sobre campos importantes sem bloquear — máquina pode ser salva sem velocidade,
   // mas o sistema não conseguirá calcular tempo de produção nem programação automática
   const avisos = [];
-  if (!pcMinVal || pcMinVal <= 0) avisos.push('Velocidade padrão (saq/min) não informada — programação automática não funcionará para esta máquina.');
+  if (!pcMinVal || pcMinVal <= 0) avisos.push('Velocidade padrão (und/min) não informada — programação automática não funcionará para esta máquina.');
   if (!hTurnoVal || hTurnoVal <= 0) avisos.push('Horas por turno não informadas — assumirá 8h.');
   if (!nTurnosVal || nTurnosVal <= 0) avisos.push('Número de turnos não informado — assumirá 1 turno.');
 
@@ -4818,15 +4818,16 @@ async function importarMaquinasExcel(file) {
       else if (/^tipo$/i.test(h)) colMap.tipo = i;
       else if (/^setor$/i.test(h)) colMap.setor = i;
       else if (/^status$/i.test(h)) colMap.status = i;
-      else if (/^pc_?min$|^velocidade$/i.test(h)) colMap.pcMin = i;
+      else if (/^pc_?min$|^velocidade$|^und_?min$/i.test(h)) colMap.pcMin = i;
       else if (/^eficiencia$|^eficiência$/i.test(h)) colMap.eficiencia = i;
       else if (/^h_?turno$|^horas$/i.test(h)) colMap.hTurno = i;
       else if (/^n_?turnos$|^turnos$/i.test(h)) colMap.nTurnos = i;
       else if (/^setup$/i.test(h)) colMap.setup = i;
+      else if (/^produtos$/i.test(h)) colMap.produtos = i;
     });
     
     if (colMap.nome === undefined) {
-      toast('Coluna "nome" não encontrada! Cabeçalho deve ter: nome, codigo, tipo, setor, status, pcMin, eficiencia, hTurno, nTurnos, setup', 'err');
+      toast('Coluna "nome" não encontrada! Cabeçalho deve ter: nome, codigo, tipo, setor, status, undMin, eficiencia, hTurno, nTurnos, setup, produtos', 'err');
       return;
     }
     
@@ -4837,6 +4838,18 @@ async function importarMaquinasExcel(file) {
     for (const row of dataRows) {
       const nome = String(row[colMap.nome]||'').trim().toUpperCase();
       if (!nome) continue;
+      
+      // Processar produtos compatíveis
+      let produtosCompativeis = [];
+      if (colMap.produtos !== undefined && row[colMap.produtos]) {
+        const produtosStr = String(row[colMap.produtos]).trim();
+        if (produtosStr) {
+          produtosCompativeis = produtosStr.split(',').map(p => {
+            const produto = p.trim();
+            return produto ? { produto: produto, velocidade: null } : null;
+          }).filter(p => p);
+        }
+      }
       
       const maqData = {
         nome: nome,
@@ -4849,7 +4862,7 @@ async function importarMaquinasExcel(file) {
         hTurno: parseFloat(row[colMap.hTurno]) || 8,
         nTurnos: parseInt(row[colMap.nTurnos]) || 1,
         tempoSetupPadrao: parseFloat(row[colMap.setup]) || 0,
-        produtosCompativeis: [],
+        produtosCompativeis: produtosCompativeis,
         atualizadoEm: new Date().toISOString()
       };
       
@@ -4922,7 +4935,7 @@ function renderFichaTecnicaCfg() {
           <span style="font-size:12px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.desc}</span>
         </div>
         <div style="display:flex;gap:12px;align-items:center;flex-shrink:0;margin-left:10px">
-          <span style="font-size:11px;color:var(--warn);font-family:'JetBrains Mono',monospace">${p.pc_min} pc/min</span>
+          <span style="font-size:11px;color:var(--warn);font-family:'JetBrains Mono',monospace">${p.pc_min} und/min</span>
           <span style="font-size:10px;background:${insCount?'rgba(0,212,255,.1)':'var(--s2)'};border:1px solid ${insCount?'rgba(0,212,255,.2)':'var(--border)'};color:${insCount?'var(--cyan)':'var(--text3)'};padding:1px 7px;border-radius:20px">${insCount} insumo${insCount!==1?'s':''}</span>
         </div>
       </div>
@@ -5087,7 +5100,7 @@ function renderProdutosCfg() {
           <span style="font-size:12px;color:var(--text)">${p.descricao}</span>
         </div>
         <div style="display:flex;align-items:center;gap:6px;margin-top:5px;flex-wrap:wrap">
-          <span style="font-size:10px;color:var(--warn);font-family:'JetBrains Mono',monospace">${p.pc_min} pc/min</span>
+          <span style="font-size:10px;color:var(--warn);font-family:'JetBrains Mono',monospace">${p.pc_min} und/min</span>
           <span style="font-size:10px;color:var(--text3);font-family:'JetBrains Mono',monospace">${p.unid}un/cx</span>
           <span style="color:var(--text3);font-size:10px">·</span>
           ${maqTags}
@@ -5185,9 +5198,9 @@ function downloadProdTemplate(e) {
 function downloadMaqTemplate(e) {
   e.preventDefault();
   const ws = XLSX.utils.aoa_to_sheet([
-    ['nome','codigo','tipo','setor','status','pcMin','eficiencia','hTurno','nTurnos','setup'],
-    ['SELGRON 01','SEL01','Empacotadeira','Embalagem','ativa',46.75,100,8,1,0],
-    ['ALFATECK 14','ALF14','Empacotadeira','Embalagem','ativa',28.05,100,8,1,0]
+    ['nome','codigo','tipo','setor','status','undMin','eficiencia','hTurno','nTurnos','setup','produtos'],
+    ['SELGRON 01','SEL01','Empacotadeira','Embalagem','ativa',46.75,100,8,1,0,'POLVILHO 500G, COCO 100G'],
+    ['ALFATECK 14','ALF14','Empacotadeira','Embalagem','ativa',28.05,100,8,1,0,'FARINHA 1KG, BICARBONATO 250G']
   ]);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Maquinas');
