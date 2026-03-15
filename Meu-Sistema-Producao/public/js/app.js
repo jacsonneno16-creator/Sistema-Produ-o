@@ -4627,173 +4627,250 @@ function pdGetEffectiveDay(recId) {
 // ===== VERSÃO CONTROLADA DA ABA PRODUÇÃO DIA =====
 
 function renderProducaoDiaControlado() {
-  if (!prodBaseMonday) { 
-    document.getElementById('apon-body').innerHTML = '<div class="empty"><div class="ei">📅</div>Selecione uma semana</div>'; 
-    return; 
+  if (!prodBaseMonday) {
+    document.getElementById('apon-body').innerHTML = '<div class="empty"><div class="ei">📅</div>Selecione uma semana</div>';
+    return;
   }
 
-  // Calcula mapa de dias do Gantt para esta semana
   pdBuildGanttMap(prodBaseMonday);
 
   const isOperador = isOperadorLevel();
-  const isPCP = isPCPLevel();
+  const isPCP      = isPCPLevel();
 
-  const weekDays = getWeekDays(prodBaseMonday);
+  const weekDays  = getWeekDays(prodBaseMonday);
   const weekStart = dateStr(weekDays[0]);
-  const weekEnd = dateStr(weekDays[6]);
-  const workDays = weekDays.filter(function(d) { return hoursOnDay(d) > 0; });
+  const weekEnd   = dateStr(weekDays[6]);
+  const workDays  = weekDays.filter(d => hoursOnDay(d) > 0);
 
-  // Inclui registros desta semana + overflow de semanas anteriores não concluídos
-  const weekRecs = records.filter(function(r) {
+  const filtros = window._pdFiltros || { maquina: '', status: '', busca: '' };
+
+  // ── weekRecs: semana + overflow ──────────────────────────────────
+  const weekRecs = records.filter(r => {
     if (r.status === 'Concluído') return false;
     const produzido = calcularTotalProduzido(r.id);
     const meta      = r.qntCaixas || 0;
     if (produzido >= meta && meta > 0) return false;
-
     const eff = pdGetEffectiveDay(r.id) || r.dtDesejada || r.dtSolicitacao;
     if (!eff) return false;
-
-    // Programado para esta semana
     if (eff >= weekStart && eff <= weekEnd) return true;
-    // Overflow: programado antes desta semana e ainda não concluído
     if (eff < weekStart) return true;
     return false;
   });
 
-  const finCount = weekRecs.filter(function(r) { return pdIsFin(r.id); }).length;
+  const finCount = weekRecs.filter(r => pdIsFin(r.id)).length;
+
+  // Máquinas presentes na semana (para filtro)
+  const maqsNaSemana = [...new Set(weekRecs.map(r => r.maquina).filter(Boolean))].sort();
 
   let html = '<div>';
 
-  // Cabeçalho com controles diferenciados
+  // ── Cabeçalho + filtros ──────────────────────────────────────────
   html += `
-    <div style="margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">
-      <div>
-        <div style="font-size:14px;font-weight:700;color:var(--text)">
-          📅 Produção por Dia - ${fmtDate(weekDays[0])} a ${fmtDate(weekDays[6])}
+    <div style="margin-bottom:12px">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:10px">
+        <div>
+          <div style="font-size:13px;font-weight:700;color:var(--text)">📅 Produção por Dia — ${fmtDate(weekDays[0])} a ${fmtDate(weekDays[6])}</div>
+          <div style="font-size:11px;color:var(--text2);margin-top:2px">${isOperador ? '🔒 Modo Operador — Visualização' : '🔧 Modo PCP — Gestão completa'}</div>
         </div>
-        <div style="font-size:11px;color:var(--text2);margin-top:4px">
-          ${isOperador ? '🔒 Modo Operador - Visualização da programação' : '🔧 Modo PCP - Gestão completa'}
-        </div>
+        ${isPCP ? `<button onclick="pdRestoreAll()" style="background:var(--orange);color:#000;border:none;border-radius:6px;padding:5px 12px;font-size:11px;cursor:pointer">🔄 Restaurar Finalizados</button>` : ''}
       </div>
-      ${isPCP ? `
-        <div style="display:flex;gap:8px">
-          <button onclick="pdRestoreAll()" 
-                  style="background:var(--orange);color:#000;border:none;border-radius:6px;padding:6px 12px;font-size:11px;cursor:pointer">
-            🔄 Restaurar Finalizados
-          </button>
-        </div>
-      ` : ''}
+
+      <!-- Filtros -->
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;background:var(--s1);border:1px solid var(--border);border-radius:8px;padding:8px 12px">
+        <span style="font-size:11px;color:var(--text3)">Filtrar:</span>
+        <!-- Busca -->
+        <input type="text" id="pd-filtro-busca" placeholder="Buscar produto..." value="${filtros.busca}"
+               oninput="pdFiltrar()"
+               style="background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:11px;padding:4px 8px;width:150px">
+        <!-- Máquina -->
+        <select id="pd-filtro-maq" onchange="pdFiltrar()"
+                style="background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:11px;padding:4px 8px">
+          <option value="">Todas as máquinas</option>
+          ${maqsNaSemana.map(m => `<option value="${m}" ${filtros.maquina===m?'selected':''}>${m}</option>`).join('')}
+        </select>
+        <!-- Status -->
+        <select id="pd-filtro-status" onchange="pdFiltrar()"
+                style="background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:11px;padding:4px 8px">
+          <option value="">Todos os status</option>
+          <option value="pendente"  ${filtros.status==='pendente'?'selected':''}>⏳ Pendente</option>
+          <option value="andamento" ${filtros.status==='andamento'?'selected':''}>🔄 Em andamento</option>
+          <option value="concluido" ${filtros.status==='concluido'?'selected':''}>✅ Concluído</option>
+        </select>
+        ${(filtros.maquina||filtros.status||filtros.busca) ? `
+        <button onclick="pdLimparFiltros()" style="background:none;border:1px solid var(--border);color:var(--text3);border-radius:6px;padding:4px 8px;font-size:11px;cursor:pointer">✕ Limpar</button>` : ''}
+        <span style="font-size:10px;color:var(--text3);margin-left:auto">${weekRecs.filter(r=>!pdIsFin(r.id)).length} produto(s)</span>
+      </div>
     </div>`;
 
-  // Alerta de produtos finalizados (se houver)
   if (finCount > 0) {
     html += `
-      <div style="background:rgba(251,146,60,.1);border:1px solid var(--orange);border-radius:10px;padding:10px 16px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between">
-        <span style="font-size:12px;color:var(--orange)">${finCount} produto(s) finalizado(s) e ocultos</span>
-        ${isPCP ? `
-          <button onclick="pdRestoreAll()" 
-                  style="background:var(--orange);color:#000;border:none;border-radius:6px;padding:5px 14px;font-size:12px;font-weight:700;cursor:pointer">
-            ↩ Restaurar todos
-          </button>
-        ` : ''}
+      <div style="background:rgba(251,146,60,.1);border:1px solid var(--orange);border-radius:8px;padding:8px 14px;margin-bottom:10px;display:flex;align-items:center;justify-content:space-between">
+        <span style="font-size:11px;color:var(--orange)">${finCount} produto(s) finalizado(s) e ocultos</span>
+        ${isPCP ? `<button onclick="pdRestoreAll()" style="background:var(--orange);color:#000;border:none;border-radius:5px;padding:4px 10px;font-size:11px;font-weight:700;cursor:pointer">↩ Restaurar</button>` : ''}
       </div>`;
   }
 
-  // Aviso para operadores
   if (isOperador) {
     html += `
-      <div style="background:rgba(0,212,255,.08);border:1px solid var(--cyan);border-radius:8px;padding:12px;margin-bottom:16px;font-size:12px;color:var(--cyan)">
+      <div style="background:rgba(0,212,255,.08);border:1px solid var(--cyan);border-radius:8px;padding:10px 14px;margin-bottom:10px;font-size:11px;color:var(--cyan)">
         ℹ️ <strong>Visualização:</strong> Esta é a programação definida pelo PCP. Para produzir, use a aba <strong>"Realizado"</strong>.
       </div>`;
   }
 
-  // Grid de dias
+  // ── Grid de colunas por dia ──────────────────────────────────────
   html += `<div style="display:grid;grid-template-columns:repeat(${workDays.length},1fr);gap:10px;align-items:start">`;
 
-  workDays.forEach(function(d) {
-    const ds = dateStr(d);
-    const dayName = DAY_NAMES[d.getDay()];
+  workDays.forEach(d => {
+    const ds        = dateStr(d);
+    const dayName   = DAY_NAMES[d.getDay()];
     const dateLabel = fmtDate(d);
-    const isToday = ds === dateStr(new Date());
+    const isToday   = ds === dateStr(new Date());
 
-    const dayRecs = weekRecs.filter(function(r) {
+    let dayRecs = weekRecs.filter(r => {
       if (pdIsFin(r.id)) return false;
       const eff = pdGetEffectiveDay(r.id) || r.dtDesejada || r.dtSolicitacao;
       if (!eff) return false;
-      // Dia programado: mostra normalmente
       if (eff === ds) return true;
-      // Overflow: dia programado já passou, produto não concluído → mostra neste dia
-      return eff < ds;
+      return eff < ds; // overflow
     });
+
+    // Aplicar filtros
+    if (filtros.maquina) dayRecs = dayRecs.filter(r => r.maquina === filtros.maquina);
+    if (filtros.busca)   dayRecs = dayRecs.filter(r => r.produto.toLowerCase().includes(filtros.busca.toLowerCase()));
+    if (filtros.status) {
+      dayRecs = dayRecs.filter(r => {
+        const prod = calcularTotalProduzido(r.id);
+        const meta = r.qntCaixas || 0;
+        if (filtros.status === 'concluido')  return prod >= meta && meta > 0;
+        if (filtros.status === 'andamento')  return prod > 0 && prod < meta;
+        if (filtros.status === 'pendente')   return prod === 0;
+        return true;
+      });
+    }
 
     const borderColor = isToday ? 'var(--cyan)' : 'var(--border)';
     const headerColor = isToday ? 'var(--cyan)' : 'var(--text2)';
 
-    // Coluna do dia com controles diferenciados
-    html += `
-      <div class="pd-col ${isOperador ? 'pd-col-readonly' : ''}" data-date="${ds}" 
-           ${isPCP ? `ondragover="pdDragOver(event)" ondrop="pdDrop(this,event)" ondragleave="pdDragLeave(event)"` : ''}
-           style="background:var(--s1);border:1px solid ${borderColor};border-radius:12px;min-height:160px;transition:border-color .2s,background .2s">`;
+    // Agrupar por máquina para mostrar seletor de funcionário
+    const maqsNoDia = [...new Set(dayRecs.map(r => r.maquina).filter(Boolean))].sort();
 
-    // Cabeçalho do dia
     html += `
-      <div style="padding:12px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between">
-        <div>
-          <div style="font-weight:700;font-size:13px;color:${headerColor}">${dayName}</div>
-          <div style="font-size:10px;color:var(--text3)">${dateLabel}</div>
-        </div>
-        <div style="display:flex;align-items:center;gap:8px">
-          <span style="background:var(--s2);border:1px solid var(--border);border-radius:10px;font-size:10px;padding:2px 8px;color:var(--text3)">
-            ${dayRecs.length}
-          </span>
-          ${isToday ? '<span style="color:var(--cyan);font-size:10px">HOJE</span>' : ''}
-        </div>
-      </div>`;
+      <div class="pd-col ${isOperador ? 'pd-col-readonly' : ''}" data-date="${ds}"
+           ${isPCP ? `ondragover="pdDragOver(event)" ondrop="pdDrop(this,event)" ondragleave="pdDragLeave(event)"` : ''}
+           style="background:var(--s1);border:1px solid ${borderColor};border-radius:10px;min-height:120px;transition:border-color .2s,background .2s">
+
+        <!-- Cabeçalho do dia -->
+        <div style="padding:10px 12px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between">
+          <div>
+            <div style="font-weight:700;font-size:12px;color:${headerColor}">${dayName}</div>
+            <div style="font-size:10px;color:var(--text3)">${dateLabel}</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:6px">
+            <span style="background:var(--s2);border:1px solid var(--border);border-radius:8px;font-size:10px;padding:2px 7px;color:var(--text3)">${dayRecs.length}</span>
+            ${isToday ? '<span style="color:var(--cyan);font-size:9px;font-weight:700">HOJE</span>' : ''}
+          </div>
+        </div>`;
+
+    // Seletor de funcionário por máquina dentro do dia
+    if (maqsNoDia.length > 0) {
+      maqsNoDia.forEach(maq => {
+        const savedFunc = (window._pdFuncSel || {})[`${ds}_${maq}`] || '';
+        const funcOpts  = (_funcProd || [])
+          .filter(f => !f.deactivatedUntil || new Date(f.deactivatedUntil).getTime() < Date.now())
+          .filter(f => !f.maquinas || !f.maquinas.length || f.maquinas.includes(maq))
+          .map(f => `<option value="${f.nome}" ${savedFunc===f.nome?'selected':''}>${f.nome}</option>`)
+          .join('');
+
+        if (funcOpts) {
+          html += `
+            <div style="padding:6px 10px;border-bottom:1px solid rgba(255,255,255,.04);background:rgba(139,92,246,.04)">
+              <div style="display:flex;align-items:center;gap:6px">
+                <span style="font-size:9px;color:var(--purple);font-weight:700;white-space:nowrap">👷 ${maq.length>12?maq.substring(0,12)+'…':maq}</span>
+                <select onchange="pdSelecionarFunc(this,'${ds}','${maq}')"
+                        style="flex:1;background:var(--s2);border:1px solid var(--border);border-radius:5px;color:var(--text2);font-size:10px;padding:2px 4px">
+                  <option value="">— operador —</option>
+                  ${funcOpts}
+                </select>
+              </div>
+            </div>`;
+        }
+      });
+    }
 
     // Cards dos produtos
-    html += '<div class="pd-cards" style="padding:10px;display:flex;flex-direction:column;gap:7px">';
-    dayRecs.forEach(function(r) { 
-      html += pdCardControlado(r, ds, isOperador, isPCP); 
+    html += '<div class="pd-cards" style="padding:8px;display:flex;flex-direction:column;gap:6px">';
+    dayRecs.forEach(r => {
+      html += pdCardControlado(r, ds, isOperador, isPCP);
     });
-    html += '</div>';
-    html += '</div>';
+    if (dayRecs.length === 0) {
+      html += `<div style="text-align:center;padding:16px 8px;font-size:11px;color:var(--text3)">Nenhum produto${filtros.maquina||filtros.busca||filtros.status?' com este filtro':''}</div>`;
+    }
+    html += '</div></div>';
   });
 
   html += '</div>';
 
-  // Produtos não atribuídos (só PCP pode ver e mover)
-  const unassigned = weekRecs.filter(function(r) {
+  // Sem dia (apenas PCP)
+  const unassigned = weekRecs.filter(r => {
     const eff = pdGetEffectiveDay(r.id) || r.dtDesejada || r.dtSolicitacao;
     if (pdIsFin(r.id)) return false;
-    // Overflow (dia no passado) → não é "sem dia", aparece nas colunas
     if (eff && eff < weekStart) return false;
-    // Sem dia ou dia fora dos dias úteis desta semana → sem dia
-    const isWD = workDays.some(function(wd) { return dateStr(wd) === eff; });
+    const isWD = workDays.some(wd => dateStr(wd) === eff);
+    if (filtros.maquina && r.maquina !== filtros.maquina) return false;
     return !eff || !isWD;
   });
 
   if (unassigned.length > 0 && isPCP) {
     html += `
-      <div style="margin-top:16px">
-        <div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px">
-          Sem dia definido — arraste para um dia
-        </div>
-        <div class="pd-col pd-pool" data-date="" 
-             ondragover="pdDragOver(event)" ondrop="pdDrop(this,event)" ondragleave="pdDragLeave(event)" 
-             style="background:var(--s1);border:1px dashed var(--border);border-radius:12px;padding:10px;display:flex;flex-wrap:wrap;gap:7px;min-height:60px">`;
-    unassigned.forEach(function(r) { 
-      html += pdCardControlado(r, null, isOperador, isPCP); 
-    });
+      <div style="margin-top:14px">
+        <div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px">Sem dia definido — arraste para um dia</div>
+        <div class="pd-col pd-pool" data-date=""
+             ondragover="pdDragOver(event)" ondrop="pdDrop(this,event)" ondragleave="pdDragLeave(event)"
+             style="background:var(--s1);border:1px dashed var(--border);border-radius:10px;padding:10px;display:flex;flex-wrap:wrap;gap:6px;min-height:50px">`;
+    unassigned.forEach(r => { html += pdCardControlado(r, null, isOperador, isPCP); });
     html += '</div></div>';
   } else if (unassigned.length > 0 && isOperador) {
     html += `
-      <div style="margin-top:16px;background:rgba(255,179,0,.08);border:1px solid var(--warn);border-radius:8px;padding:12px;font-size:12px;color:var(--warn)">
+      <div style="margin-top:12px;background:rgba(255,179,0,.08);border:1px solid var(--warn);border-radius:8px;padding:10px 14px;font-size:11px;color:var(--warn)">
         ⚠️ <strong>Atenção:</strong> Existem ${unassigned.length} produto(s) sem dia definido. Consulte o PCP.
       </div>`;
   }
 
   html += '</div>';
   document.getElementById('apon-body').innerHTML = html;
+
+  // Carregar funcionários se ainda não carregados
+  if (!_funcProd || !_funcProd.length) {
+    listarFuncionariosProducao().then(f => { _funcProd = f; }).catch(() => {});
+  }
+
+  // Atualizar badges de observações nos cards (para obs já salvas)
+  _pdCarregarBadgesObs(weekRecs, workDays);
+}
+
+// Carrega obs da semana e atualiza badges nos cards sem re-renderizar
+async function _pdCarregarBadgesObs(weekRecs, workDays) {
+  if (!weekRecs || !weekRecs.length) return;
+  try {
+    const weekStart = dateStr(workDays[0]);
+    const weekEnd   = dateStr(workDays[workDays.length-1]);
+    const obsMap    = await carregarObservacoes(weekStart, weekEnd);
+    // Atualiza cache local
+    Object.keys(obsMap).forEach(key => {
+      const [ds, recId] = key.split('_');
+      window._pdObsCache[`${recId}_${ds}`] = obsMap[key].observacao;
+    });
+    // Atualiza badges nos cards visíveis
+    workDays.forEach(d => {
+      const ds = dateStr(d);
+      weekRecs.forEach(r => {
+        const obs = obsMap[`${ds}_${r.id}`];
+        if (obs && obs.observacao) {
+          _pdAtualizarBadgeObs(r.id, ds, obs.observacao);
+        }
+      });
+    });
+  } catch(e) { /* silencioso */ }
 }
 
 // Versão controlada do card de produto
@@ -4861,6 +4938,13 @@ function pdCardControlado(r, ds, isOperador, isPCP) {
       </div>
       
       ${finBtn}
+      <!-- Botão de observação -->
+      <button onclick="pdAbrirObs(${r.id},'${ds||''}')" title="Adicionar observação"
+              style="width:100%;margin-top:6px;background:var(--s1);border:1px solid var(--border);border-radius:5px;padding:3px 0;font-size:10px;color:var(--text3);cursor:pointer;transition:all .15s"
+              onmouseover="this.style.borderColor='var(--warn)';this.style.color='var(--warn)'"
+              onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--text3)'">
+        📝 Observação
+      </button>
     </div>`;
 }
 
@@ -9730,6 +9814,195 @@ function realizadoLimparFiltros() {
   renderApontamento();
 }
 window.realizadoFiltrar      = realizadoFiltrar;
+// ═══════════════════════════════════════════════════════════════════
+// PRODUÇÃO DIA — Filtros, Observações e Funcionários
+// ═══════════════════════════════════════════════════════════════════
+
+window._pdFiltros  = window._pdFiltros  || { maquina: '', status: '', busca: '' };
+window._pdFuncSel  = window._pdFuncSel  || {}; // { "YYYY-MM-DD_MAQ": "Nome Funcionário" }
+window._pdObsCache = window._pdObsCache || {}; // { "recId_date": "texto" }
+
+function pdFiltrar() {
+  window._pdFiltros = {
+    busca:   (document.getElementById('pd-filtro-busca')  || {}).value || '',
+    maquina: (document.getElementById('pd-filtro-maq')    || {}).value || '',
+    status:  (document.getElementById('pd-filtro-status') || {}).value || '',
+  };
+  renderProducaoDiaControlado();
+}
+
+function pdLimparFiltros() {
+  window._pdFiltros = { maquina: '', status: '', busca: '' };
+  renderProducaoDiaControlado();
+}
+
+function pdSelecionarFunc(sel, ds, maq) {
+  window._pdFuncSel[`${ds}_${maq}`] = sel.value;
+  // Salva no localStorage para persistir na sessão
+  try { localStorage.setItem('_pdFuncSel', JSON.stringify(window._pdFuncSel)); } catch(e) {}
+}
+
+// Carrega seleções de funcionário do localStorage ao iniciar
+(function() {
+  try {
+    const saved = localStorage.getItem('_pdFuncSel');
+    if (saved) window._pdFuncSel = JSON.parse(saved);
+  } catch(e) {}
+})();
+
+// ── Modal de Observação do Produto ──────────────────────────────────
+async function pdAbrirObs(recId, ds) {
+  const rec = records.find(r => r.id === recId);
+  if (!rec) return;
+
+  const dateLabel = ds ? fmtDate(new Date(ds + 'T12:00:00')) : 'sem data';
+
+  // Busca obs existente do cache ou Firestore
+  let textoAtual = window._pdObsCache[`${recId}_${ds}`] || '';
+  if (!textoAtual && ds) {
+    try {
+      const obs = await getObservacaoComCache(ds, recId);
+      if (obs && obs.observacao) {
+        textoAtual = obs.observacao;
+        window._pdObsCache[`${recId}_${ds}`] = textoAtual;
+      }
+    } catch(e) {}
+  }
+
+  // Remove modal anterior se existir
+  document.getElementById('modal-pd-obs')?.remove();
+
+  const modalHtml = `
+    <div id="modal-pd-obs" onclick="if(event.target===this)pdFecharObs()"
+         style="position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px">
+      <div style="background:var(--bg);border:1px solid var(--border);border-radius:14px;width:100%;max-width:480px;box-shadow:0 20px 60px rgba(0,0,0,.6)">
+
+        <!-- Header -->
+        <div style="padding:16px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between">
+          <div>
+            <div style="font-size:13px;font-weight:700;color:var(--text)">📝 Observação do Produto</div>
+            <div style="font-size:11px;color:var(--text3);margin-top:2px">${rec.produto.substring(0,50)}</div>
+          </div>
+          <button onclick="pdFecharObs()" style="background:var(--s2);border:1px solid var(--border);border-radius:6px;width:28px;height:28px;cursor:pointer;color:var(--text2);font-size:14px">✕</button>
+        </div>
+
+        <!-- Info -->
+        <div style="padding:12px 20px;background:var(--s1);display:flex;gap:16px;flex-wrap:wrap">
+          <div style="font-size:11px;color:var(--text3)">
+            🏭 <span style="color:var(--text2)">${rec.maquina}</span>
+          </div>
+          <div style="font-size:11px;color:var(--text3)">
+            📅 <span style="color:var(--text2)">${dateLabel}</span>
+          </div>
+          <div style="font-size:11px;color:var(--text3)">
+            📦 <span style="color:var(--text2)">${rec.qntCaixas} cx solicitadas</span>
+          </div>
+        </div>
+
+        <!-- Textarea -->
+        <div style="padding:16px 20px">
+          <label style="font-size:11px;color:var(--text3);display:block;margin-bottom:6px">
+            Observação do dia — problemas, setup, qualidade, etc.
+          </label>
+          <textarea id="pd-obs-textarea"
+                    placeholder="Ex: Setup demorou 30min extras, troca de embalagem no turno da tarde, matéria-prima com umidade..."
+                    maxlength="500"
+                    style="width:100%;min-height:100px;max-height:180px;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:var(--s1);color:var(--text);font-size:12px;resize:vertical;font-family:'Space Grotesk',sans-serif;line-height:1.5;box-sizing:border-box;transition:border-color .15s"
+                    onfocus="this.style.borderColor='var(--cyan)'" onblur="this.style.borderColor='var(--border)'"
+                    oninput="document.getElementById('pd-obs-counter').textContent=this.value.length+'/500'"
+          >${textoAtual}</textarea>
+          <div style="display:flex;justify-content:space-between;margin-top:4px">
+            <span style="font-size:10px;color:var(--text3)">Auto-salva ao confirmar</span>
+            <span id="pd-obs-counter" style="font-size:10px;color:var(--text3)">${textoAtual.length}/500</span>
+          </div>
+        </div>
+
+        <!-- Botões -->
+        <div style="padding:0 20px 16px;display:flex;gap:8px;justify-content:flex-end">
+          <button onclick="pdFecharObs()"
+                  style="background:var(--s2);border:1px solid var(--border);color:var(--text2);border-radius:7px;padding:7px 16px;font-size:12px;cursor:pointer">
+            Cancelar
+          </button>
+          ${textoAtual ? `
+          <button onclick="pdLimparObs(${recId},'${ds}')"
+                  style="background:rgba(255,71,87,.1);border:1px solid rgba(255,71,87,.3);color:var(--red);border-radius:7px;padding:7px 16px;font-size:12px;cursor:pointer">
+            🗑 Apagar
+          </button>` : ''}
+          <button onclick="pdSalvarObs(${recId},'${ds}')"
+                  style="background:var(--cyan);color:#000;border:none;border-radius:7px;padding:7px 16px;font-size:12px;font-weight:700;cursor:pointer">
+            💾 Salvar
+          </button>
+        </div>
+      </div>
+    </div>`;
+
+  document.body.insertAdjacentHTML('beforeend', modalHtml);
+  setTimeout(() => document.getElementById('pd-obs-textarea')?.focus(), 80);
+}
+
+function pdFecharObs() {
+  document.getElementById('modal-pd-obs')?.remove();
+}
+
+async function pdSalvarObs(recId, ds) {
+  const textarea = document.getElementById('pd-obs-textarea');
+  if (!textarea) return;
+  const texto = textarea.value.trim();
+
+  if (!texto) {
+    toast('Digite uma observação antes de salvar.', 'warn');
+    return;
+  }
+
+  const btn = document.querySelector('#modal-pd-obs button[onclick*="pdSalvarObs"]');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Salvando...'; }
+
+  const sucesso = await salvarObservacao(ds, recId, texto, getUserEmailSafe());
+  if (sucesso) {
+    window._pdObsCache[`${recId}_${ds}`] = texto;
+    // Invalida cache geral de observações
+    _observacoesCache = {};
+    toast('✅ Observação salva!', 'ok');
+    pdFecharObs();
+    // Atualiza badge no card
+    _pdAtualizarBadgeObs(recId, ds, texto);
+  } else {
+    if (btn) { btn.disabled = false; btn.textContent = '💾 Salvar'; }
+  }
+}
+
+async function pdLimparObs(recId, ds) {
+  if (!confirm('Apagar a observação deste produto neste dia?')) return;
+  const sucesso = await salvarObservacao(ds, recId, '', getUserEmailSafe());
+  if (sucesso) {
+    delete window._pdObsCache[`${recId}_${ds}`];
+    _observacoesCache = {};
+    toast('Observação apagada.', 'info');
+    pdFecharObs();
+    _pdAtualizarBadgeObs(recId, ds, '');
+  }
+}
+
+function _pdAtualizarBadgeObs(recId, ds, texto) {
+  // Atualiza visual do botão de obs no card sem re-renderizar tudo
+  const card = document.getElementById(`pd-card-${recId}`);
+  if (!card) return;
+  const obsBtn = card.querySelector(`button[onclick*="pdAbrirObs"]`);
+  if (obsBtn) {
+    obsBtn.style.borderColor = texto ? 'var(--warn)' : 'var(--border)';
+    obsBtn.style.color       = texto ? 'var(--warn)' : 'var(--text3)';
+    obsBtn.textContent       = texto ? '📝 Ver obs.' : '📝 Observação';
+  }
+}
+
+window.pdFiltrar         = pdFiltrar;
+window.pdLimparFiltros   = pdLimparFiltros;
+window.pdSelecionarFunc  = pdSelecionarFunc;
+window.pdAbrirObs        = pdAbrirObs;
+window.pdFecharObs       = pdFecharObs;
+window.pdSalvarObs       = pdSalvarObs;
+window.pdLimparObs       = pdLimparObs;
+
 // ── Realizado: atualiza totais em tempo real ao digitar ──────────────
 function realizadoInputChange(inp) {
   const recId = inp.dataset.rec;
