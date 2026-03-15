@@ -12,6 +12,19 @@ import {
 const col = (path) => collection(db, path);
 const ref = (path, id) => doc(db, path, id);
 
+// Coleções por loja — todas as coleções operacionais ficam em lojas/{lojaId}/...
+const COLS_GLOBAIS = ['usuarios', 'lojas']; // ficam na raiz
+function lojaCol(nome) {
+  const lojaId = localStorage.getItem('lojaAtiva');
+  if (!lojaId) throw new Error('Nenhuma loja selecionada');
+  return collection(db, 'lojas', lojaId, nome);
+}
+function lojaRef(nome, id) {
+  const lojaId = localStorage.getItem('lojaAtiva');
+  if (!lojaId) throw new Error('Nenhuma loja selecionada');
+  return doc(db, 'lojas', lojaId, nome, id);
+}
+
 // ================================================================
 //  USUÁRIOS
 // ================================================================
@@ -48,13 +61,13 @@ function ordenarRegistros(rows) {
 }
 
 export async function getAllRegistros() {
-  const snap = await getDocs(col("registros"));
+  const snap = await getDocs(lojaCol("registros"));
   const rows = snap.docs.map(d => ({ id: d.id, ...d.data() }));
   return ordenarRegistros(rows);
 }
 
 export async function addRegistro(data) {
-  return await addDoc(col("registros"), {
+  return await addDoc(lojaCol("registros"), {
     ...data,
     sortOrder: Date.now(),
     criadoEm: serverTimestamp()
@@ -62,18 +75,18 @@ export async function addRegistro(data) {
 }
 
 export async function updateRegistro(id, data) {
-  await updateDoc(ref("registros", id), {
+  await updateDoc(lojaRef("registros", id), {
     ...data,
     atualizadoEm: serverTimestamp()
   });
 }
 
 export async function deleteRegistro(id) {
-  await deleteDoc(ref("registros", id));
+  await deleteDoc(lojaRef("registros", id));
 }
 
 export function watchRegistros(callback) {
-  return onSnapshot(col("registros"), snap => {
+  return onSnapshot(lojaCol("registros"), snap => {
     const rows = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     callback(ordenarRegistros(rows));
   });
@@ -83,31 +96,31 @@ export function watchRegistros(callback) {
 //  MÁQUINAS
 // ================================================================
 export async function getAllMaquinas() {
-  const snap = await getDocs(query(col("maquinas"), orderBy("nome")));
+  const snap = await getDocs(query(lojaCol("maquinas"), orderBy("nome")));
   return snap.docs.map(d => ({ id: d.id, ...d.data() }));
 }
 export async function addMaquina(data) {
-  return await addDoc(col("maquinas"), { ...data, criadoEm: serverTimestamp() });
+  return await addDoc(lojaCol("maquinas"), { ...data, criadoEm: serverTimestamp() });
 }
 export async function updateMaquina(id, data) {
-  await updateDoc(ref("maquinas", id), { ...data, atualizadoEm: serverTimestamp() });
+  await updateDoc(lojaRef("maquinas", id), { ...data, atualizadoEm: serverTimestamp() });
 }
 export async function deleteMaquina(id) {
-  await deleteDoc(ref("maquinas", id));
+  await deleteDoc(lojaRef("maquinas", id));
 }
 export async function upsertMaquinaByNome(nome, data = {}) {
-  const snap = await getDocs(query(col("maquinas"), where("nome", "==", nome)));
+  const snap = await getDocs(query(lojaCol("maquinas"), where("nome", "==", nome)));
 
   if (!snap.empty) {
     const docId = snap.docs[0].id;
-    await updateDoc(ref("maquinas", docId), {
+    await updateDoc(lojaRef("maquinas", docId), {
       ...data,
       atualizadoEm: serverTimestamp()
     });
     return docId;
   }
 
-  const r = await addDoc(col("maquinas"), {
+  const r = await addDoc(lojaCol("maquinas"), {
     nome,
     ...data,
     criadoEm: serverTimestamp()
@@ -120,28 +133,28 @@ export async function upsertMaquinaByNome(nome, data = {}) {
 //  INSUMOS
 // ================================================================
 export async function getAllInsumos() {
-  const snap = await getDocs(query(col("insumos"), orderBy("nome")));
+  const snap = await getDocs(query(lojaCol("insumos"), orderBy("nome")));
   return snap.docs.map(d => ({ id: d.id, ...d.data() }));
 }
 export async function addInsumo(data) {
-  return await addDoc(col("insumos"), { ...data, criadoEm: serverTimestamp() });
+  return await addDoc(lojaCol("insumos"), { ...data, criadoEm: serverTimestamp() });
 }
 export async function updateInsumo(id, data) {
-  await updateDoc(ref("insumos", id), { ...data, atualizadoEm: serverTimestamp() });
+  await updateDoc(lojaRef("insumos", id), { ...data, atualizadoEm: serverTimestamp() });
 }
 export async function deleteInsumo(id) {
-  await deleteDoc(ref("insumos", id));
+  await deleteDoc(lojaRef("insumos", id));
 }
 
 // ================================================================
 //  FICHAS TÉCNICAS
 // ================================================================
 export async function getAllFichas() {
-  const snap = await getDocs(col("fichas"));
+  const snap = await getDocs(lojaCol("fichas"));
   return snap.docs.map(d => ({ id: d.id, ...d.data() }));
 }
 export async function getFicha(produtoNome) {
-  const snap = await getDocs(query(col("fichas"), where("produto", "==", produtoNome)));
+  const snap = await getDocs(query(lojaCol("fichas"), where("produto", "==", produtoNome)));
   if (snap.empty) return null;
   const d = snap.docs[0];
   return { id: d.id, ...d.data() };
@@ -149,10 +162,10 @@ export async function getFicha(produtoNome) {
 export async function setFicha(data) {
   const existing = await getFicha(data.produto);
   if (existing) {
-    await updateDoc(ref("fichas", existing.id), { ...data, atualizadoEm: serverTimestamp() });
+    await updateDoc(lojaRef("fichas", existing.id), { ...data, atualizadoEm: serverTimestamp() });
     return existing.id;
   } else {
-    const r = await addDoc(col("fichas"), { ...data, criadoEm: serverTimestamp() });
+    const r = await addDoc(lojaCol("fichas"), { ...data, criadoEm: serverTimestamp() });
     return r.id;
   }
 }
@@ -165,7 +178,7 @@ export async function getApontamento(a, b) {
   const date = isDate(a) ? a : b;
   const registroId = isDate(a) ? b : a;
   const id = `${date}_${registroId}`;
-  const snap = await getDoc(ref("apontamentos", id));
+  const snap = await getDoc(lojaRef("apontamentos", id));
   return snap.exists() ? snap.data() : null;
 }
 export async function setApontamento(a, b, horas) {
@@ -173,10 +186,10 @@ export async function setApontamento(a, b, horas) {
   const date = isDate(a) ? a : b;
   const registroId = isDate(a) ? b : a;
   const id = `${date}_${registroId}`;
-  await setDoc(ref("apontamentos", id), { date, registroId, horas, atualizadoEm: serverTimestamp() }, { merge: true });
+  await setDoc(lojaRef("apontamentos", id), { date, registroId, horas, atualizadoEm: serverTimestamp() }, { merge: true });
 }
 export async function getApontamentosByRegistro(registroId) {
-  const snap = await getDocs(query(col("apontamentos"), where("registroId", "==", registroId)));
+  const snap = await getDocs(query(lojaCol("apontamentos"), where("registroId", "==", registroId)));
   return snap.docs.map(d => ({ id: d.id, ...d.data() }));
 }
 export async function getTotalApontado(registroId) {
@@ -191,13 +204,13 @@ export async function getTotalApontado(registroId) {
 //  CONFIGURAÇÕES GLOBAIS (jornada, parâmetros, etc.)
 // ================================================================
 export async function getConfig(key) {
-  const snap = await getDoc(ref("configuracoes", key));
+  const snap = await getDoc(lojaRef("configuracoes", key));
   return snap.exists() ? snap.data() : null;
 }
 
 export async function setConfig(key, data) {
   await setDoc(
-    ref("configuracoes", key),
+    lojaRef("configuracoes", key),
     { ...data, atualizadoEm: serverTimestamp() },
     { merge: true }
   );
@@ -210,7 +223,7 @@ const _unsubs = [];
 
 export function onRegistros(callback) {
   const unsub = onSnapshot(
-    col("registros"),
+    lojaCol("registros"),
     snap => {
       const rows = snap.docs.map(d => ({ id: d.id, ...d.data() }));
       callback(ordenarRegistros(rows));
@@ -222,7 +235,7 @@ export function onRegistros(callback) {
 
 export function onMaquinas(callback) {
   const unsub = onSnapshot(
-    query(col("maquinas"), orderBy("nome")),
+    query(lojaCol("maquinas"), orderBy("nome")),
     snap => callback(snap.docs.map(d => ({ id: d.id, ...d.data() })))
   );
   _unsubs.push(unsub);
@@ -322,9 +335,9 @@ export async function buildAponTotals(ids) {
 // ================================================================
 export async function exportarBackup() {
   const [registros, maquinas, apontamentos, usuarios] = await Promise.all([
-    getDocs(col("registros")),
-    getDocs(col("maquinas")),
-    getDocs(col("apontamentos")),
+    getDocs(lojaCol("registros")),
+    getDocs(lojaCol("maquinas")),
+    getDocs(lojaCol("apontamentos")),
     getDocs(col("usuarios")),
   ]);
   return {
@@ -340,7 +353,7 @@ export async function exportarBackup() {
 //  SEED — cria dados iniciais se Firestore estiver vazio
 // ================================================================
 export async function seedIfEmpty() {
-  const snap = await getDocs(col("maquinas"));
+  const snap = await getDocs(lojaCol("maquinas"));
   if (!snap.empty) return; // already seeded
 
   console.log("[DB] Criando dados iniciais...");
@@ -358,7 +371,7 @@ export async function seedIfEmpty() {
     { nome:"MASIPACK 10",      setor:"E", capacidade:280, ativo:true },
     { nome:"GOLPACK 06",       setor:"C", capacidade:320, ativo:true },
   ];
-  maquinas.forEach(m => batch.set(doc(col("maquinas")), { ...m, criadoEm: serverTimestamp() }));
+  maquinas.forEach(m => batch.set(doc(lojaCol("maquinas")), { ...m, criadoEm: serverTimestamp() }));
 
   const insumos = [
     { nome:"Polvilho Azedo",         categoria:"MATERIA PRIMA", unidade:"KG",  estoqueAtual:2100, estoqueMinimo:1500, consumoSemanal:400 },
@@ -372,10 +385,10 @@ export async function seedIfEmpty() {
     { nome:"Caixa 06 Produtos",      categoria:"EMBALAGEM",     unidade:"UN",  estoqueAtual:3100, estoqueMinimo:2000, consumoSemanal:500 },
     { nome:"Saco Pouch Kraft",       categoria:"EMBALAGEM",     unidade:"UN",  estoqueAtual:1240, estoqueMinimo:1000, consumoSemanal:200 },
   ];
-  insumos.forEach(i => batch.set(doc(col("insumos")), { ...i, criadoEm: serverTimestamp() }));
+  insumos.forEach(i => batch.set(doc(lojaCol("insumos")), { ...i, criadoEm: serverTimestamp() }));
 
   // Jornada padrão
-  batch.set(ref("config","jornada"), { dias:[0,9,9,9,9,9,8,0], atualizadoEm: serverTimestamp() });
+  batch.set(lojaRef("configuracoes","jornada"), { dias:[0,9,9,9,9,9,8,0], atualizadoEm: serverTimestamp() });
 
   await batch.commit();
   console.log("[DB] Dados iniciais criados ✓");

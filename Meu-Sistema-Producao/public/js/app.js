@@ -11,6 +11,67 @@ import {
   collection, getDocs, addDoc, setDoc, doc, deleteDoc, query, orderBy, where
 } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
+// ===================================================================
+// ===== GESTÃO DE LOJA ATIVA =========================================
+// ===================================================================
+// Retorna o ID da loja ativa (ex: "loja_matriz")
+function getLojaAtiva() {
+  return localStorage.getItem('lojaAtiva') || null;
+}
+
+// Salva a loja ativa e recarrega
+function setLojaAtiva(lojaId) {
+  localStorage.setItem('lojaAtiva', lojaId);
+  location.reload();
+}
+
+// Retorna uma referência de sub-coleção dentro da loja ativa
+// Ex: lojaCol('registros') → collection(firestoreDB, 'lojas/loja_matriz/registros')
+function lojaCol(nomeColecao) {
+  const loja = getLojaAtiva();
+  if (!loja) throw new Error('Nenhuma loja selecionada. Selecione uma loja para continuar.');
+  return collection(firestoreDB, 'lojas', loja, nomeColecao);
+}
+
+// Retorna um doc dentro da loja ativa
+function lojaDoc(nomeColecao, docId) {
+  const loja = getLojaAtiva();
+  if (!loja) throw new Error('Nenhuma loja selecionada.');
+  return doc(firestoreDB, 'lojas', loja, nomeColecao, docId);
+}
+
+// Carrega lista de lojas cadastradas
+async function carregarLojas() {
+  try {
+    const snap = await getDocs(collection(firestoreDB, 'lojas'));
+    return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  } catch(e) {
+    console.warn('[LOJAS] Erro ao carregar:', e.message);
+    return [];
+  }
+}
+
+// Cria uma nova loja no Firestore
+async function criarLoja(id, nome) {
+  const lojaId = id.trim().toLowerCase().replace(/[^a-z0-9_]/g, '_');
+  if (!lojaId || !nome) return;
+  try {
+    await setDoc(doc(firestoreDB, 'lojas', lojaId), {
+      nome: nome.trim(),
+      criadoEm: new Date().toISOString(),
+      ativo: true
+    });
+    toast('Loja "' + nome + '" criada!', 'ok');
+    return lojaId;
+  } catch(e) {
+    toast('Erro ao criar loja: ' + e.message, 'err');
+  }
+}
+
+window.getLojaAtiva = getLojaAtiva;
+window.setLojaAtiva = setLojaAtiva;
+window.criarLoja = criarLoja;
+
 // ===== TURNOS POR MÁQUINA (módulo de disponibilidade real) =====
 // Nota: turnosMaquinas.js é carregado como script separado no index.html
 
@@ -20,7 +81,7 @@ const PER = 15;
 
 async function dbAll() {
   try {
-    const snap = await getDocs(collection(firestoreDB, 'registros'));
+    const snap = await getDocs(lojaCol('registros'));
     return snap.docs.map(d => ({ id: d.id, ...d.data() }));
   } catch(e) {
     console.error('dbAll error:', e);
@@ -32,10 +93,10 @@ async function dbPut(obj) {
   const { id, ...data } = obj;
   try {
     if(id) {
-      await setDoc(doc(firestoreDB, 'registros', id), data, { merge: true });
+      await setDoc(lojaDoc('registros', id), data, { merge: true });
       return id;
     } else {
-      const ref = await addDoc(collection(firestoreDB, 'registros'), data);
+      const ref = await addDoc(lojaCol('registros'), data);
       return ref.id;
     }
   } catch(e) {
@@ -46,7 +107,7 @@ async function dbPut(obj) {
 
 async function dbDel(id) {
   try {
-    await deleteDoc(doc(firestoreDB, 'registros', String(id)));
+    await deleteDoc(lojaDoc('registros', String(id)));
   } catch(e) {
     console.error('dbDel error:', e);
     throw e;
@@ -70,7 +131,7 @@ let SETUP_FIRESTORE = {};
 // Carrega setup_maquinas do Firestore e popula SETUP_FIRESTORE
 async function carregarSetupFirestore() {
   try {
-    const snap = await getDocs(collection(firestoreDB, 'setup_maquinas'));
+    const snap = await getDocs(lojaCol('setup_maquinas'));
     SETUP_FIRESTORE = {};
     snap.docs.forEach(d => {
       const data = d.data();
@@ -96,7 +157,7 @@ async function carregarSetupFirestore() {
 async function salvarSetupFirestore(maquina, prodOrigem, prodDestino, tempoMinutos) {
   try {
     // Verifica se já existe
-    const q = query(collection(firestoreDB, 'setup_maquinas'),
+    const q = query(lojaCol('setup_maquinas'),
       where('maquina', '==', maquina),
       where('produto_origem', '==', prodOrigem),
       where('produto_destino', '==', prodDestino)
@@ -104,9 +165,9 @@ async function salvarSetupFirestore(maquina, prodOrigem, prodDestino, tempoMinut
     const snap = await getDocs(q);
     const payload = { maquina, produto_origem: prodOrigem, produto_destino: prodDestino, tempo_setup: parseInt(tempoMinutos)||0, atualizadoEm: new Date().toISOString() };
     if (!snap.empty) {
-      await setDoc(doc(firestoreDB, 'setup_maquinas', snap.docs[0].id), payload);
+      await setDoc(lojaDoc('setup_maquinas', snap.docs[0].id), payload);
     } else {
-      await addDoc(collection(firestoreDB, 'setup_maquinas'), payload);
+      await addDoc(lojaCol('setup_maquinas'), payload);
     }
     await carregarSetupFirestore();
   } catch(e) { toast('Erro ao salvar setup: ' + e.message, 'err'); }
@@ -168,6 +229,164 @@ function calcTotalSetupMin(maq, orderedProds) {
   return total;
 }
 
+
+// ===================================================================
+// ===== SELETOR E GESTÃO DE LOJAS ====================================
+// ===================================================================
+
+async function mostrarSeletorLoja() {
+  const appDiv = document.getElementById('app');
+  if (appDiv) appDiv.hidden = true;
+
+  // Remove seletor anterior se existir
+  const old = document.getElementById('loja-selector-screen');
+  if (old) old.remove();
+
+  const lojas = await carregarLojas();
+
+  const screen = document.createElement('div');
+  screen.id = 'loja-selector-screen';
+  screen.style.cssText = 'position:fixed;inset:0;z-index:1500;background:var(--bg,#0a0b0d);display:flex;align-items:center;justify-content:center;flex-direction:column;gap:0';
+
+  const lojasBtns = lojas.length
+    ? lojas.map(l => `
+        <button onclick="confirmarLoja('${l.id}')"
+          style="width:100%;padding:14px 20px;background:var(--s1,#13151a);border:1px solid var(--border,#1f2d3d);border-radius:10px;color:var(--text,#e8eaf0);font-size:14px;font-family:'Space Grotesk',sans-serif;cursor:pointer;text-align:left;display:flex;align-items:center;gap:12px;transition:all .15s"
+          onmouseover="this.style.borderColor='var(--cyan,#00d4ff)';this.style.background='rgba(0,212,255,.07)'"
+          onmouseout="this.style.borderColor='var(--border,#1f2d3d)';this.style.background='var(--s1,#13151a)'">
+          <span style="font-size:22px">🏭</span>
+          <div>
+            <div style="font-weight:700">${l.nome || l.id}</div>
+            <div style="font-size:11px;color:var(--text3,#5a6a7a);font-family:monospace">${l.id}</div>
+          </div>
+        </button>`).join('')
+    : `<div style="color:var(--text3,#5a6a7a);font-size:13px;text-align:center;padding:20px 0">
+         Nenhuma loja cadastrada ainda.<br>Crie a primeira loja abaixo.
+       </div>`;
+
+  screen.innerHTML = `
+    <div style="width:100%;max-width:440px;padding:24px">
+      <div style="text-align:center;margin-bottom:28px">
+        <div style="font-size:28px;font-weight:900;color:var(--cyan,#00d4ff);font-family:'Space Grotesk',sans-serif">DT Produção</div>
+        <div style="color:var(--text3,#5a6a7a);font-size:13px;margin-top:6px">Selecione a loja para continuar</div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:20px">
+        ${lojasBtns}
+      </div>
+      <div style="border-top:1px solid var(--border,#1f2d3d);padding-top:16px">
+        <div style="font-size:12px;color:var(--text3,#5a6a7a);margin-bottom:10px;font-weight:600;text-transform:uppercase;letter-spacing:.8px">Nova loja</div>
+        <div style="display:flex;gap:8px">
+          <input id="nova-loja-nome" placeholder="Nome da loja" style="flex:1;background:var(--s2,#1a1f2e);border:1px solid var(--border,#1f2d3d);border-radius:8px;padding:9px 12px;color:var(--text,#e8eaf0);font-size:13px;outline:none">
+          <button onclick="criarNovaLojaUI()"
+            style="background:var(--cyan,#00d4ff);color:#000;border:none;border-radius:8px;padding:9px 16px;font-weight:700;font-size:12px;cursor:pointer;font-family:'Space Grotesk',sans-serif;white-space:nowrap">
+            + Criar
+          </button>
+        </div>
+      </div>
+    </div>`;
+
+  document.body.appendChild(screen);
+}
+
+async function criarNovaLojaUI() {
+  const nome = (document.getElementById('nova-loja-nome')?.value || '').trim();
+  if (!nome) { toast('Informe o nome da loja', 'err'); return; }
+  const lojaId = 'loja_' + nome.toLowerCase().normalize('NFD').replace(/[^\w]/g, '_').replace(/__+/g,'_').replace(/^_|_$/g,'');
+  const id = await criarLoja(lojaId, nome);
+  if (id) {
+    confirmarLoja(id);
+  }
+}
+
+function confirmarLoja(lojaId) {
+  localStorage.setItem('lojaAtiva', lojaId);
+  const screen = document.getElementById('loja-selector-screen');
+  if (screen) screen.remove();
+  const appDiv = document.getElementById('app');
+  if (appDiv) appDiv.hidden = false;
+  appInit().then(() => {
+    impLoadFromStorage();
+    projLoadManual();
+    switchTabSidebar('dashboard');
+    atualizarTopbarLoja();
+  });
+}
+
+// Atualiza o seletor de loja no topbar
+async function atualizarTopbarLoja() {
+  const sel = document.getElementById('topbar-loja-sel');
+  if (!sel) return;
+  const lojas = await carregarLojas();
+  const ativa = getLojaAtiva();
+  sel.innerHTML = lojas.map(l =>
+    `<option value="${l.id}"${l.id === ativa ? ' selected' : ''}>${l.nome || l.id}</option>`
+  ).join('');
+}
+
+function trocarLoja(lojaId) {
+  if (!lojaId || lojaId === getLojaAtiva()) return;
+  // Limpa dados em memória
+  MAQUINAS = []; PRODUTOS = []; FICHA_TECNICA = []; SETUP_FIRESTORE = {};
+  records = [];
+  setLojaAtiva(lojaId); // reload automático
+}
+
+// Renderiza tela de gestão de lojas em Configurações
+async function renderGestaoLojas() {
+  const el = document.getElementById('scontent-gestao-lojas');
+  if (!el) return;
+  const lojas = await carregarLojas();
+  const ativa = getLojaAtiva();
+  el.innerHTML = `
+    <div style="background:var(--s1);border:1px solid var(--border);border-radius:10px;overflow:hidden">
+      <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="font-size:16px">🏭</span>
+          <span style="font-size:13px;font-weight:700;color:var(--text)">Lojas Cadastradas</span>
+          <span style="font-size:11px;color:var(--text3)">(${lojas.length})</span>
+        </div>
+      </div>
+      <div style="padding:16px;display:flex;flex-direction:column;gap:8px">
+        ${lojas.map(l => `
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;background:${l.id===ativa?'rgba(0,212,255,.08)':'var(--s2)'};border:1px solid ${l.id===ativa?'rgba(0,212,255,.3)':'var(--border)'};border-radius:8px">
+            <div>
+              <div style="font-weight:700;color:var(--text)">${l.nome || l.id}</div>
+              <div style="font-size:11px;color:var(--text3);font-family:monospace">${l.id}</div>
+            </div>
+            <div style="display:flex;gap:6px;align-items:center">
+              ${l.id===ativa
+                ? '<span style="background:rgba(0,212,255,.15);color:var(--cyan);border:1px solid rgba(0,212,255,.3);border-radius:4px;padding:2px 8px;font-size:10px;font-weight:700">ATIVA</span>'
+                : `<button onclick="trocarLoja('${l.id}')" style="background:rgba(0,212,255,.08);border:1px solid rgba(0,212,255,.2);border-radius:6px;padding:4px 10px;font-size:11px;color:var(--cyan);cursor:pointer">Selecionar</button>`
+              }
+            </div>
+          </div>`).join('')}
+        <div style="margin-top:8px;padding-top:12px;border-top:1px solid var(--border)">
+          <div style="font-size:12px;color:var(--text3);margin-bottom:8px;font-weight:600;text-transform:uppercase;letter-spacing:.8px">Criar nova loja</div>
+          <div style="display:flex;gap:8px">
+            <input id="cfg-nova-loja-nome" placeholder="Nome da loja (ex: Loja Filial)" style="flex:1;background:var(--s2);border:1px solid var(--border);border-radius:8px;padding:8px 12px;color:var(--text);font-size:13px;outline:none">
+            <button onclick="criarLojaCfg()" style="background:var(--cyan);color:#000;border:none;border-radius:8px;padding:8px 16px;font-weight:700;font-size:12px;cursor:pointer;font-family:'Space Grotesk',sans-serif">+ Criar</button>
+          </div>
+        </div>
+      </div>
+    </div>`;
+}
+
+async function criarLojaCfg() {
+  const nome = (document.getElementById('cfg-nova-loja-nome')?.value || '').trim();
+  if (!nome) { toast('Informe o nome da loja', 'err'); return; }
+  const lojaId = 'loja_' + nome.toLowerCase().normalize('NFD').replace(/[^\w]/g,'_').replace(/__+/g,'_').replace(/^_|_$/g,'');
+  await criarLoja(lojaId, nome);
+  renderGestaoLojas();
+}
+
+window.mostrarSeletorLoja = mostrarSeletorLoja;
+window.criarNovaLojaUI = criarNovaLojaUI;
+window.confirmarLoja = confirmarLoja;
+window.trocarLoja = trocarLoja;
+window.atualizarTopbarLoja = atualizarTopbarLoja;
+window.renderGestaoLojas = renderGestaoLojas;
+window.criarLojaCfg = criarLojaCfg;
+
 // ===== WEEK FILTER HELPERS =====
 let maqViewMode = 'grid'; // 'grid' or 'list'
 let maqWeekFilter = ''; // '' = all, or monday dateStr
@@ -225,6 +444,11 @@ function filterMaqWeek(val){
 
 // ===== INIT & RELOAD (Firebase Auth + Firestore) =====
 async function appInit() {
+  // Verifica se loja está selecionada
+  if (!getLojaAtiva()) {
+    mostrarSeletorLoja();
+    return;
+  }
   await carregarMaquinasFirestore();
   await carregarProdutosFirestore();
   await carregarSetupFirestore();
@@ -934,8 +1158,8 @@ function clearStatus(){
 async function confirmClearAll(){
   if(!confirm('⚠️ Tem certeza que deseja apagar TODA a programação?\n\nEsta ação não pode ser desfeita!')) return;
   try{
-    const snap = await getDocs(collection(firestoreDB, 'registros'));
-    const dels = snap.docs.map(d => deleteDoc(doc(firestoreDB, 'registros', d.id)));
+    const snap = await getDocs(lojaCol('registros'));
+    const dels = snap.docs.map(d => deleteDoc(lojaDoc('registros', d.id)));
     await Promise.all(dels);
     await reload();
     if(typeof showToast==='function') showToast('Programação apagada com sucesso.','ok');
@@ -2851,14 +3075,14 @@ function loadFichaTecnica(input){
       toast(`Salvando ${fichaTecnicaData.length} fichas no banco...`, 'ok');
       try {
         // Limpa coleção existente e regrava
-        const snapExist = await getDocs(collection(firestoreDB, 'fichaTecnica'));
-        const deletePromises = snapExist.docs.map(d => deleteDoc(doc(firestoreDB, 'fichaTecnica', d.id)));
+        const snapExist = await getDocs(lojaCol('fichaTecnica'));
+        const deletePromises = snapExist.docs.map(d => deleteDoc(lojaDoc('fichaTecnica', d.id)));
         await Promise.all(deletePromises);
         // Grava em lotes de 50
         const lote = 50;
         for(let i=0; i<fichaTecnicaData.length; i+=lote){
           await Promise.all(fichaTecnicaData.slice(i,i+lote).map(p =>
-            addDoc(collection(firestoreDB,'fichaTecnica'), { ...p, criadoEm: new Date().toISOString() })
+            addDoc(lojaCol('fichaTecnica'), { ...p, criadoEm: new Date().toISOString() })
           ));
         }
         toast(`✅ Ficha técnica salva: ${fichaTecnicaData.length} produtos`, 'ok');
@@ -2893,8 +3117,8 @@ async function excluirFichaByCod(cod) {
   fichaTecnicaData = fichaTecnicaData.filter(p => p.cod !== codNum);
   // Remove do Firestore
   try {
-    const snap = await getDocs(query(collection(firestoreDB, 'fichaTecnica'), where('cod', '==', codNum)));
-    await Promise.all(snap.docs.map(d => deleteDoc(doc(firestoreDB, 'fichaTecnica', d.id))));
+    const snap = await getDocs(query(lojaCol('fichaTecnica'), where('cod', '==', codNum)));
+    await Promise.all(snap.docs.map(d => deleteDoc(lojaDoc('fichaTecnica', d.id))));
     toast('Produto removido da ficha técnica.', 'ok');
   } catch(e) {
     toast('Removido da memória, erro no banco: ' + e.message, 'warn');
@@ -3114,7 +3338,7 @@ async function saveFichaByCod(cod){
 
   // Salva no Firestore (coleção fichaTecnica)
   try {
-    const snap = await getDocs(query(collection(firestoreDB, 'fichaTecnica'), where('cod', '==', codNum)));
+    const snap = await getDocs(query(lojaCol('fichaTecnica'), where('cod', '==', codNum)));
     // Pega o primeiro registro com esse cod para montar o documento
     const base = fichaTecnicaData.find(p => p.cod === codNum) || {};
     const payload = {
@@ -3127,9 +3351,9 @@ async function saveFichaByCod(cod){
       atualizadoEm: new Date().toISOString()
     };
     if (!snap.empty) {
-      await setDoc(doc(firestoreDB, 'fichaTecnica', snap.docs[0].id), payload);
+      await setDoc(lojaDoc('fichaTecnica', snap.docs[0].id), payload);
     } else {
-      await addDoc(collection(firestoreDB, 'fichaTecnica'), { ...payload, criadoEm: new Date().toISOString() });
+      await addDoc(lojaCol('fichaTecnica'), { ...payload, criadoEm: new Date().toISOString() });
     }
     toast(`Ficha técnica salva! ${count} registro(s) · ${newInsumos.length} insumos.`, 'ok');
   } catch(e) {
@@ -4151,6 +4375,7 @@ function settingsNav(section){
   if(section==='turnos') setTimeout(()=>{ if(typeof renderTurnosMaquinas==='function') renderTurnosMaquinas(MAQUINAS); }, 50);
   if(section==='cadastro-maquinas') setTimeout(()=>renderCadastroMaquinas(), 50);
   if(section==='setup-maquinas') setTimeout(()=>renderSetupMaquinas(), 50);
+  if(section==='gestao-lojas') setTimeout(()=>renderGestaoLojas(), 50);
   if(section==='ficha-tecnica-cfg') setTimeout(()=>renderFichaTecnicaCfg(), 50);
   if(section==='produtos') setTimeout(()=>renderProdutosCfg(), 50);
 }
@@ -4198,7 +4423,7 @@ function handleImportZip(file){
 // ── Cadastro: Máquinas (Firestore) ──
 async function carregarMaquinasFirestore() {
   try {
-    const snap = await getDocs(query(collection(firestoreDB, 'maquinas'), orderBy('nome')));
+    const snap = await getDocs(query(lojaCol('maquinas'), orderBy('nome')));
     MAQUINAS = [];
     window.MAQUINAS_DATA = {};
     if (!snap.empty) {
@@ -4255,7 +4480,7 @@ function getPcMinMaquinaProduto(nomeMaq, nomeProduto) {
 async function salvarMaquinaFirestore(dados) {
   const nomeUp = (dados.nome || '').trim().toUpperCase();
   if (!nomeUp) return;
-  const snap = await getDocs(collection(firestoreDB, 'maquinas'));
+  const snap = await getDocs(lojaCol('maquinas'));
   const existe = snap.docs.find(d => (d.data().nome||'').toUpperCase() === nomeUp && d.id !== dados._id);
   if (existe) { toast('Máquina já cadastrada!', 'err'); return; }
   const payload = {
@@ -4273,11 +4498,11 @@ async function salvarMaquinaFirestore(dados) {
     atualizadoEm: new Date().toISOString()
   };
   if (dados._id) {
-    await setDoc(doc(firestoreDB, 'maquinas', dados._id), { ...payload, criadoEm: dados.criadoEm || new Date().toISOString() });
+    await setDoc(lojaDoc('maquinas', dados._id), { ...payload, criadoEm: dados.criadoEm || new Date().toISOString() });
     toast('Máquina "' + nomeUp + '" atualizada!', 'ok');
   } else {
     payload.criadoEm = new Date().toISOString();
-    await addDoc(collection(firestoreDB, 'maquinas'), payload);
+    await addDoc(lojaCol('maquinas'), payload);
     toast('Máquina "' + nomeUp + '" cadastrada!', 'ok');
   }
   await carregarMaquinasFirestore();
@@ -4286,10 +4511,10 @@ async function salvarMaquinaFirestore(dados) {
 
 async function excluirMaquinaFirestore(nome) {
   try {
-    const snap = await getDocs(collection(firestoreDB, 'maquinas'));
+    const snap = await getDocs(lojaCol('maquinas'));
     const found = snap.docs.find(d => d.data().nome === nome);
     if (found) {
-      await deleteDoc(doc(firestoreDB, 'maquinas', found.id));
+      await deleteDoc(lojaDoc('maquinas', found.id));
       await carregarMaquinasFirestore();
       renderCadastroMaquinas();
       toast('Máquina removida!', 'ok');
@@ -4569,12 +4794,12 @@ async function importarMaquinasExcel(file) {
     const rows = XLSX.utils.sheet_to_json(ws, { header: 1 });
     const nomes = rows.flat().map(v => String(v||'').trim().toUpperCase()).filter(v => v && !['MÁQUINA','MAQUINA','NOME','NAME'].includes(v));
     if (!nomes.length) { toast('Nenhuma máquina encontrada!', 'err'); return; }
-    const snap = await getDocs(collection(firestoreDB, 'maquinas'));
+    const snap = await getDocs(lojaCol('maquinas'));
     const existentes = snap.docs.map(d => (d.data().nome||'').toUpperCase());
     let adicionadas = 0;
     for (const nome of nomes) {
       if (!existentes.includes(nome)) {
-        await addDoc(collection(firestoreDB, 'maquinas'), { nome, status: 'ativa', pcMin: 0, eficiencia: 100, hTurno: 8, nTurnos: 1, produtosCompativeis: [], criadoEm: new Date().toISOString() });
+        await addDoc(lojaCol('maquinas'), { nome, status: 'ativa', pcMin: 0, eficiencia: 100, hTurno: 8, nTurnos: 1, produtosCompativeis: [], criadoEm: new Date().toISOString() });
         adicionadas++;
       }
     }
@@ -4689,7 +4914,7 @@ function normalizeProdutoFirestore(data) {
 // Carrega produtos do Firestore e popula PRODUTOS
 async function carregarProdutosFirestore() {
   try {
-    const snap = await getDocs(collection(firestoreDB, 'produtos'));
+    const snap = await getDocs(lojaCol('produtos'));
     if (!snap.empty) {
       PRODUTOS = snap.docs
         .map(d => normalizeProdutoFirestore({ ...d.data(), _id: d.id }))
@@ -4703,7 +4928,7 @@ async function carregarProdutosFirestore() {
   }
   // Recarregar fichaTecnicaData a partir do Firestore
   try {
-    const snap2 = await getDocs(collection(firestoreDB, 'fichaTecnica'));
+    const snap2 = await getDocs(lojaCol('fichaTecnica'));
     if (!snap2.empty) {
       const ftArr = snap2.docs.map(d => d.data());
       FICHA_TECNICA = ftArr;
@@ -4732,10 +4957,10 @@ async function salvarProdutoFirestore(dados) {
   };
   try {
     if (dados._id) {
-      await setDoc(doc(firestoreDB, 'produtos', dados._id), { ...payload, criadoEm: dados.criadoEm || new Date().toISOString() });
+      await setDoc(lojaDoc('produtos', dados._id), { ...payload, criadoEm: dados.criadoEm || new Date().toISOString() });
     } else {
       payload.criadoEm = new Date().toISOString();
-      await addDoc(collection(firestoreDB, 'produtos'), payload);
+      await addDoc(lojaCol('produtos'), payload);
     }
     // Vínculo bidirecional: se o produto tem máquina definida, adiciona nos produtosCompativeis da máquina
     if (payload.maquina && payload.nome) {
@@ -4750,7 +4975,7 @@ async function salvarProdutoFirestore(dados) {
 // Garante que um produto está listado nos produtosCompativeis de uma máquina
 async function _syncProdutoNaMaquina(nomeMaq, nomeProduto, velocidade) {
   try {
-    const snap = await getDocs(query(collection(firestoreDB, 'maquinas'), where('nome', '==', nomeMaq)));
+    const snap = await getDocs(query(lojaCol('maquinas'), where('nome', '==', nomeMaq)));
     if (snap.empty) return; // máquina não cadastrada, não força
     const maqDoc = snap.docs[0];
     const maqData = maqDoc.data();
@@ -4758,7 +4983,7 @@ async function _syncProdutoNaMaquina(nomeMaq, nomeProduto, velocidade) {
     const exists = prods.findIndex(p => p.produto === nomeProduto);
     if (exists >= 0) return; // já está vinculado
     prods.push({ produto: nomeProduto, velocidade: velocidade || null });
-    await setDoc(doc(firestoreDB, 'maquinas', maqDoc.id), { ...maqData, produtosCompativeis: prods, atualizadoEm: new Date().toISOString() });
+    await setDoc(lojaDoc('maquinas', maqDoc.id), { ...maqData, produtosCompativeis: prods, atualizadoEm: new Date().toISOString() });
     await carregarMaquinasFirestore();
   } catch(e) {
     console.warn('[SYNC] Não foi possível sincronizar produto na máquina:', e.message);
@@ -5611,11 +5836,16 @@ document.addEventListener('DOMContentLoaded', () => {
     if(loginScreen) loginScreen.style.display = 'none';
     if(appDiv) appDiv.hidden = false;
     buildSidebar(user);
-    appInit().then(() => {
-      impLoadFromStorage();
-      projLoadManual();
-      switchTabSidebar('dashboard');
-    });
+    if (!getLojaAtiva()) {
+      mostrarSeletorLoja();
+    } else {
+      appInit().then(() => {
+        impLoadFromStorage();
+        projLoadManual();
+        switchTabSidebar('dashboard');
+        atualizarTopbarLoja();
+      });
+    }
   }
 
   function onLoggedOut() {
@@ -7017,7 +7247,7 @@ async function recarregarSetup() {
 
 async function renderSetupMaquinas() {
   try {
-    const snap = await getDocs(collection(firestoreDB, 'setup_maquinas'));
+    const snap = await getDocs(lojaCol('setup_maquinas'));
     _setupRegistros = snap.docs.map(d => ({ id: d.id, ...d.data() }));
   } catch(e) {
     _setupRegistros = [];
@@ -7136,11 +7366,11 @@ async function saveSetupModal() {
   try {
     const payload = { maquina, produto_origem: origem, produto_destino: destino, tempo_setup: parseInt(tempo), atualizadoEm: new Date().toISOString() };
     if (editId) {
-      await setDoc(doc(firestoreDB, 'setup_maquinas', editId), payload);
+      await setDoc(lojaDoc('setup_maquinas', editId), payload);
       toast('Setup atualizado!', 'ok');
     } else {
       payload.criadoEm = new Date().toISOString();
-      await addDoc(collection(firestoreDB, 'setup_maquinas'), payload);
+      await addDoc(lojaCol('setup_maquinas'), payload);
       toast('Setup cadastrado!', 'ok');
     }
     await carregarSetupFirestore();
@@ -7154,7 +7384,7 @@ async function saveSetupModal() {
 async function excluirSetup(id) {
   if (!confirm('Remover este tempo de setup?')) return;
   try {
-    await deleteDoc(doc(firestoreDB, 'setup_maquinas', id));
+    await deleteDoc(lojaDoc('setup_maquinas', id));
     await carregarSetupFirestore();
     renderSetupMaquinas();
     toast('Setup removido.', 'ok');

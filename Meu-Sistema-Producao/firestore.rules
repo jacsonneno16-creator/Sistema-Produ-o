@@ -10,25 +10,37 @@ service cloud.firestore {
     function isOper()   { return isAuth() && isAtivo() && nivel() in ['admin','planejamento','operador']; }
     function isAny()    { return isAuth() && isAtivo(); }
 
+    // ── Coleções globais (não por loja) ──
     match /usuarios/{uid} {
       allow read:  if isAuth() && (request.auth.uid == uid || isAdmin());
       allow write: if isAdmin();
     }
+    match /lojas/{lojaId} {
+      allow read: if isAny();
+      allow write: if isAdmin();
+    }
+
+    // ── Todas as coleções operacionais ficam dentro da loja ──
+    match /lojas/{lojaId}/{colecao}/{docId} {
+      allow read: if isAny();
+      allow write: if isPlan();
+    }
+
+    // ── Coleções legadas (raiz) — mantidas para compatibilidade durante migração ──
     match /registros/{id}             { allow read: if isAny(); allow write: if isPlan(); }
     match /maquinas/{id}              { allow read: if isAny(); allow write: if isPlan(); }
+    match /produtos/{id}              { allow read: if isAny(); allow write: if isPlan(); }
     match /insumos/{id}               { allow read: if isAny(); allow write: if isPlan(); }
     match /fichas/{id}                { allow read: if isAny(); allow write: if isPlan(); }
+    match /fichaTecnica/{id}          { allow read: if isAny(); allow write: if isPlan(); }
+    match /fichaTecnicaData/{id}      { allow read: if isAny(); allow write: if isPlan(); }
+    match /setup_maquinas/{id}        { allow read: if isAny(); allow write: if isPlan(); }
     match /apontamentos/{id}          { allow read: if isAny(); allow write: if isOper(); }
     match /apontamentos_producao/{id} { allow read: if isAny(); allow write: if isOper(); }
     match /programacao_producao/{id}  { allow read: if isAny(); allow write: if isPlan(); }
     match /Producao/{id}              { allow read: if isAny(); allow write: if isPlan(); }
     match /auditoria/{id}             { allow read: if isAdmin(); allow write: if isAuth(); }
     match /configuracoes/{id}         { allow read: if isAny(); allow write: if isPlan(); }
-
-    // ── Novas coleções ──
-    match /produtos/{id}              { allow read: if isAny(); allow write: if isPlan(); }
-    match /setup_maquinas/{id}        { allow read: if isAny(); allow write: if isPlan(); }
-    match /fichaTecnica/{id}          { allow read: if isAny(); allow write: if isPlan(); }
-    match /funcionarios/{id}          { allow read: if isAny(); allow write: if isPlan(); }
+    match /funcionarios_producao/{id} { allow read: if isAny(); allow write: if isPlan(); }
   }
 }
