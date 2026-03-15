@@ -3077,9 +3077,6 @@ function editFichaByCod(cod){
       </div>
       <div class="modal-ft">
         <button class="btn btn-ghost" onclick="document.getElementById('ft-edit-modal').remove()">Cancelar</button>
-        <button class="btn btn-ghost" onclick="excluirFichaByCod(this.dataset.cod)" data-cod="${p.cod}" style="color:#ff6b6b;border-color:rgba(255,107,107,.3)">
-          🗑 Excluir produto
-        </button>
         <button class="btn btn-primary" onclick="saveFichaByCod(this.dataset.cod)" data-cod="${p.cod}">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
           Salvar
@@ -4647,6 +4644,10 @@ function renderFichaTecnicaCfg() {
                 style="background:rgba(0,212,255,.1);border:1px solid rgba(0,212,255,.25);border-radius:6px;padding:5px 12px;font-size:11px;color:var(--cyan);cursor:pointer;font-family:'Space Grotesk',sans-serif;display:inline-flex;align-items:center;gap:6px">
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
           Editar insumos e quantidades
+        </button>
+        <button onclick="event.stopPropagation();excluirFichaByCod(this.dataset.cod)" data-cod="${p.cod}"
+                style="background:rgba(255,71,87,.08);border:1px solid rgba(255,71,87,.3);border-radius:6px;padding:5px 12px;font-size:11px;color:#ff6b6b;cursor:pointer;font-family:'Space Grotesk',sans-serif;display:inline-flex;align-items:center;gap:6px">
+          🗑 Excluir
         </button>
       </div>
     </div>`;
