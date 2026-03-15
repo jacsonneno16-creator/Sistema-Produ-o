@@ -7651,6 +7651,8 @@ window.openAddMaquina = openAddMaquina;
 window.closeMaqModal = closeMaqModal;
 window.saveMaquinaModal = saveMaquinaModal;
 window.importarMaquinasExcel = importarMaquinasExcel;
+window.downloadSetupTemplate = downloadSetupTemplate;
+window.importarSetupExcel = importarSetupExcel;
 window.renderProdutosCfg = renderProdutosCfg;
 // window.prodCfgToggle = prodCfgToggle; // função removida
 window.openAddProduto = openAddProduto;
@@ -7660,6 +7662,188 @@ window.deleteExtraProduto = deleteExtraProduto;
 window.importProdutosExcel = importProdutosExcel;
 window.downloadProdTemplate = downloadProdTemplate;
 window.downloadMaqTemplate = downloadMaqTemplate;
+
+// ===== SETUP TEMPLATES E IMPORTAÇÃO =====
+function downloadSetupTemplate(e) {
+  e.preventDefault();
+  const ws = XLSX.utils.aoa_to_sheet([
+    ['maquina','produto_origem','produto_destino','tempo_minutos'],
+    ['SELGRON 01','POLVILHO 500G','COCO 100G',15],
+    ['SELGRON 01','COCO 100G','POLVILHO 500G',10],
+    ['ALFATECK 14','FARINHA 1KG','BICARBONATO 250G',25],
+    ['ALFATECK 14','BICARBONATO 250G','FARINHA 1KG',20]
+  ]);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Setup');
+  XLSX.writeFile(wb, 'template_setup_simples.xlsx');
+}
+
+async function importarSetupExcel(file) {
+  if (!file) return;
+  
+  try {
+    const data = await file.arrayBuffer();
+    const wb = XLSX.read(data);
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    
+    // Detectar se é arquivo simples (colunas) ou matriz complexa
+    const rows = XLSX.utils.sheet_to_json(ws, { header: 1 });
+    
+    if (rows.length < 2) {
+      toast('Arquivo deve ter pelo menos cabeçalho e uma linha de dados!', 'err');
+      return;
+    }
+    
+    // Verificar se é formato simples (4 colunas: maquina, origem, destino, tempo)
+    const header = rows[0];
+    const isSimpleFormat = header.length <= 10 && 
+      (header.some(h => /maquina/i.test(String(h))) || 
+       header.some(h => /origem/i.test(String(h))));
+    
+    if (isSimpleFormat) {
+      await importarSetupSimples(rows);
+    } else {
+      await importarSetupMatriz(rows);
+    }
+    
+    await renderSetupMaquinas();
+    
+  } catch(e) {
+    toast('Erro ao importar setup: ' + e.message, 'err');
+    console.error('Erro na importação de setup:', e);
+  }
+}
+
+// Importação formato simples (4 colunas)
+async function importarSetupSimples(rows) {
+  const header = rows[0].map(h => String(h||'').trim().toLowerCase());
+  const dataRows = rows.slice(1).filter(r => r && r.length > 0);
+  
+  let maqCol = -1, origemCol = -1, destinoCol = -1, tempoCol = -1;
+  
+  header.forEach((h, i) => {
+    if (/maquina/i.test(h)) maqCol = i;
+    else if (/origem/i.test(h)) origemCol = i;
+    else if (/destino/i.test(h)) destinoCol = i;
+    else if (/tempo|minuto/i.test(h)) tempoCol = i;
+  });
+  
+  if (maqCol === -1 || origemCol === -1 || destinoCol === -1 || tempoCol === -1) {
+    toast('Colunas obrigatórias: maquina, produto_origem, produto_destino, tempo_minutos', 'err');
+    return;
+  }
+  
+  let adicionados = 0;
+  
+  for (const row of dataRows) {
+    const maquina = String(row[maqCol]||'').trim();
+    const origem = String(row[origemCol]||'').trim();
+    const destino = String(row[destinoCol]||'').trim();
+    const tempo = parseFloat(row[tempoCol]) || 0;
+    
+    if (!maquina || !origem || !destino) continue;
+    
+    const payload = {
+      maquina: maquina.toUpperCase(),
+      produto_origem: origem,
+      produto_destino: destino,
+      tempo_setup: tempo,
+      criadoEm: new Date().toISOString()
+    };
+    
+    await addDoc(lojaCol('setup_maquinas'), payload);
+    adicionados++;
+  }
+  
+  toast(`✅ ${adicionados} registros de setup importados!`, 'ok');
+}
+
+// Importação formato matriz (igual ao seu arquivo)
+async function importarSetupMatriz(rows) {
+  // Detectar produtos nos nomes das colunas e linhas
+  const produtos = new Set();
+  let startCol = 2; // Pular primeiras colunas que podem ser índices
+  
+  // Coletar produtos únicos das colunas (header)
+  rows[0].slice(startCol).forEach(colName => {
+    const prod = String(colName||'').trim();
+    if (prod && prod !== '0' && !prod.match(/^0\.\d+$/)) {
+      produtos.add(prod);
+    }
+  });
+  
+  // Coletar produtos únicos das linhas
+  rows.slice(1).forEach(row => {
+    const prod = String(row[0]||'').trim();
+    if (prod && prod !== '0' && !prod.match(/^0\.\d+$/)) {
+      produtos.add(prod);
+    }
+  });
+  
+  const produtosList = Array.from(produtos);
+  console.log(`Detectados ${produtosList.length} produtos na matriz`);
+  
+  // Como não sabemos as máquinas da matriz, vamos usar uma máquina padrão
+  const maquinaPadrao = 'MAQUINA_IMPORTADA';
+  
+  let adicionados = 0;
+  
+  // Processar matriz
+  for (let i = 1; i < Math.min(rows.length, 100); i++) { // Limitar para evitar timeout
+    const row = rows[i];
+    const produtoOrigem = String(row[0]||'').trim();
+    
+    if (!produtoOrigem || produtoOrigem === '0' || produtoOrigem.match(/^0\.\d+$/)) continue;
+    
+    for (let j = startCol; j < Math.min(row.length, startCol + 50); j++) { // Limitar colunas
+      const produtoDestino = String(rows[0][j]||'').trim();
+      const valorSetup = row[j];
+      
+      if (!produtoDestino || produtoDestino === '0' || produtoDestino.match(/^0\.\d+$/)) continue;
+      if (produtoOrigem === produtoDestino) continue; // Skip diagonal
+      
+      // Converter tempo para minutos
+      let tempoMinutos = 0;
+      if (valorSetup && valorSetup !== 0) {
+        if (typeof valorSetup === 'string' && valorSetup.includes(':')) {
+          // Formato HH:MM:SS ou MM:SS
+          const parts = valorSetup.split(':');
+          if (parts.length >= 2) {
+            const hours = parts.length === 3 ? parseInt(parts[0]) || 0 : 0;
+            const mins = parseInt(parts[parts.length-2]) || 0;
+            const secs = parseInt(parts[parts.length-1]) || 0;
+            tempoMinutos = hours * 60 + mins + secs / 60;
+          }
+        } else {
+          tempoMinutos = parseFloat(valorSetup) || 0;
+        }
+      }
+      
+      if (tempoMinutos > 0) {
+        const payload = {
+          maquina: maquinaPadrao,
+          produto_origem: produtoOrigem,
+          produto_destino: produtoDestino,
+          tempo_setup: Math.round(tempoMinutos),
+          criadoEm: new Date().toISOString()
+        };
+        
+        await addDoc(lojaCol('setup_maquinas'), payload);
+        adicionados++;
+      }
+      
+      // Limitar para evitar timeout
+      if (adicionados > 200) break;
+    }
+    
+    if (adicionados > 200) break;
+  }
+  
+  toast(`✅ ${adicionados} registros de setup importados da matriz!<br>Máquina: ${maquinaPadrao}`, 'ok');
+  if (adicionados === 200) {
+    toast('Importação limitada a 200 registros. Execute novamente se necessário.', 'warn');
+  }
+}
 window.pdRestoreAll = pdRestoreAll;
 window.prodSaveAll = prodSaveAll;
 window.prodToday = prodToday;

@@ -1038,7 +1038,14 @@
               <span style="font-size:13px;font-weight:700;color:var(--text)">Tempos de Setup por Máquina</span>
               <span style="font-size:11px;color:var(--text3)">(<span id="setup-count">0</span> registros)</span>
             </div>
-            <button onclick="openAddSetup()" style="background:var(--cyan);color:#000;border:none;border-radius:6px;padding:5px 12px;font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:11px;cursor:pointer">+ Adicionar Setup</button>
+            <div style="display:flex;align-items:center;gap:8px">
+              <a href="#" onclick="downloadSetupTemplate(event)" style="background:var(--s2);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:11px;color:var(--text);text-decoration:none">📄 Template</a>
+              <label style="background:var(--s2);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:11px;color:var(--text);cursor:pointer">
+                📥 Excel
+                <input type="file" accept=".xlsx,.xls" style="display:none" onchange="importarSetupExcel(this.files[0]).then(()=>{this.value=''})">
+              </label>
+              <button onclick="openAddSetup()" style="background:var(--cyan);color:#000;border:none;border-radius:6px;padding:5px 12px;font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:11px;cursor:pointer">+ Adicionar Setup</button>
+            </div>
           </div>
           <!-- Filtros -->
           <div style="padding:8px 12px;border-bottom:1px solid var(--border);display:flex;gap:8px;align-items:center;flex-wrap:wrap">
@@ -1072,6 +1079,13 @@
         <!-- Info box -->
         <div style="background:rgba(0,212,255,.05);border:1px solid rgba(0,212,255,.15);border-radius:8px;padding:12px 16px;font-size:12px;color:var(--text2)">
           ⚙️ <strong>Tempos de setup</strong> são os minutos necessários para trocar de um produto para outro na mesma máquina. O sistema usa esses dados ao calcular a programação semanal e o Gantt. Se não houver registro, usa o tempo padrão configurado na máquina ou zero.
+        </div>
+        
+        <!-- Import info box -->
+        <div style="background:rgba(255,179,0,.08);border:1px solid rgba(255,179,0,.2);border-radius:8px;padding:12px 16px;font-size:11px;color:var(--warn)">
+          📄 <strong>Template:</strong> Baixa formato simples (4 colunas: máquina, origem, destino, tempo)<br>
+          📥 <strong>Excel:</strong> Aceita tanto formato simples quanto matriz complexa (como seu arquivo atual)<br>
+          💡 <strong>Dica:</strong> Use o template para novos dados, ou importe sua matriz atual que será convertida automaticamente.
         </div>
       </div>
 
