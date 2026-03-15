@@ -4102,11 +4102,10 @@ function _renderRealizadoControlado(dateVal, body) {
   //   2. Dia programado < dateVal E produto ainda não concluído (overflow para dias seguintes)
   // Nunca aparece antes do dia programado.
   const dayRecs = records.filter(r => {
-    if (r.status === 'Concluído') return false;
+    if (r.status === 'Cancelado') return false;
     const produzido = calcularTotalProduzido(r.id);
     const meta      = r.qntCaixas || 0;
-    // Se já atingiu a meta, não mostra mais
-    if (produzido >= meta && meta > 0) return false;
+    const isDoneFilt = produzido >= meta && meta > 0;
 
     const eff = pdGetEffectiveDay(r.id) || r.dtDesejada || r.dtSolicitacao;
     if (!eff) return false;
@@ -4114,13 +4113,31 @@ function _renderRealizadoControlado(dateVal, body) {
     // Não aparece antes do dia programado
     if (eff > dateVal) return false;
 
-    // Aparece no dia programado
+    // Aparece no dia programado (incluindo concluídos)
     if (eff === dateVal) return true;
 
-    // Overflow: dia programado já passou e produto ainda não concluído
-    // Só mostra em dias úteis (hoursOnDay > 0) após o dia programado
+    // Overflow: dia programado já passou
     const dateValDate = new Date(dateVal + 'T12:00:00');
-    return eff < dateVal && hoursOnDay(dateValDate) > 0;
+    if (eff < dateVal && hoursOnDay(dateValDate) > 0) {
+      // Concluídos só aparecem no overflow se foram finalizados hoje ou se ainda não foram finalizados
+      // (ou seja: sempre aparecem, o usuário decide quando finalizar)
+      return true;
+    }
+    return false;
+  })
+  // Ordenar: não-concluídos primeiro, concluídos/finalizados por último
+  .sort((a, b) => {
+    const aDone = calcularTotalProduzido(a.id) >= (a.qntCaixas||0);
+    const bDone = calcularTotalProduzido(b.id) >= (b.qntCaixas||0);
+    const aFin  = pdIsFin(a.id);
+    const bFin  = pdIsFin(b.id);
+    // Finalizados vão ao final
+    if (aFin && !bFin) return 1;
+    if (!aFin && bFin) return -1;
+    // Concluídos (meta atingida mas não finalizados) vão antes dos finalizados
+    if (aDone && !bDone) return 1;
+    if (!aDone && bDone) return -1;
+    return 0;
   });
 
   const dateLabel = fmtDate(new Date(dateVal + 'T12:00:00'));
@@ -4287,9 +4304,13 @@ function _renderRealizadoControlado(dateVal, body) {
       const prevTotal  = aponGetPrevTotal(rec.id, dateVal);
 
       // Cor da linha
-      let rowBg = idx % 2 === 0 ? 'var(--bg)' : 'var(--s1)';
+      const isFin  = pdIsFin(rec.id);
+      let rowBg = isDone
+        ? 'background:rgba(41,217,132,.06)'
+        : idx % 2 === 0 ? 'var(--bg)' : 'var(--s1)';
       let leftBorder = '';
-      if (isDone)        leftBorder = 'border-left:2px solid var(--green)';
+      if (isFin)         leftBorder = 'border-left:3px solid var(--green)';
+      else if (isDone)   leftBorder = 'border-left:3px solid var(--green)';
       else if (isAndamento) leftBorder = 'border-left:2px solid var(--cyan)';
 
       // Status badge compacto
@@ -4342,10 +4363,18 @@ function _renderRealizadoControlado(dateVal, body) {
                   </button>
                 </td>
                 <td style="padding:6px 4px;text-align:center">
-                  <button onclick="realizadoSalvarLinha('${rec.id}','${dateVal}')"
-                          title="Salvar" style="background:var(--green);color:#000;border:none;border-radius:4px;padding:3px 7px;font-size:10px;font-weight:700;cursor:pointer;font-family:'Space Grotesk',sans-serif">
-                    ✓
-                  </button>
+                  ${isDone
+                    ? (pdIsFin(rec.id)
+                        ? `<span style="font-size:9px;font-weight:700;color:var(--green);background:rgba(41,217,132,.15);border:1px solid rgba(41,217,132,.3);border-radius:4px;padding:3px 8px;white-space:nowrap">✓ Finalizado</span>`
+                        : `<button onclick="realizadoFinalizarProducao('${rec.id}','${dateVal}')"
+                                   title="Finalizar produção" style="background:var(--green);color:#000;border:none;border-radius:4px;padding:3px 8px;font-size:10px;font-weight:700;cursor:pointer;font-family:'Space Grotesk',sans-serif;white-space:nowrap">
+                             🏁 Finalizar
+                           </button>`)
+                    : `<button onclick="realizadoSalvarLinha('${rec.id}','${dateVal}')"
+                               title="Salvar" style="background:var(--s2);border:1px solid var(--border);color:var(--text2);border-radius:4px;padding:3px 7px;font-size:10px;font-weight:700;cursor:pointer;font-family:'Space Grotesk',sans-serif">
+                         ✓
+                       </button>`
+                  }
                 </td>
               </tr>`;
     });
@@ -5326,18 +5355,15 @@ async function renderWeeklySummary(body){
   // Registros da semana — inclui produtos em overflow (não concluídos de semanas anteriores)
   pdBuildGanttMap(prodBaseMonday);
   const weekRecords = records.filter(r => {
-    if (r.status === 'Concluído') return false;
-    const produzido = calcularTotalProduzido(r.id);
-    const meta      = r.qntCaixas || 0;
-    if (produzido >= meta && meta > 0) return false; // já concluído, não mostra
+    if (r.status === 'Cancelado') return false;
 
     const eff = pdGetEffectiveDay(r.id) || r.dtDesejada || r.dtSolicitacao;
     if (!eff) return false;
 
-    // Programado para esta semana
+    // Programado para esta semana (incluindo concluídos — aparecem com status verde)
     if (eff >= weekStart && eff <= weekEnd) return true;
 
-    // Overflow de semana anterior: não concluído e dia programado já passou
+    // Overflow de semana anterior: aparece sempre (concluído ou não)
     if (eff < weekStart) return true;
 
     return false;
@@ -9995,6 +10021,35 @@ window.pdAbrirObs        = pdAbrirObs;
 window.pdFecharObs       = pdFecharObs;
 window.pdSalvarObs       = pdSalvarObs;
 window.pdLimparObs       = pdLimparObs;
+
+// ── Finalizar produção de um produto na aba Realizado ────────────────
+function realizadoFinalizarProducao(recId, dateVal) {
+  const record = records.find(r => String(r.id) === String(recId));
+  const nome = record ? record.produto : recId;
+
+  if (!confirm(`Confirma a finalização de "${nome}"?\n\nO produto ficará marcado como finalizado e irá para o final da lista.`)) return;
+
+  // Salva apontamento atual antes de finalizar
+  realizadoSalvarLinha(recId, dateVal);
+
+  // Marca como finalizado no Firestore
+  pdSetFin(recId, true);
+
+  // Registra auditoria
+  const user = getCurrentUserSafe();
+  registrarAuditoria('PRODUCAO_FINALIZADA', {
+    recordId : recId,
+    produto  : nome,
+    data     : dateVal,
+    usuario  : user ? (user.email || '') : ''
+  });
+
+  toast(`✅ "${nome}" finalizado!`, 'ok');
+
+  // Recarrega a aba para reordenar
+  setTimeout(() => renderApontamento(), 300);
+}
+window.realizadoFinalizarProducao = realizadoFinalizarProducao;
 
 // ── Realizado: atualiza totais em tempo real ao digitar ──────────────
 function realizadoInputChange(inp) {
