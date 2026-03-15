@@ -90,9 +90,13 @@ function isOperadorLevel() {
       return true; // Default: tratar como operador se não conseguir identificar
     }
     
-    // Verificar nível do usuário
-    const nivel = user.userData?.nivel || user.nivel || 'operador';
-    console.log('Nível do usuário identificado:', nivel);
+    // Se o campo 'tipo' for 'admin', não é operador
+    const tipo = user.userData?.tipo || user.tipo || '';
+    if (tipo === 'admin') return false;
+
+    // Verificar nível/perfil legado
+    const nivel = user.userData?.nivel || user.nivel || user.userData?.perfil || user.perfil || 'operador';
+    console.log('Nível do usuário identificado:', nivel, '| tipo:', tipo);
     return ['operador'].includes(nivel);
   } catch(e) {
     console.error('Erro em isOperadorLevel:', e);
@@ -108,10 +112,14 @@ function isPCPLevel() {
       return false; // Sem usuário = sem permissões de PCP
     }
     
-    // Verificar nível do usuário  
-    const nivel = user.userData?.nivel || user.nivel || 'operador';
-    console.log('Verificando PCP para nível:', nivel);
-    return ['admin', 'planejamento'].includes(nivel);
+    // Campo 'tipo' = 'admin' (gerente/admin no auth.js) → acesso total de PCP
+    const tipo = user.userData?.tipo || user.tipo || '';
+    if (tipo === 'admin') return true;
+
+    // Verificar nível/perfil legado
+    const nivel = user.userData?.nivel || user.nivel || user.userData?.perfil || user.perfil || 'operador';
+    console.log('Verificando PCP para nível:', nivel, '| tipo:', tipo);
+    return ['admin', 'planejamento', 'lider', 'analista'].includes(nivel);
   } catch(e) {
     console.error('Erro em isPCPLevel:', e);
     return false; // Default seguro
