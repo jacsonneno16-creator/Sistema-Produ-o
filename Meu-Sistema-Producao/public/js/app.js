@@ -3848,6 +3848,7 @@ function prodShouldShowOnDay(rec, segments, dateVal){
 function prodToday(){
   prodBaseMonday = getWeekMonday(new Date());
   prodSelectedDate = dateStr(new Date());
+  _pdCacheWeek = null; // invalida cache ao trocar de semana
   renderProduzido();
 }
 function prodWeek(dir){
@@ -3857,6 +3858,7 @@ function prodWeek(dir){
   const days = getWeekDays(prodBaseMonday);
   const workDays = days.filter(function(d){ return hoursOnDay(d)>0; });
   prodSelectedDate = dateStr(workDays[0] || days[0]);
+  _pdCacheWeek = null; // invalida cache ao trocar de semana
   renderProduzido();
 }
 function prodGoDate(){
@@ -3864,6 +3866,7 @@ function prodGoDate(){
   if(!v) return;
   prodBaseMonday = getWeekMonday(new Date(v+'T12:00:00'));
   prodSelectedDate = v;
+  _pdCacheWeek = null; // invalida cache ao trocar de semana
   renderProduzido();
 }
 function prodSelectDay(ds){
@@ -3900,7 +3903,7 @@ function renderProduzido(){
   const weekDates = days.map(function(d){ return dateStr(d); });
   if(prodSelectedDate === 'producao-dia'){
     renderProdDayTabs();
-    renderProducaoDia();
+    pdLoadWeek(prodBaseMonday).then(function(){ renderProducaoDia(); });
     return;
   }
   if(prodSelectedDate !== 'semana' && !weekDates.includes(prodSelectedDate)){
@@ -4036,7 +4039,7 @@ function renderApontamento(){
 
   // Se a aba "Produção Dia" estiver selecionada
   if(dateVal === 'producao-dia'){
-    renderProducaoDiaControlado();
+    pdLoadWeek(prodBaseMonday).then(function(){ renderProducaoDiaControlado(); });
     return;
   }
   // Se a aba "Total da Semana" estiver selecionada
@@ -4624,14 +4627,50 @@ function aponGetFinalizationDay(recId, needed){
 //   pdAssign_<recId>   → 'YYYY-MM-DD'  day assignment for this week
 //   pdFin_<recId>      → '1'           product marked as finished
 
-function pdAssignKey(recId){ return 'pd_assign_'+recId; }
-function pdFinKey(recId){ return 'pd_fin_'+recId; }
+// Cache em memória: _pdCache[recId] = { dia: 'YYYY-MM-DD'|null, fin: bool }
+let _pdCache = {};
+let _pdCacheWeek = null;
 
-function pdGetAssign(recId){ return localStorage.getItem(pdAssignKey(recId))||null; }
-function pdSetAssign(recId, ds){ if(ds) localStorage.setItem(pdAssignKey(recId),ds); else localStorage.removeItem(pdAssignKey(recId)); }
+// Carrega todos os assignments do Firestore para o cache local (por semana)
+async function pdLoadWeek(mondayDate) {
+  const wKey = dateStr(mondayDate);
+  if (_pdCacheWeek === wKey) return;
+  _pdCache = {};
+  _pdCacheWeek = wKey;
+  try {
+    const snap = await getDocs(collection(firestoreDB, 'programacao_dias'));
+    snap.forEach(function(d) {
+      const data = d.data();
+      _pdCache[String(d.id)] = { dia: data.dia || null, fin: data.finalizado === true };
+    });
+  } catch(e) {
+    console.error('Erro ao carregar programacao_dias:', e);
+  }
+}
 
-function pdIsFin(recId){ return localStorage.getItem(pdFinKey(recId))==='1'; }
-function pdSetFin(recId, v){ if(v) localStorage.setItem(pdFinKey(recId),'1'); else localStorage.removeItem(pdFinKey(recId)); }
+function pdGetAssign(recId){ return (_pdCache[String(recId)] || {}).dia || null; }
+
+function pdSetAssign(recId, ds) {
+  const id = String(recId);
+  if (!_pdCache[id]) _pdCache[id] = { dia: null, fin: false };
+  _pdCache[id].dia = ds || null;
+  setDoc(doc(firestoreDB, 'programacao_dias', id),
+    { dia: ds || null, finalizado: _pdCache[id].fin, ts: serverTimestamp() },
+    { merge: true }
+  ).catch(function(e){ console.error('Erro ao salvar dia no Firestore:', e); });
+}
+
+function pdIsFin(recId){ return ((_pdCache[String(recId)] || {}).fin === true); }
+
+function pdSetFin(recId, v) {
+  const id = String(recId);
+  if (!_pdCache[id]) _pdCache[id] = { dia: null, fin: false };
+  _pdCache[id].fin = !!v;
+  setDoc(doc(firestoreDB, 'programacao_dias', id),
+    { dia: _pdCache[id].dia || null, finalizado: !!v, ts: serverTimestamp() },
+    { merge: true }
+  ).catch(function(e){ console.error('Erro ao salvar finalizado no Firestore:', e); });
+}
 
 // ===== VERSÃO CONTROLADA DA ABA PRODUÇÃO DIA =====
 
