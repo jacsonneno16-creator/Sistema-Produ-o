@@ -17,7 +17,7 @@ service cloud.firestore {
     }
     match /lojas/{lojaId} {
       allow read: if isAny();
-      allow write: if isAdmin();
+      allow write: if isAny(); // qualquer usuário pode criar/editar lojas
     }
 
     // ── Todas as coleções operacionais ficam dentro da loja ──

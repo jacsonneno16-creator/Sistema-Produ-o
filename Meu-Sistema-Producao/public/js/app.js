@@ -282,6 +282,7 @@ async function mostrarSeletorLoja() {
             + Criar
           </button>
         </div>
+        <div id="nova-loja-erro" style="color:#ff6b6b;font-size:12px;margin-top:6px;min-height:16px"></div>
       </div>
     </div>`;
 
@@ -290,8 +291,16 @@ async function mostrarSeletorLoja() {
 
 async function criarNovaLojaUI() {
   const nome = (document.getElementById('nova-loja-nome')?.value || '').trim();
-  if (!nome) { toast('Informe o nome da loja', 'err'); return; }
-  const lojaId = 'loja_' + nome.toLowerCase().normalize('NFD').replace(/[^\w]/g, '_').replace(/__+/g,'_').replace(/^_|_$/g,'');
+  if (!nome) {
+    toast('Informe o nome da loja', 'err');
+    return;
+  }
+  const lojaId = 'loja_' + nome.toLowerCase()
+    .replace(/[áàãâä]/g,'a').replace(/[éèêë]/g,'e')
+    .replace(/[íìîï]/g,'i').replace(/[óòõôö]/g,'o')
+    .replace(/[úùûü]/g,'u').replace(/[ç]/g,'c')
+    .replace(/[^a-z0-9]/g,'_').replace(/_+/g,'_').replace(/^_|_$/g,'');
+  
   const id = await criarLoja(lojaId, nome);
   if (id) {
     confirmarLoja(id);
