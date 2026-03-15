@@ -23,7 +23,13 @@ service cloud.firestore {
     // ── Todas as coleções operacionais ficam dentro da loja ──
     match /lojas/{lojaId}/{colecao}/{docId} {
       allow read: if isAny();
-      allow write: if isPlan();
+      allow write: if isOper(); // operadores podem salvar apontamentos
+    }
+
+    // Apontamentos dentro da loja — escrita permitida a operadores (redundante mas explícito)
+    match /lojas/{lojaId}/apontamentos_producao/{docId} {
+      allow read: if isAny();
+      allow write: if isOper();
     }
 
     // ── Coleções legadas (raiz) — mantidas para compatibilidade durante migração ──

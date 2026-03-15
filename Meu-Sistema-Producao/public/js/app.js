@@ -9,7 +9,7 @@ import {
 } from './auth.js';
 import {
   collection, getDocs, addDoc, setDoc, doc, deleteDoc, query, orderBy, where, updateDoc,
-  serverTimestamp
+  serverTimestamp, limit, writeBatch
 } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
 // ===================================================================
@@ -291,8 +291,7 @@ function verificarQuantidadePermitida(record) {
 
 // Calcula total produzido de um record (substituir localStorage)
 function calcularTotalProduzido(recordId) {
-  // TODO: Implementar busca no Firestore
-  // Por enquanto, manter compatibilidade com localStorage
+  // Lê do cache _aponFS (Firestore semana atual) + localStorage (semanas anteriores / fallback)
   let total = 0;
   const suffix = '_' + recordId;
   aponGetAllKeys().forEach(function(k){
@@ -815,6 +814,8 @@ async function appInit() {
   // Pre-carrega mapa do Gantt + overrides Firestore assim que dados estão prontos
   const _bootMonday = getWeekMonday(new Date());
   pdLoadWeek(_bootMonday).catch(e => console.warn('pdLoadWeek boot:', e));
+  // Sincroniza histórico de apontamentos do Firestore → localStorage (uma vez por sessão)
+  _sincronizarApontamentosHistoricos().catch(e => console.warn('sync histórico apon:', e));
   // Pre-carrega funcionários para seletor de operador
   listarFuncionariosProducao().then(f => { _funcProd = f; }).catch(() => {});
   // Start clock
@@ -3796,15 +3797,23 @@ let prodSelectedDate = null; // 'YYYY-MM-DD' or 'semana' for weekly summary
 
 function aponKey(date, recId){ return 'apon_'+date+'_'+recId; }
 function aponStorageGet(key){
+  // Tentar Firestore cache primeiro: key = "apon_YYYY-MM-DD_recId"
+  if (key && key.startsWith('apon_')) {
+    const withoutPrefix = key.slice('apon_'.length); // "YYYY-MM-DD_recId"
+    if (_aponFS[withoutPrefix]) return Object.assign({}, _aponFS[withoutPrefix]);
+  }
   try{ const v=localStorage.getItem(key); return v?JSON.parse(v):null; }catch(e){ return null; }
 }
 function aponStorageSet(key, obj){
   try{ localStorage.setItem(key, JSON.stringify(obj)); return true; }catch(e){ return false; }
 }
 function aponGetAllKeys(){
-  const keys=[];
-  try{ for(let i=0;i<localStorage.length;i++){ const k=localStorage.key(i); if(k&&k.startsWith('apon_')) keys.push(k); } }catch(e){}
-  return keys;
+  const keys=new Set();
+  // Chaves do localStorage
+  try{ for(let i=0;i<localStorage.length;i++){ const k=localStorage.key(i); if(k&&k.startsWith('apon_')) keys.add(k); } }catch(e){}
+  // Chaves do cache Firestore
+  Object.keys(_aponFS).forEach(function(k){ keys.add('apon_'+k); });
+  return Array.from(keys);
 }
 
 // Total produzido em dias ANTERIORES a exceptDate (não inclui o próprio dia)
@@ -3861,7 +3870,7 @@ function prodShouldShowOnDay(rec, segments, dateVal){
 function prodToday(){
   prodBaseMonday = getWeekMonday(new Date());
   prodSelectedDate = dateStr(new Date());
-  _pdCacheWeek = null; // invalida cache ao trocar de semana
+  _pdCacheWeek = null; _aponFS = {}; // invalida caches ao trocar de semana
   renderProduzido();
 }
 function prodWeek(dir){
@@ -3871,7 +3880,7 @@ function prodWeek(dir){
   const days = getWeekDays(prodBaseMonday);
   const workDays = days.filter(function(d){ return hoursOnDay(d)>0; });
   prodSelectedDate = dateStr(workDays[0] || days[0]);
-  _pdCacheWeek = null; // invalida cache ao trocar de semana
+  _pdCacheWeek = null; _aponFS = {}; // invalida caches ao trocar de semana
   renderProduzido();
 }
 function prodGoDate(){
@@ -3879,7 +3888,7 @@ function prodGoDate(){
   if(!v) return;
   prodBaseMonday = getWeekMonday(new Date(v+'T12:00:00'));
   prodSelectedDate = v;
-  _pdCacheWeek = null; // invalida cache ao trocar de semana
+  _pdCacheWeek = null; _aponFS = {}; // invalida caches ao trocar de semana
   renderProduzido();
 }
 function prodSelectDay(ds){
@@ -4464,7 +4473,7 @@ function realizadoResetarDia(data) {
     return;
   }
   
-  // Limpar localStorage do dia
+  // 1. Limpar localStorage do dia
   const keysToRemove = [];
   for(let i=0; i<localStorage.length; i++){
     const key = localStorage.key(i);
@@ -4472,15 +4481,29 @@ function realizadoResetarDia(data) {
       keysToRemove.push(key);
     }
   }
-  
   keysToRemove.forEach(key => localStorage.removeItem(key));
-  
-  registrarAuditoria('DIA_RESETADO', {
-    data: data,
-    itensLimpos: keysToRemove.length
+
+  // 2. Limpar cache _aponFS do dia
+  Object.keys(_aponFS).forEach(function(k) {
+    if(k.startsWith(data + '_')) delete _aponFS[k];
   });
-  
-  toast(`✅ ${keysToRemove.length} apontamentos removidos do dia ${fmtDate(new Date(data+'T12:00:00'))}`, 'ok');
+
+  // 3. Apagar documentos do Firestore do dia
+  (async function() {
+    try {
+      const q = query(lojaCol('apontamentos_producao'), where('data', '==', data));
+      const snap = await getDocs(q);
+      const batch = writeBatch(firestoreDB);
+      snap.docs.forEach(function(d) { batch.delete(d.ref); });
+      await batch.commit();
+      console.log('[aponFS] Reset do dia', data, '— apagados', snap.size, 'docs no Firestore');
+    } catch(e) {
+      console.error('[aponFS] Erro ao apagar do Firestore no reset:', e.message);
+    }
+  })();
+
+  registrarAuditoria('DIA_RESETADO', { data: data, itensLimpos: keysToRemove.length });
+  toast(`✅ Apontamentos do dia ${fmtDate(new Date(data+'T12:00:00'))} removidos.`, 'ok');
   renderApontamento();
 }
 
@@ -4527,6 +4550,72 @@ function aponGetFinalizationDay(recId, needed){
 let _pdCache = {};
 let _pdCacheWeek = null;
 
+// ── Cache Firestore de apontamentos ────────────────────────────────
+// Chave: "YYYY-MM-DD_recId"  → { 7: 10, 8: 5, ... }
+let _aponFS = {};
+
+// Carrega apontamentos da semana do Firestore para o cache _aponFS
+async function _loadAponFSSemana(mondayDate) {
+  _aponFS = {};
+  try {
+    const dias = getWeekDays(mondayDate);
+    const weekStart = dateStr(dias[0]);
+    const weekEnd   = dateStr(dias[6]);
+    const q = query(
+      lojaCol('apontamentos_producao'),
+      where('data', '>=', weekStart),
+      where('data', '<=', weekEnd)
+    );
+    const snap = await getDocs(q);
+    snap.forEach(function(d) {
+      const ap = d.data();
+      if (!ap.data || ap.recordId == null) return;
+      const key = ap.data + '_' + ap.recordId;
+      // Suporta tanto o formato antigo {hora, quantidade} quanto o novo {horas:{...}}
+      if (ap.horas && typeof ap.horas === 'object') {
+        _aponFS[key] = Object.assign({}, ap.horas);
+      } else if (ap.hora != null && ap.quantidade != null) {
+        if (!_aponFS[key]) _aponFS[key] = {};
+        _aponFS[key][ap.hora] = (_aponFS[key][ap.hora] || 0) + (parseInt(ap.quantidade) || 0);
+      }
+    });
+    console.log('[aponFS] Carregados', Object.keys(_aponFS).length, 'apontamentos do Firestore');
+  } catch(e) {
+    console.warn('[aponFS] Erro ao carregar do Firestore, usando localStorage:', e.message);
+  }
+}
+
+// Sincroniza apontamentos históricos (semanas anteriores) do Firestore → localStorage
+// Chamado uma vez na inicialização. Usa localStorage como cache permanente entre sessões.
+let _aponHistoricoSincronizado = false;
+async function _sincronizarApontamentosHistoricos() {
+  if (_aponHistoricoSincronizado) return;
+  _aponHistoricoSincronizado = true;
+  try {
+    // Busca TODOS os apontamentos do Firestore (sem filtro de data)
+    const snap = await getDocs(lojaCol('apontamentos_producao'));
+    let count = 0;
+    snap.forEach(function(d) {
+      const ap = d.data();
+      if (!ap.data || ap.recordId == null) return;
+      const lsKey = 'apon_' + ap.data + '_' + ap.recordId;
+      // Só sobrescreve se ainda não tiver no localStorage (respeita edições locais)
+      if (!localStorage.getItem(lsKey)) {
+        let horasObj = {};
+        if (ap.horas && typeof ap.horas === 'object') {
+          horasObj = ap.horas;
+        } else if (ap.hora != null && ap.quantidade != null) {
+          horasObj[ap.hora] = parseInt(ap.quantidade) || 0;
+        }
+        try { localStorage.setItem(lsKey, JSON.stringify(horasObj)); count++; } catch(e) {}
+      }
+    });
+    if (count > 0) console.log('[aponFS] Sincronizados', count, 'apontamentos históricos → localStorage');
+  } catch(e) {
+    console.warn('[aponFS] Erro ao sincronizar histórico:', e.message);
+  }
+}
+
 // Carrega todos os assignments do Firestore para o cache local (por semana)
 async function pdLoadWeek(mondayDate) {
   const wKey = dateStr(mondayDate);
@@ -4542,6 +4631,8 @@ async function pdLoadWeek(mondayDate) {
   } catch(e) {
     console.error('Erro ao carregar programacao_dias:', e);
   }
+  // Carrega apontamentos da semana do Firestore
+  await _loadAponFSSemana(mondayDate);
   // Garante que o mapa do Gantt está atualizado após carregar overrides
   pdBuildGanttMap(mondayDate);
 }
@@ -9703,6 +9794,10 @@ function salvarApontamentoCompleto(recordId) {
   // Salvar no localStorage
   aponStorageSet(aponKey(dataAtual, recordId), data);
 
+  // Atualizar cache Firestore em memória (para totais corretos sem aguardar save)
+  const fsKey = dataAtual + '_' + recordId;
+  _aponFS[fsKey] = Object.assign({}, data);
+
   // Atualizar TOTAL DIA
   const dtEl = document.getElementById(`realizado-daytotal-${recordId}`);
   if (dtEl) {
@@ -9939,8 +10034,41 @@ function realizadoInputChange(inp) {
 function realizadoSalvarLinha(recId, dateVal) {
   const all  = document.querySelectorAll(`[data-rec="${recId}"].apon-input-controlado`);
   const data = {};
-  all.forEach(i => { data[i.dataset.hr] = parseInt(i.value) || 0; });
+  let dayTotal = 0;
+  all.forEach(i => {
+    const qtd = parseInt(i.value) || 0;
+    data[i.dataset.hr] = qtd;
+    dayTotal += qtd;
+  });
+
+  // 1. Salvar no localStorage (imediato, fallback)
   aponStorageSet(aponKey(dateVal, recId), data);
+
+  // 2. Atualizar cache Firestore em memória
+  const fsKey = dateVal + '_' + recId;
+  _aponFS[fsKey] = Object.assign({}, data);
+
+  // 3. Salvar no Firestore
+  const record = records.find(r => String(r.id) === String(recId));
+  const user   = getCurrentUserSafe();
+  const payload = {
+    recordId : recId,
+    data     : dateVal,
+    horas    : data,
+    total    : dayTotal,
+    produto  : record ? record.produto : '',
+    maquina  : record ? record.maquina : '',
+    usuario  : user ? (user.email || '') : '',
+    atualizadoEm: serverTimestamp(),
+    lojaId   : getLojaAtiva()
+  };
+  // Usa setDoc com merge=false para substituir o documento do dia inteiro
+  const docId = dateVal + '_' + recId;
+  setDoc(lojaDoc('apontamentos_producao', docId), payload)
+    .then(function() { console.log('[aponFS] Salvo no Firestore:', docId); })
+    .catch(function(e) { console.error('[aponFS] Erro ao salvar no Firestore:', e.message); toast('Aviso: dado salvo localmente, erro no servidor: ' + e.message, 'warn'); });
+
+  // 4. Feedback visual no botão
   const btn = document.querySelector(`button[onclick="realizadoSalvarLinha(${recId},'${dateVal}')"]`);
   if (btn) {
     const orig = btn.innerHTML;
@@ -9948,6 +10076,22 @@ function realizadoSalvarLinha(recId, dateVal) {
     btn.style.background = 'var(--cyan)';
     setTimeout(() => { btn.innerHTML = orig; btn.style.background = 'var(--green)'; }, 800);
   }
+
+  // 5. Atualizar totais na tela
+  const dtEl = document.getElementById(`realizado-daytotal-${recId}`);
+  if (dtEl) {
+    dtEl.textContent = dayTotal > 0 ? dayTotal : '—';
+    dtEl.style.color = dayTotal > 0 ? 'var(--cyan)' : 'var(--text3)';
+  }
+  const prevTotal = aponGetPrevTotal(recId, dateVal);
+  const acum = prevTotal + dayTotal;
+  const meta = record ? (record.qntCaixas || 0) : 0;
+  const acEl = document.getElementById(`realizado-acum-${recId}`);
+  if (acEl) {
+    acEl.textContent = acum > 0 ? acum : '—';
+    acEl.style.color = acum >= meta && meta > 0 ? 'var(--green)' : acum > 0 ? 'var(--text)' : 'var(--text3)';
+  }
+
   toast('Apontamento salvo.', 'ok');
 }
 
