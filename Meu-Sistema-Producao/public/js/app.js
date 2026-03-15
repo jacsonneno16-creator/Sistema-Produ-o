@@ -3883,25 +3883,7 @@ function prodGoDate(){
   renderProduzido();
 }
 function prodSelectDay(ds){
-  // FIX BUG 3: Salvar dados do dia atual antes de trocar de aba
-  // Isso evita perda de dados digitados mas não salvos explicitamente
-  if(prodSelectedDate && prodSelectedDate !== 'semana' && prodSelectedDate !== ds){
-    const body = document.getElementById('apon-body');
-    if(body && body._machineGroups && body._machineGroups.length){
-      for(let gi=0;gi<body._machineGroups.length;gi++){
-        const items = body._machineGroups[gi].items;
-        for(let ii=0;ii<items.length;ii++){
-          const rec = items[ii].rec;
-          const data = {};
-          APON_HOURS.forEach(function(h){
-            const inp = document.querySelector('.apon-input[data-rec="'+rec.id+'"][data-hr="'+h+'"]');
-            data[h] = inp?(parseInt(inp.value)||0):0;
-          });
-          aponStorageSet(aponKey(prodSelectedDate, rec.id), data);
-        }
-      }
-    }
-  }
+  // Auto-save já ocorre via oninput — sem necessidade de salvar ao trocar de aba
   prodSelectedDate = ds;
   renderProdDayTabs();
   renderApontamento();
@@ -4077,6 +4059,7 @@ function renderApontamento(){
 
 // Nova função para renderizar aba Realizado de forma controlada
 function renderRealizadoControlado(dateVal, body) {
+  body._dateVal = dateVal;
   try {
     _renderRealizadoControlado(dateVal, body);
   } catch(e) {
@@ -4314,9 +4297,9 @@ function _renderRealizadoControlado(dateVal, body) {
           <input type="number" min="0"
                  data-rec="${rec.id}" data-hr="${h}" data-date="${dateVal}"
                  value="${val}" placeholder="0"
-                 oninput="realizadoInputChange(this)"
+                 oninput="salvarApontamentoCompleto(${rec.id})"
                  style="width:46px;padding:4px 2px;border:1px solid var(--border);border-radius:4px;text-align:center;font-size:11px;background:var(--s2);color:var(--text);font-family:'JetBrains Mono',monospace;-moz-appearance:textfield"
-                 class="apon-input-controlado">
+                 class="apon-input apon-input-controlado">
         </td>`;
       }).join('');
 
@@ -9698,49 +9681,65 @@ function pdUnassign(recId) {
 
 // Função para adicionar funções faltantes de compatibilidade
 function salvarApontamentoCompleto(recordId) {
+  const body      = document.getElementById('apon-body');
+  const dataAtual = body?._dateVal || prodSelectedDate;
+
+  // Bloquear se data inválida
+  if (!dataAtual || dataAtual === 'semana' || dataAtual === 'producao-dia') return;
+
   if (!isPCPLevel() && isOperadorLevel()) {
-    // Operador só pode salvar se produto estiver liberado
     const record = records.find(r => r.id === recordId);
     if (!record) return;
-    
-    const validacao = validarProducaoPermitida(record, record.maquina, prodSelectedDate);
+    const validacao = validarProducaoPermitida(record, record.maquina, dataAtual);
     if (!validacao.permitido) {
       toast('❌ ' + validacao.motivo, 'err');
       return;
     }
   }
-  
-  // Coletar dados dos inputs
-  const inputs = document.querySelectorAll(`[data-rec="${recordId}"]`);
+
+  // Coletar dados dos inputs do dia
+  const inputs = document.querySelectorAll(`.apon-input[data-rec="${recordId}"]`);
   const data = {};
-  let total = 0;
-  
+  let dayTotal = 0;
+
   inputs.forEach(input => {
     const hora = input.dataset.hr;
     const quantidade = parseInt(input.value) || 0;
-    data[hora] = quantidade;
-    total += quantidade;
+    data[hora] = quantidade || '';
+    dayTotal += quantidade;
   });
-  
-  // Salvar no localStorage (compatibilidade)
-  aponStorageSet(aponKey(prodSelectedDate, recordId), data);
-  
-  // Tentar salvar no Firestore também
+
+  // Salvar no localStorage com a data correta
+  aponStorageSet(aponKey(dataAtual, recordId), data);
+
+  // Atualizar totais visuais inline (sem re-render)
+  const dtEl = document.getElementById(`realizado-daytotal-${recordId}`);
+  if (dtEl) {
+    dtEl.textContent = dayTotal > 0 ? dayTotal : '—';
+    dtEl.style.color = dayTotal > 0 ? 'var(--cyan)' : 'var(--text3)';
+  }
+  const prevTotal = aponGetPrevTotal(recordId, dataAtual);
+  const acum = prevTotal + dayTotal;
+  const rec  = records.find(r => String(r.id) === String(recordId));
+  const meta = rec ? (rec.qntCaixas || 0) : 0;
+  const acEl = document.getElementById(`realizado-acum-${recordId}`);
+  if (acEl) {
+    acEl.textContent = acum > 0 ? acum : '—';
+    acEl.style.color = acum >= meta && meta > 0 ? 'var(--green)' : acum > 0 ? 'var(--text)' : 'var(--text3)';
+  }
+
+  // Salvar no Firestore em background (sem bloquear UI)
   inputs.forEach(async input => {
     const hora = input.dataset.hr;
     const quantidade = parseInt(input.value) || 0;
-    
     if (quantidade > 0) {
       try {
-        await salvarApontamentoFirestore(prodSelectedDate, hora, recordId, quantidade, 'Operador');
+        await salvarApontamentoFirestore(dataAtual, hora, recordId, quantidade, getUserEmailSafe() || 'Operador');
       } catch(e) {
-        console.warn('Erro ao salvar no Firestore:', e);
+        console.warn('Erro Firestore apontamento:', e);
       }
     }
   });
-  
-  toast(`✅ Apontamento salvo: ${total} caixas`, 'ok');
-  renderApontamento();
 }
 
 function gerarRelatorioProducao() {
@@ -9926,7 +9925,8 @@ window.pdLimparObs       = pdLimparObs;
 // ── Realizado: atualiza totais em tempo real ao digitar ──────────────
 function realizadoInputChange(inp) {
   const recId   = inp.dataset.rec;
-  const dateVal = inp.dataset.date || prodSelectedDate;
+  const body    = document.getElementById('apon-body');
+  const dateVal = body?._dateVal || inp.dataset.date || prodSelectedDate;
   const all     = document.querySelectorAll(`[data-rec="${recId}"].apon-input-controlado`);
   let dayTotal = 0;
   const data = {};
