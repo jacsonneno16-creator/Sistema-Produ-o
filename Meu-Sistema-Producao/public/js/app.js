@@ -9892,7 +9892,7 @@ function pdFecharObs() {
 }
 
 
-async async function pdSalvarObs(recId, ds) {
+async function pdSalvarObs(recId, ds) {
   if (!window._pdObsCache) window._pdObsCache = {};
   const textarea = document.getElementById(`obs-txt-${recId}-${ds}`);
   if (!textarea) { toast('Campo não encontrado.', 'err'); return; }
