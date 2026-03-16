@@ -9565,61 +9565,64 @@ function gerarProgAutomarica(){
     ? candidates.reduce((a, c) => a + c.demandaDiaria, 0) / candidates.length
     : 1;
 
-  // ── PASSO 3: simular 4 semanas (v6 — multi-máquina + balanceamento) ──
+  // ── PASSO 3: semana de entrada + simulação (v7 — look-ahead) ────────
   //
-  //  Novidades em relação à v5:
+  //  PRÉ-PASSO: para cada produto, calcular a semana ideal de entrada
+  //  sem depender de threshold reativo (cobAtualSem < cobMin).
   //
-  //  3d-SCORE: escolha de máquina por pontuação ponderada
-  //    score = velocidade × √(hrsDisp/cap) × fatorGiro
-  //    → produto de alto giro recebe bônus na velocidade
-  //    → máquinas com mais folga ganham pontuação extra
-  //    → resultado: alta demanda → máquina mais rápida
-  //               baixa demanda → máquina secundária com mais espaço
+  //  Para cada produto, o sistema simula o trajeto do estoque sem
+  //  qualquer produção e responde: "em qual semana este produto
+  //  precisa entrar para não entrar em ruptura e fechar o mês bem?"
   //
-  //  3d-SPLIT: divisão de produção entre máquinas
-  //    se a melhor máquina não consegue absorver o lote inteiro
-  //    (por % cap ou por horas disponíveis), o restante transborda
-  //    para a 2ª melhor máquina compatível na mesma semana.
+  //  Resultado: _semanaEntry (0–3) ou -1 (não precisa produzir)
   //
-  //  PASSO 4: equalização de carga pós-simulação
-  //    alvo: 70–90% de ocupação por máquina/semana
-  //    semanas > 90%: tenta adiar produto menos urgente para semana mais leve
-  //    semanas < 70%: tenta antecipar produto de semana mais carregada
-  //    restrição: nunca gera ruptura (cobFim >= cobMin após o movimento)
+  //  Regras de decisão:
+  //    1. Se cobIni na S1 já < cobMin → entrar imediatamente (entry=0)
+  //    2. Senão, encontrar a semana onde cobFim < cobMin sem produção
+  //       → essa é a semana MAIS TARDIA segura (entry = essa semana)
+  //    3. Se cobFim do mês >= cobAlvo sem nenhuma produção → não produzir
+  //    4. Se cobFim do mês < cobAlvo mas não há ruptura → entry = última
+  //       semana onde ainda vale produzir (de trás para frente)
+  //    5. Ajuste por carga de máquina estimada: se a semana-alvo está
+  //       sobrecarregada e a semana anterior tem folga E o produto não
+  //       entra em ruptura se antecipado → antecipar
   //
+  //  Durante a alocação, o gatilho é:
+  //    sem < c._semanaEntry → pular (ainda não é hora)
+  //    sem >= c._semanaEntry → pode produzir (sujeito a capacidade)
+  //
+
   const allocations = {};
   candidates.forEach(c => {
     allocations[c.prod] = {
       hrsTotal: 0, cxTotal: 0,
       semanas: [0,0,0,0],
       maquinas: {},
-      // detalhe por semana+maquina para a equalização
-      detalhes: Array.from({length:4}, ()=>([]))
-      // detalhes[sem] = [{maq, cx, hrs, pcMin, unid}]
+      detalhes: Array.from({length:4}, () => ([]))
     };
   });
 
-  // Horas usadas (para ocupação): inicialmente zero
   const maqHrsUsadas    = Array.from({length:4}, () => {
     const s = {}; MAQUINAS.forEach(m => { s[m] = 0; }); return s;
   });
-  // Horas restantes (capacidade disponível)
   const maqHrsRestantes = Array.from({length:4}, () => {
     const s = {}; MAQUINAS.forEach(m => { s[m] = maqCapacidades[m] || 0; }); return s;
   });
 
-  // ── Helper: score de uma máquina para um produto ─────────────────
+  // ── Helper: score de máquina ─────────────────────────────────────
+  // Penalidade cúbica na ocupação: máquinas mais cheias ficam muito
+  // menos atraentes, forçando distribuição entre máquinas compatíveis.
   function scoreMaquina(mc, sem, demandaDiaria){
     const hrsDisp = maqHrsRestantes[sem][mc.maquina] || 0;
     if(hrsDisp <= 0 || mc.pc_min <= 0) return -1;
-    const cap        = maqCapacidades[mc.maquina] || 1;
-    const fatorEspaco= Math.sqrt(hrsDisp / cap);        // bônus para máquina com mais folga
-    const altogiro   = demandaDiaria * 7 > demandaMediaGlobal * 7;
-    const fatorGiro  = altogiro ? 1.3 : 0.85;           // alto giro → máquina rápida
+    const cap         = maqCapacidades[mc.maquina] || 1;
+    const fatorEspaco = Math.pow(hrsDisp / cap, 1.5); // cúbico: penaliza forte máquinas cheias
+    const altogiro    = demandaDiaria * 7 > demandaMediaGlobal * 7;
+    const fatorGiro   = altogiro ? 1.3 : 0.85;
     return mc.pc_min * fatorEspaco * fatorGiro;
   }
 
-  // ── Helper: aplicar uma alocação ────────────────────────────────
+  // ── Helper: registrar alocação ───────────────────────────────────
   function registrarAlocacao(prod, sem, maq, cx, hrs, pcMin, unid){
     maqHrsRestantes[sem][maq] -= hrs;
     maqHrsUsadas[sem][maq]    += hrs;
@@ -9631,9 +9634,105 @@ function gerarProgAutomarica(){
     allocations[prod].detalhes[sem].push({ maq, cx, hrs, pcMin, unid });
   }
 
+  // ── PRÉ-PASSO: calcular semana de entrada ideal ──────────────────
+  candidates.forEach(c => {
+    if(c.demandaDiaria <= 0){ c._semanaEntry = -1; return; }
+
+    // Simular trajeto sem produção (a partir do estoque real inicial)
+    const path = [];
+    let estoq = c.estoque;
+    for(let s = 0; s < 4; s++){
+      const ini = estoq;
+      const fin = Math.max(0, estoq - c.demandaSemanal);
+      path.push({
+        ini, fin,
+        cobIni: ini / c.demandaDiaria,
+        cobFin: fin / c.demandaDiaria
+      });
+      estoq = fin;
+    }
+    c._trajetoria = path;
+
+    // Regra 3: não precisa produzir se o mês fecha bem sem produção
+    if(path[3].cobFin >= cobAlvo){
+      c._semanaEntry = -1;
+      return;
+    }
+
+    // Regra 1: já crítico no início do mês → entrar imediatamente
+    if(path[0].cobIni < cobMin){
+      c._semanaEntry = 0;
+      return;
+    }
+
+    // Regra 2: encontrar a semana onde cobFim cai abaixo de cobMin
+    let semRuptura = -1;
+    for(let s = 0; s < 4; s++){
+      if(path[s].cobFin < cobMin){
+        semRuptura = s;
+        break;
+      }
+    }
+
+    if(semRuptura >= 0){
+      // Encontrou semana de ruptura → entrar nessa semana
+      c._semanaEntry = semRuptura;
+    } else {
+      // Regra 4: sem ruptura no mês mas fechamento abaixo de cobAlvo
+      // Encontrar a semana mais TARDIA onde cobFin < cobAlvo
+      // (trabalhar de trás para frente para não antecipar desnecessariamente)
+      let entry = 3;
+      for(let s = 3; s >= 0; s--){
+        if(path[s].cobFin < cobAlvo) entry = s;
+        else break; // encontrou semana com cobFin >= cobAlvo: parar
+      }
+      c._semanaEntry = entry;
+    }
+
+    // Regra 5: ajuste por carga estimada de máquina
+    // Se a semana-alvo tiver a principal máquina > 80% ocupada (estimativa
+    // baseada nos outros produtos com semanaEntry == _semanaEntry) e a
+    // semana anterior ainda permite entrar sem ruptura → antecipar em 1
+    if(c._semanaEntry > 0){
+      const semAlvo   = c._semanaEntry;
+      const semAntes  = semAlvo - 1;
+
+      // Estimar ocupação futura na semana-alvo: contar horas dos outros
+      // candidatos que já calcularam _semanaEntry == semAlvo
+      let hrsEstimadas = 0;
+      candidates.forEach(outro => {
+        if(outro === c || outro._semanaEntry !== semAlvo) return;
+        const maqPrinc = outro.maquinasCompativeis[0];
+        // Verificar se compartilham alguma máquina
+        const maqsComuns = c.maquinasCompativeis.filter(m =>
+          outro.maquinasCompativeis.some(o => o.maquina === m.maquina)
+        );
+        if(!maqsComuns.length) return;
+        const vel = maqPrinc?.pc_min || 1;
+        hrsEstimadas += (outro.demandaDiaria * cobAlvo * outro.unid) / (vel * 60);
+      });
+
+      const maqPrinc = c.maquinasCompativeis[0];
+      const capMaqPrinc = maqPrinc ? (maqCapacidades[maqPrinc.maquina] || 40) : 40;
+      const occEstimada = hrsEstimadas / capMaqPrinc;
+
+      // Só antecipa se semana anterior não causaria excesso de estoque
+      if(occEstimada > 0.80){
+        const cobFinSemAntes = path[semAntes].cobFin;
+        // Antecipando, o produto será produzido em semAntes. Verifica que
+        // o estoque pós-produção em semAntes não excede cobAlvo × 1.2
+        // e que havia realmente necessidade (cobFin < cobAlvo)
+        if(cobFinSemAntes < cobAlvo){
+          c._semanaEntry = semAntes;
+        }
+      }
+    }
+  });
+
+  // ── LOOP PRINCIPAL: 4 semanas, guiado por _semanaEntry ───────────
   for(let sem = 0; sem < 4; sem++){
 
-    // 3a. Recalcular cobertura e prioridade para esta semana
+    // 3a. Recalcular prioridade dinâmica (estoque simulado pode ter mudado)
     candidates.forEach(c => {
       const cob = c.demandaDiaria > 0 ? c.estoqueSim / c.demandaDiaria : 999;
       c._cobSem   = parseFloat(cob.toFixed(1));
@@ -9642,10 +9741,9 @@ function gerarProgAutomarica(){
       );
     });
 
-    // 3b. Ordenar: maior urgência primeiro
+    // 3b. Ordenar: mais urgente primeiro
     const fila = [...candidates].sort((a,b) => b._priorSem - a._priorSem);
 
-    // 3c. Alocação por necessidade real — multi-máquina com split
     const MAX_PASSES = 8;
     for(let pass = 0; pass < MAX_PASSES; pass++){
       let algumAlocado = false;
@@ -9653,17 +9751,19 @@ function gerarProgAutomarica(){
       for(const c of fila){
         if(c.demandaDiaria <= 0) continue;
 
-        const estoqueFinSem = Math.max(0, c.estoqueSim - c.demandaSemanal);
-        const cobAtualSem   = c.estoqueSim  / c.demandaDiaria;
-        const cobFimSemana  = estoqueFinSem / c.demandaDiaria;
+        // ── Gatilho: semana de entrada calculada no pré-passo ────────
+        // Não produz se _semanaEntry=-1 (desnecessário) ou se ainda
+        // não chegou a semana ideal
+        if(c._semanaEntry < 0) continue;
+        if(sem < c._semanaEntry) continue;
 
-        // Gatilho: só produz quando o estoque vai realmente faltar
-        if(cobAtualSem >= cobMin && cobFimSemana >= cobMin) continue;
-
-        // Teto: não produz se estoque já está muito acima da meta
+        // Teto: não produzir se estoque já está adequado
+        // (pode acontecer se o produto produziu numa semana anterior
+        //  por urgência ou split da semana alvo)
         if(c.estoqueSim >= c.demandaDiaria * cobAlvo * 1.1) continue;
 
-        // Quantidade necessária
+        // Quantidade: suficiente para fechar esta semana em cobAlvo
+        const estoqueFinSem = Math.max(0, c.estoqueSim - c.demandaSemanal);
         let cxNecessario = Math.max(0, Math.ceil(
           c.demandaDiaria * cobAlvo - estoqueFinSem
         ));
@@ -9675,7 +9775,7 @@ function gerarProgAutomarica(){
         if(c.multiploProducao > 0)
           cxNecessario = Math.ceil(cxNecessario / c.multiploProducao) * c.multiploProducao;
 
-        // Teto rígido pós-lote: não ultrapassar cobAlvo × 1.2
+        // Teto rígido pós-lote
         const cobMaxPermitida = cobAlvo * 1.2;
         const cobPosProd = (estoqueFinSem + cxNecessario) / c.demandaDiaria;
         if(cobPosProd > cobMaxPermitida){
@@ -9683,7 +9783,7 @@ function gerarProgAutomarica(){
           if(cxTeto >= (c.producaoMinima || 0)) cxNecessario = cxTeto;
         }
 
-        // 3d-SCORE: ordenar máquinas compatíveis por score ponderado
+        // 3d-SCORE: escolher máquinas por pontuação ponderada
         const maqsOrdenadas = [...c.maquinasCompativeis]
           .map(mc => ({ ...mc, score: scoreMaquina(mc, sem, c.demandaDiaria) }))
           .filter(mc => mc.score >= 0)
@@ -9693,16 +9793,16 @@ function gerarProgAutomarica(){
 
         let cxRestante = cxNecessario;
 
-        // 3d-SPLIT: tenta alocar em até 2 máquinas (primária + secundária)
+        // 3d-SPLIT: alocar em até 2 máquinas
         for(let mi = 0; mi < Math.min(2, maqsOrdenadas.length) && cxRestante > 0; mi++){
-          const mc         = maqsOrdenadas[mi];
-          const hrsNec     = (cxRestante * c.unid) / (mc.pc_min * 60);
-          const maxHrsItem = maqCapacidades[mc.maquina] * maxPctMaq;
-          const hrsJaAloc  = allocations[c.prod].maquinas[mc.maquina]
+          const mc        = maqsOrdenadas[mi];
+          const hrsNec    = (cxRestante * c.unid) / (mc.pc_min * 60);
+          const maxHrs    = maqCapacidades[mc.maquina] * maxPctMaq;
+          const hrsJaAloc = allocations[c.prod].maquinas[mc.maquina]
             ? (allocations[c.prod].maquinas[mc.maquina] * c.unid) / (mc.pc_min * 60)
             : 0;
-          const hrsPermit  = Math.max(0, maxHrsItem - hrsJaAloc);
-          const hrsAlocar  = Math.min(hrsNec, maqHrsRestantes[sem][mc.maquina], hrsPermit);
+          const hrsPermit = Math.max(0, maxHrs - hrsJaAloc);
+          const hrsAlocar = Math.min(hrsNec, maqHrsRestantes[sem][mc.maquina], hrsPermit);
           if(hrsAlocar < 0.01) continue;
 
           const cxAlocar = Math.floor(hrsAlocar * 60 * mc.pc_min / c.unid);
@@ -9724,146 +9824,350 @@ function gerarProgAutomarica(){
     });
   }
 
-  // ── PASSO 4: equalização de carga (alvo 70–90 % por máquina/semana) ─
+  // ── PASSO 4: equalização de carga — máquinas + semanas ─────────────
   //
-  //  Para cada máquina+semana fora da faixa ideal:
-  //    > 90 %: tenta adiar produto menos urgente para semana mais leve
-  //    < 70 %: tenta antecipar produto de semana mais carregada
+  //  FASE A: troca de máquina dentro da mesma semana (intra-semana)
+  //    Trigger duplo:
+  //      a) máquina sobrecarregada (> ALVO_MAX_OCC)
+  //      b) desequilíbrio grande entre máquinas compatíveis
+  //         (diferença de ocupação > 40 pp → redistribuir)
   //
-  //  Restrição: o produto só pode ser movido se a cobertura
-  //  na semana de origem não cair abaixo de cobMin
-  //  e na semana de destino não ultrapassar cobAlvo × 1.2.
+  //  FASE B: movimentação entre semanas
+  //    > 90%: adiar produto menos urgente para semana mais leve
+  //    < 70%: antecipar produto de semana futura mais carregada
   //
-  const ALVO_MIN_OCC = 0.70;  // 70 %
-  const ALVO_MAX_OCC = 0.90;  // 90 %
+  //  FASE C: preenchimento de máquinas ociosas
+  //    Máquinas com < 30% de ocupação recebem produtos de máquinas
+  //    compatíveis com > 60% de carga. Redistribuição parcial (split).
+  //
+  const ALVO_MIN_OCC  = 0.70;
+  const ALVO_MAX_OCC  = 0.90;
+  const OCIOSIDADE    = 0.30;  // abaixo disso = máquina ociosa
+  const DESEQ_TRIGGER = 0.40;  // diferença de occ que ativa FASE A preventiva
 
-  // Snapshot dos estoques simulados para verificação de movimentos
-  // Reconstrói caminho de estoque de cada candidato
-  function recalcEstoquePath(c){
+  // ── Recalcular prioridade com estado pós-simulação ───────────────
+  candidates.forEach(c => {
     let estoq = c.estoque;
-    const path = [estoq]; // estoque ao início de cada semana
-    for(let s = 0; s < 4; s++){
+    for(let s = 0; s < 4; s++)
       estoq = Math.max(0, estoq + (allocations[c.prod].semanas[s] || 0) - c.demandaSemanal);
-      path.push(estoq);
+    c._estoqFinal = estoq;
+    c._cobFinal   = c.demandaDiaria > 0 ? estoq / c.demandaDiaria : 999;
+    c._priorP4    = c.demandaDiaria > 0
+      ? calcPrioridadeEquilibrada(c._cobFinal, c.demandaDiaria, riscoLim, cobMin, c.prioridadeProduto, 3)
+      : 0;
+  });
+
+  // ── Helper: recalcular trajetória de estoque ─────────────────────
+  function recalcPath(c){
+    const path = [];
+    let estoq = c.estoque;
+    for(let s = 0; s < 4; s++){
+      const ini = estoq + (allocations[c.prod].semanas[s] || 0);
+      const fin = Math.max(0, ini - c.demandaSemanal);
+      path.push({
+        ini, fin,
+        cobIni: c.demandaDiaria > 0 ? ini / c.demandaDiaria : 999,
+        cobFin: c.demandaDiaria > 0 ? fin / c.demandaDiaria : 999
+      });
+      estoq = fin;
     }
-    return path; // path[0]=inicial, path[4]=final
+    return path;
   }
 
-  // Tentar mover alocação de semSrc para semDst para uma máquina
-  function tentarMover(prod, maq, semSrc, semDst){
-    const candidato = candidates.find(c => c.prod === prod);
-    if(!candidato) return false;
-
-    const det = allocations[prod].detalhes[semSrc].find(d => d.maq === maq);
-    if(!det || det.cx <= 0) return false;
-
-    const cap    = maqCapacidades[maq] || 1;
-    const occDst = maqHrsUsadas[semDst][maq] / cap;
-    // Destino não pode ficar acima de 90% depois do movimento
-    if(occDst + det.hrs / cap > ALVO_MAX_OCC + 0.05) return false;
-    // Destino tem horas disponíveis?
-    if(maqHrsRestantes[semDst][maq] < det.hrs - 0.01) return false;
-
-    // Verificar se o produto não entra em ruptura na semana de origem
-    // sem esta produção: cobFim(semSrc) sem det.cx
-    const cxSemana = allocations[prod].semanas[semSrc] - det.cx;
-    const pathSrc  = recalcEstoquePath(candidato);
-    // Simular estoque na semana de origem sem esta alocação
-    let estoqCheck = candidato.estoque;
-    for(let s = 0; s <= semSrc; s++){
-      const cx = s === semSrc
-        ? (allocations[prod].semanas[s] - det.cx)
-        : allocations[prod].semanas[s];
-      estoqCheck = Math.max(0, estoqCheck + cx - candidato.demandaSemanal);
-    }
-    const cobAposMov = estoqCheck / candidato.demandaDiaria;
-    if(cobAposMov < cobMin) return false; // causaria ruptura — não mover
-
-    // Verificar teto no destino
-    let estoqDst = candidato.estoque;
-    for(let s = 0; s <= semDst; s++){
-      const extra = s === semDst ? det.cx : 0;
-      const cx    = s === semSrc ? (allocations[prod].semanas[s] - det.cx) : allocations[prod].semanas[s];
-      estoqDst = Math.max(0, estoqDst + cx + extra - candidato.demandaSemanal);
-    }
-    const cobDst = estoqDst / candidato.demandaDiaria;
-    if(cobDst > cobAlvo * 1.2) return false; // causaria excesso — não mover
-
-    // ── Executar o movimento ─────────────────────────────────────────
-    // Remover de semSrc
-    allocations[prod].semanas[semSrc]       -= det.cx;
-    allocations[prod].detalhes[semSrc]       =
-      allocations[prod].detalhes[semSrc].filter(d => d !== det);
-    maqHrsRestantes[semSrc][maq]            += det.hrs;
-    maqHrsUsadas[semSrc][maq]               -= det.hrs;
-    allocations[prod].hrsTotal              -= det.hrs;
-    allocations[prod].maquinas[maq]         -= det.cx;
-    allocations[prod].cxTotal               -= det.cx;
-
-    // Adicionar em semDst
-    allocations[prod].semanas[semDst]       += det.cx;
-    allocations[prod].detalhes[semDst].push(det);
-    maqHrsRestantes[semDst][maq]            -= det.hrs;
-    maqHrsUsadas[semDst][maq]               += det.hrs;
-    allocations[prod].hrsTotal              += det.hrs;
-    allocations[prod].maquinas[maq]         += det.cx;
-    allocations[prod].cxTotal               += det.cx;
-
-    return true;
+  // ── Helper: remover alocação ─────────────────────────────────────
+  function removerAlocacao(prod, sem, det){
+    const alloc = allocations[prod];
+    alloc.semanas[sem]           -= det.cx;
+    alloc.detalhes[sem]           = alloc.detalhes[sem].filter(d => d !== det);
+    alloc.hrsTotal               -= det.hrs;
+    alloc.cxTotal                -= det.cx;
+    alloc.maquinas[det.maq]       = (alloc.maquinas[det.maq] || det.cx) - det.cx;
+    maqHrsRestantes[sem][det.maq] += det.hrs;
+    maqHrsUsadas[sem][det.maq]    -= det.hrs;
   }
 
-  // Duas passagens de equalização
-  for(let eq = 0; eq < 2; eq++){
-    for(const maq of MAQUINAS){
-      const cap = maqCapacidades[maq] || 1;
+  // ── Helper: adicionar alocação ────────────────────────────────────
+  function adicionarAlocacao(prod, sem, det){
+    const alloc = allocations[prod];
+    alloc.semanas[sem]           += det.cx;
+    alloc.detalhes[sem].push(det);
+    alloc.hrsTotal               += det.hrs;
+    alloc.cxTotal                += det.cx;
+    alloc.maquinas[det.maq]       = (alloc.maquinas[det.maq] || 0) + det.cx;
+    maqHrsRestantes[sem][det.maq] -= det.hrs;
+    maqHrsUsadas[sem][det.maq]    += det.hrs;
+  }
 
-      for(let semOrig = 0; semOrig < 4; semOrig++){
-        const occ = maqHrsUsadas[semOrig][maq] / cap;
+  // ── Helper: pode redistribuir parcialmente para máquina alternativa? ──
+  // Retorna {cx, hrs, detNovo} se a troca for viável, null caso contrário.
+  function calcRedistribuicao(c, det, maqAlt, sem, cxDesejado){
+    if(maqAlt.pc_min <= 0) return null;
+    const hrsNaAlt = (cxDesejado * c.unid) / (maqAlt.pc_min * 60);
+    const capAlt   = maqCapacidades[maqAlt.maquina] || 1;
+    const dispAlt  = maqHrsRestantes[sem][maqAlt.maquina];
+    if(dispAlt < hrsNaAlt - 0.01) return null;
+    const occAlt   = (maqHrsUsadas[sem][maqAlt.maquina] + hrsNaAlt) / capAlt;
+    if(occAlt > ALVO_MAX_OCC + 0.05) return null;
+    return { maq: maqAlt.maquina, cx: cxDesejado, hrs: hrsNaAlt, pcMin: maqAlt.pc_min, unid: c.unid };
+  }
 
-        if(occ > ALVO_MAX_OCC){
-          // Semana cheia → tenta adiar para semana mais leve
-          // Candidatos: produtos nesta semana nesta máquina, do menos urgente para o mais urgente
-          const movCandidatos = candidates
-            .filter(c => allocations[c.prod].detalhes[semOrig].some(d => d.maq === maq))
-            .sort((a, b) => a._priorSem - b._priorSem); // menos urgente primeiro
+  // ── FASE A: troca de máquina dentro da mesma semana ──────────────
+  for(let pass = 0; pass < 3; pass++){
+    let algumaTroca = false;
 
-          for(const c of movCandidatos){
-            if(maqHrsUsadas[semOrig][maq] / cap <= ALVO_MAX_OCC) break;
-            // Tenta semanas seguintes
-            for(let semDst = semOrig + 1; semDst < 4; semDst++){
-              const occDst = maqHrsUsadas[semDst][maq] / cap;
-              if(occDst < ALVO_MAX_OCC){
-                if(tentarMover(c.prod, maq, semOrig, semDst)) break;
-              }
+    for(let sem = 0; sem < 4; sem++){
+      for(const maqSrc of MAQUINAS){
+        const capSrc = maqCapacidades[maqSrc] || 1;
+        const occSrc = maqHrsUsadas[sem][maqSrc] / capSrc;
+
+        // Trigger A: máquina sobrecarregada (>90%)
+        // Trigger B: desequilíbrio com máquina alternativa compat. (>40pp)
+        const precisaRedistribuir = occSrc > ALVO_MAX_OCC ||
+          candidates.some(c =>
+            allocations[c.prod].detalhes[sem].some(d => d.maq === maqSrc) &&
+            c.maquinasCompativeis.some(mc =>
+              mc.maquina !== maqSrc &&
+              (maqHrsUsadas[sem][mc.maquina] / (maqCapacidades[mc.maquina] || 1))
+                < (occSrc - DESEQ_TRIGGER)
+            )
+          );
+
+        if(!precisaRedistribuir) continue;
+
+        // Produtos nesta semana nesta máquina — menos urgente move primeiro
+        const prodsNestaSem = candidates
+          .filter(c => allocations[c.prod].detalhes[sem].some(d => d.maq === maqSrc))
+          .sort((a, b) => a._priorP4 - b._priorP4);
+
+        for(const c of prodsNestaSem){
+          const occAtual = maqHrsUsadas[sem][maqSrc] / capSrc;
+          if(occAtual <= ALVO_MIN_OCC) break; // já equilibrado suficiente
+
+          const det = allocations[c.prod].detalhes[sem].find(d => d.maq === maqSrc);
+          if(!det || det.cx <= 0) continue;
+
+          // Máquinas alternativas ordenadas por menor ocupação
+          const maqAlts = c.maquinasCompativeis
+            .filter(mc => mc.maquina !== maqSrc && mc.pc_min > 0)
+            .map(mc => ({
+              ...mc,
+              occ: maqHrsUsadas[sem][mc.maquina] / (maqCapacidades[mc.maquina] || 1)
+            }))
+            .filter(mc => mc.occ < occAtual - 0.05) // só se realmente menos ocupada
+            .sort((a, b) => a.occ - b.occ);
+
+          if(!maqAlts.length) continue;
+
+          for(const maqAlt of maqAlts){
+            // Tentar mover o lote inteiro primeiro
+            const redistTotal = calcRedistribuicao(c, det, maqAlt, sem, det.cx);
+            if(redistTotal){
+              removerAlocacao(c.prod, sem, det);
+              adicionarAlocacao(c.prod, sem, redistTotal);
+              algumaTroca = true;
+              break;
             }
-          }
-        }
 
-        if(occ < ALVO_MIN_OCC){
-          // Semana vazia → tenta antecipar da semana mais carregada
-          const movCandidatos = candidates
-            .filter(c => {
-              // Produto tem alocação em semana futura mais cheia?
-              for(let semFut = semOrig + 1; semFut < 4; semFut++){
-                const occFut = maqHrsUsadas[semFut][maq] / cap;
-                if(occFut > ALVO_MIN_OCC &&
-                   allocations[c.prod].detalhes[semFut].some(d => d.maq === maq)) return true;
-              }
-              return false;
-            })
-            .sort((a, b) => b._priorSem - a._priorSem); // mais urgente primeiro
-
-          for(const c of movCandidatos){
-            if(maqHrsUsadas[semOrig][maq] / cap >= ALVO_MIN_OCC) break;
-            for(let semSrc = semOrig + 1; semSrc < 4; semSrc++){
-              if(allocations[c.prod].detalhes[semSrc].some(d => d.maq === maq)){
-                if(tentarMover(c.prod, maq, semSrc, semOrig)) break;
+            // Se o lote inteiro não cabe, tentar mover metade (split entre máquinas)
+            const cxMetade = Math.floor(det.cx / 2);
+            if(cxMetade > 0){
+              const redistMetade = calcRedistribuicao(c, det, maqAlt, sem, cxMetade);
+              if(redistMetade){
+                // Atualizar alocação na máquina original com a metade restante
+                removerAlocacao(c.prod, sem, det);
+                const hrsRestante = ((det.cx - cxMetade) * c.unid) / (det.pcMin * 60);
+                adicionarAlocacao(c.prod, sem,
+                  { maq: maqSrc, cx: det.cx - cxMetade, hrs: hrsRestante, pcMin: det.pcMin, unid: c.unid }
+                );
+                adicionarAlocacao(c.prod, sem, redistMetade);
+                algumaTroca = true;
+                break;
               }
             }
           }
         }
       }
     }
+
+    if(!algumaTroca) break;
+  }
+
+  // ── FASE B: movimentação entre semanas ───────────────────────────
+  for(let pass = 0; pass < 3; pass++){
+    let algumMov = false;
+
+    for(const maq of MAQUINAS){
+      const cap = maqCapacidades[maq] || 1;
+
+      for(let semOrig = 0; semOrig < 4; semOrig++){
+        const occ = maqHrsUsadas[semOrig][maq] / cap;
+
+        // ── Semana cheia: adiar produto menos urgente ────────────────
+        if(occ > ALVO_MAX_OCC){
+          const movCands = candidates
+            .filter(c => allocations[c.prod].detalhes[semOrig].some(d => d.maq === maq))
+            .sort((a, b) => a._priorP4 - b._priorP4);
+
+          for(const c of movCands){
+            if(maqHrsUsadas[semOrig][maq] / cap <= ALVO_MAX_OCC) break;
+
+            const det = allocations[c.prod].detalhes[semOrig].find(d => d.maq === maq);
+            if(!det) continue;
+
+            const candidatosDst = [];
+            for(let s = semOrig + 1; s < 4; s++) candidatosDst.push(s);
+            for(let s = semOrig - 1; s >= 0; s--) candidatosDst.push(s);
+
+            for(const semDst of candidatosDst){
+              const occDst = maqHrsUsadas[semDst][maq] / cap;
+              if(occDst >= ALVO_MAX_OCC) continue;
+              if(maqHrsRestantes[semDst][maq] < det.hrs - 0.01) continue;
+
+              // Verificar que remoção em semOrig não causa ruptura
+              let estoqCheck = c.estoque;
+              let ruptura = false;
+              for(let s = 0; s < 4; s++){
+                const cxS = s === semOrig ? (allocations[c.prod].semanas[s] - det.cx) : allocations[c.prod].semanas[s];
+                estoqCheck = Math.max(0, estoqCheck + cxS - c.demandaSemanal);
+                if(s <= semOrig && c.demandaDiaria > 0 && estoqCheck / c.demandaDiaria < cobMin){
+                  ruptura = true; break;
+                }
+              }
+              if(ruptura) continue;
+
+              // Verificar teto no destino
+              let estoqDst = c.estoque;
+              for(let s = 0; s < 4; s++){
+                const cxS = (s === semOrig ? (allocations[c.prod].semanas[s] - det.cx) : allocations[c.prod].semanas[s])
+                          + (s === semDst ? det.cx : 0);
+                estoqDst = Math.max(0, estoqDst + cxS - c.demandaSemanal);
+              }
+              if(c.demandaDiaria > 0 && estoqDst / c.demandaDiaria > cobAlvo * 1.2) continue;
+
+              removerAlocacao(c.prod, semOrig, det);
+              adicionarAlocacao(c.prod, semDst, { ...det, maq });
+              algumMov = true;
+              break;
+            }
+          }
+        }
+
+        // ── Semana leve: antecipar de semana futura mais cheia ───────
+        if(occ < ALVO_MIN_OCC){
+          for(let semSrc = semOrig + 1; semSrc < 4; semSrc++){
+            const occSrc = maqHrsUsadas[semSrc][maq] / cap;
+            if(occSrc <= ALVO_MIN_OCC) continue;
+
+            const movCands = candidates
+              .filter(c => allocations[c.prod].detalhes[semSrc].some(d => d.maq === maq))
+              .sort((a, b) => b._priorP4 - a._priorP4);
+
+            for(const c of movCands){
+              if(maqHrsUsadas[semOrig][maq] / cap >= ALVO_MIN_OCC) break;
+
+              const det = allocations[c.prod].detalhes[semSrc].find(d => d.maq === maq);
+              if(!det) continue;
+              if(maqHrsRestantes[semOrig][maq] < det.hrs - 0.01) continue;
+              if((maqHrsUsadas[semOrig][maq] + det.hrs) / cap > ALVO_MAX_OCC) continue;
+              if(allocations[c.prod].semanas[semOrig] > 0) continue; // já produz nesta semana
+
+              // Verificar teto após antecipação
+              let estoqCheck = c.estoque;
+              for(let s = 0; s < 4; s++){
+                const cxS = (s === semSrc ? (allocations[c.prod].semanas[s] - det.cx) : allocations[c.prod].semanas[s])
+                          + (s === semOrig ? det.cx : 0);
+                estoqCheck = Math.max(0, estoqCheck + cxS - c.demandaSemanal);
+              }
+              if(c.demandaDiaria > 0 && estoqCheck / c.demandaDiaria > cobAlvo * 1.2) continue;
+
+              removerAlocacao(c.prod, semSrc, det);
+              adicionarAlocacao(c.prod, semOrig, { ...det, maq });
+              algumMov = true;
+              break;
+            }
+          }
+        }
+      }
+    }
+
+    if(!algumMov) break;
+  }
+
+  // ── FASE C: preenchimento de máquinas ociosas (< 30%) ────────────
+  // Para cada semana, detecta máquinas ociosas e tenta colocar parte
+  // da carga de máquinas >60% compatíveis nelas (redistribuição parcial).
+  for(let pass = 0; pass < 2; pass++){
+    let algumFill = false;
+
+    for(let sem = 0; sem < 4; sem++){
+      // Máquinas ociosas: <30% e não são 0% apenas porque nada foi programado
+      const maqsOciosas = MAQUINAS.filter(m => {
+        const cap = maqCapacidades[m] || 1;
+        return (maqHrsUsadas[sem][m] / cap) < OCIOSIDADE;
+      }).map(m => ({
+        maq: m,
+        occ: maqHrsUsadas[sem][m] / (maqCapacidades[m] || 1),
+        cap: maqCapacidades[m] || 1
+      })).sort((a, b) => a.occ - b.occ); // mais ociosa primeiro
+
+      if(!maqsOciosas.length) continue;
+
+      // Para cada máquina ociosa, procurar produtos compatíveis em máquinas
+      // com >60% de ocupação e fazer split
+      for(const maqOciosa of maqsOciosas){
+        if(maqHrsUsadas[sem][maqOciosa.maq] / maqOciosa.cap >= OCIOSIDADE + 0.15) continue;
+
+        // Produtos que podem ser feitos nesta máquina e estão em outra máquina >60%
+        const candidatosFill = candidates
+          .filter(c => {
+            const temNaOciosa = c.maquinasCompativeis.some(mc => mc.maquina === maqOciosa.maq);
+            if(!temNaOciosa) return false;
+            // Tem algum detalhe em outra máquina com ocupação alta?
+            return allocations[c.prod].detalhes[sem].some(d => {
+              const capD = maqCapacidades[d.maq] || 1;
+              return d.maq !== maqOciosa.maq && (maqHrsUsadas[sem][d.maq] / capD) > 0.60;
+            });
+          })
+          .sort((a, b) => b._priorP4 - a._priorP4); // mais urgente primeiro
+
+        for(const c of candidatosFill){
+          if(maqHrsUsadas[sem][maqOciosa.maq] / maqOciosa.cap >= ALVO_MIN_OCC) break;
+
+          // Detalhe na máquina de alta ocupação
+          const detSrc = allocations[c.prod].detalhes[sem].find(d => {
+            const capD = maqCapacidades[d.maq] || 1;
+            return d.maq !== maqOciosa.maq && (maqHrsUsadas[sem][d.maq] / capD) > 0.60;
+          });
+          if(!detSrc || detSrc.cx < 2) continue;
+
+          // Velocidade nesta máquina ociosa
+          const mcOciosa = c.maquinasCompativeis.find(mc => mc.maquina === maqOciosa.maq);
+          if(!mcOciosa || mcOciosa.pc_min <= 0) continue;
+
+          // Quanto conseguimos mover para a máquina ociosa?
+          const hrsDisp  = maqHrsRestantes[sem][maqOciosa.maq];
+          const cxMaxOciosa = Math.floor(hrsDisp * 60 * mcOciosa.pc_min / c.unid);
+          const cxMover  = Math.min(Math.floor(detSrc.cx / 2), cxMaxOciosa);
+          if(cxMover <= 0) continue;
+
+          const redistDet = calcRedistribuicao(c, detSrc, mcOciosa, sem, cxMover);
+          if(!redistDet) continue;
+
+          // Atualizar detalhe na máquina original
+          removerAlocacao(c.prod, sem, detSrc);
+          const hrsRestante = ((detSrc.cx - cxMover) * c.unid) / (detSrc.pcMin * 60);
+          if(detSrc.cx - cxMover > 0){
+            adicionarAlocacao(c.prod, sem,
+              { maq: detSrc.maq, cx: detSrc.cx - cxMover, hrs: hrsRestante, pcMin: detSrc.pcMin, unid: c.unid }
+            );
+          }
+          adicionarAlocacao(c.prod, sem, redistDet);
+          algumFill = true;
+        }
+      }
+    }
+
+    if(!algumFill) break;
   }
 
   // ── PASSO 4: construir paResultados (semana 1 = semana selecionada) ──
