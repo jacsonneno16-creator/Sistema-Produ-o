@@ -2172,6 +2172,12 @@ const BAR_COLORS=['#00e5cc','#7c6af7','#ff7043','#29d984','#ffb300','#ff4757','#
 
 let ganttBaseMonday=null; // Monday of displayed week
 let ganttManualNav=false; // true when user manually navigated
+let ganttMode='semanal';  // 'semanal' | 'mensal'
+let ganttMonthBase=null;  // Date object (any day of displayed month)
+
+// ── Constantes de meses em pt-BR ────────────────────────────────
+const GANTT_MONTH_NAMES=['Janeiro','Fevereiro','Março','Abril','Maio','Junho',
+  'Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
 
 function getWeekMonday(date){
   const d=new Date(date);
@@ -2210,6 +2216,57 @@ function ganttSetWeek(val){
     ganttManualNav=true;
     renderGantt();
   }
+}
+
+// ── Selecionar semana pelo pill (string YYYY-MM-DD da segunda-feira) ──
+function ganttSelecionarSemana(mondayStr){
+  ganttBaseMonday = new Date(mondayStr+'T12:00:00');
+  ganttManualNav  = true;
+  renderGantt();
+}
+
+// ── Troca de modo Semanal / Mensal ───────────────────────────────
+function setGanttMode(mode){
+  ganttMode = mode;
+  // Atualizar visual dos botões
+  const btnS = document.getElementById('gantt-mode-semanal');
+  const btnM = document.getElementById('gantt-mode-mensal');
+  const tbS  = document.getElementById('gantt-toolbar-semanal');
+  const tbM  = document.getElementById('gantt-toolbar-mensal');
+  if(btnS && btnM){
+    if(mode === 'mensal'){
+      btnS.style.background = 'transparent';
+      btnS.style.color      = 'var(--text2)';
+      btnS.style.border     = '1px solid var(--border)';
+      btnM.style.background = 'var(--cyan)';
+      btnM.style.color      = '#000';
+      btnM.style.border     = '1px solid var(--cyan)';
+    } else {
+      btnM.style.background = 'transparent';
+      btnM.style.color      = 'var(--text2)';
+      btnM.style.border     = '1px solid var(--border)';
+      btnS.style.background = 'var(--cyan)';
+      btnS.style.color      = '#000';
+      btnS.style.border     = '1px solid var(--cyan)';
+    }
+  }
+  if(tbS) tbS.style.display = mode === 'semanal' ? 'flex'   : 'none';
+  if(tbM) tbM.style.display = mode === 'mensal'  ? 'flex'   : 'none';
+  renderGantt();
+}
+
+// ── Navegação mensal ─────────────────────────────────────────────
+function ganttMesNav(dir){
+  if(!ganttMonthBase) ganttMonthBase = new Date();
+  ganttMonthBase = new Date(ganttMonthBase);
+  ganttMonthBase.setMonth(ganttMonthBase.getMonth() + dir);
+  ganttMonthBase.setDate(1);
+  renderGantt();
+}
+
+function ganttMesHoje(){
+  ganttMonthBase = new Date();
+  renderGantt();
 }
 
 function dateStr(d){return d.toISOString().slice(0,10)}
@@ -2455,6 +2512,14 @@ function buildSchedule(monday){
 }
 
 function renderGantt(){
+  if(ganttMode === 'mensal'){
+    renderGanttMensal();
+  } else {
+    renderGanttSemanal();
+  }
+}
+
+function renderGanttSemanal(){
   if(!ganttBaseMonday){
     const sorted=[...records].filter(r=>r.dtDesejada||r.dtSolicitacao).sort((a,b)=>{
       const da=b.dtDesejada||b.dtSolicitacao||'';
@@ -2464,6 +2529,75 @@ function renderGantt(){
     ganttBaseMonday = sorted.length>0
       ? getWeekMonday(new Date((sorted[0].dtDesejada||sorted[0].dtSolicitacao)+'T12:00:00'))
       : getWeekMonday(new Date());
+  }
+
+  // ── Pills de semana do mês ────────────────────────────────────────
+  // Calcula as semanas do mês da semana atual e renderiza os pills S1…Sn
+  const pillsEl = document.getElementById('gantt-semana-pills');
+  if(pillsEl){
+    const ano       = ganttBaseMonday.getFullYear();
+    const mes       = ganttBaseMonday.getMonth();
+    // Calcular semanas do mesmo mês que ganttBaseMonday
+    const primeiroDia = new Date(ano, mes, 1);
+    const ultimoDia   = new Date(ano, mes + 1, 0);
+    const semanasDoMes = [];
+    let cur = getWeekMonday(primeiroDia);
+    while(cur <= ultimoDia){
+      const mon = new Date(cur);
+      const sun = new Date(cur); sun.setDate(mon.getDate() + 6);
+      if(mon <= ultimoDia && sun >= primeiroDia){
+        semanasDoMes.push(new Date(mon));
+      }
+      cur = new Date(cur); cur.setDate(cur.getDate() + 7);
+    }
+
+    const atualStr = dateStr(ganttBaseMonday);
+    const mesNomeAbrev = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'][mes];
+
+    pillsEl.innerHTML = semanasDoMes.map((mon, i) => {
+      const monStr   = dateStr(mon);
+      const sun      = new Date(mon); sun.setDate(mon.getDate() + 6);
+      const isActive = monStr === atualStr;
+      const tooltip  = `${fmtDate(mon)} – ${fmtDate(sun)}`;
+
+      // Contar registros com produção nesta semana (indicador visual)
+      const monS = monStr;
+      const sunS = dateStr(sun);
+      const temProd = records.some(r => {
+        const d = r.dtDesejada || r.dtSolicitacao || '';
+        return d >= monS && d <= sunS && r.status !== 'Concluído';
+      });
+
+      return `<button
+        onclick="ganttSelecionarSemana('${monStr}')"
+        title="${tooltip}"
+        style="
+          padding:5px 14px;
+          border-radius:20px;
+          font-size:12px;
+          font-weight:700;
+          cursor:pointer;
+          transition:all .18s;
+          display:inline-flex;
+          align-items:center;
+          gap:5px;
+          border:1px solid ${isActive ? 'var(--cyan)' : 'var(--border)'};
+          background:${isActive ? 'var(--cyan)' : 'transparent'};
+          color:${isActive ? '#000' : 'var(--text2)'};
+        ">
+        S${i+1}
+        <span style="font-size:9px;font-weight:400;opacity:.75">${fmtDate(mon)}</span>
+        ${temProd && !isActive ? '<span style="width:5px;height:5px;border-radius:50%;background:var(--cyan);opacity:.6;display:inline-block"></span>' : ''}
+      </button>`;
+    }).join('');
+
+    // Adicionar label do mês/ano antes dos pills se mês diferente do atual
+    const hoje = new Date();
+    if(mes !== hoje.getMonth() || ano !== hoje.getFullYear()){
+      pillsEl.insertAdjacentHTML('afterbegin',
+        `<span style="font-size:11px;font-weight:700;color:var(--warn);font-family:'JetBrains Mono',monospace;margin-right:4px;align-self:center">${mesNomeAbrev}/${ano}</span>`
+      );
+    }
   }
   const {schedule,days}=buildSchedule(ganttBaseMonday);
   const today=dateStr(new Date());
@@ -2689,6 +2823,294 @@ function renderGantt(){
   document.getElementById('gantt-summary').innerHTML='';
 }
 
+// ================================================================
+//  GANTT MENSAL — visão gerencial (colunas = semanas do mês)
+// ================================================================
+function renderGanttMensal(){
+  // ── Base: mês e ano exibidos ────────────────────────────────────
+  if(!ganttMonthBase) ganttMonthBase = ganttBaseMonday ? new Date(ganttBaseMonday) : new Date();
+  const ano = ganttMonthBase.getFullYear();
+  const mes = ganttMonthBase.getMonth(); // 0-based
+
+  // Label do mês
+  const labelEl = document.getElementById('gantt-month-label');
+  if(labelEl) labelEl.textContent = GANTT_MONTH_NAMES[mes] + ' ' + ano;
+
+  // ── Calcular as semanas do mês ──────────────────────────────────
+  // Semana = segunda-feira da semana que contém pelo menos 1 dia do mês
+  const primeiroDia = new Date(ano, mes, 1);
+  const ultimoDia   = new Date(ano, mes + 1, 0);
+  const semanas = [];           // Array de { label, monday, sunday, semIdx }
+  let cursor = getWeekMonday(primeiroDia);
+  while(cursor <= ultimoDia){
+    const monday = new Date(cursor);
+    const sunday = new Date(cursor); sunday.setDate(monday.getDate() + 6);
+    // Só inclui se a semana tem algum dia dentro do mês
+    if(monday <= ultimoDia && sunday >= primeiroDia){
+      semanas.push({ monday: new Date(monday), sunday: new Date(sunday) });
+    }
+    cursor = new Date(cursor); cursor.setDate(cursor.getDate() + 7);
+  }
+
+  // ── Atualizar info bar ──────────────────────────────────────────
+  const totalDiasUteis = semanas.reduce((acc, s) => {
+    return acc + getWeekDays(s.monday).filter(d =>
+      d.getMonth() === mes && hoursOnDay(d) > 0
+    ).length;
+  }, 0);
+  const infoEl = document.getElementById('gantt-month-info');
+  if(infoEl) infoEl.textContent = `${semanas.length} semanas · ${totalDiasUteis} dias úteis`;
+
+  // ── Coletar dados de produção do mês ────────────────────────────
+  // Usa registros (records) reais — filtra pelo mês selecionado
+  // e usa buildSchedule por semana para calcular caixas programadas
+  const maqCapMes = {};   // horas disponíveis no mês por máquina
+  const maqHrsProg= {};   // horas programadas no mês por máquina
+
+  // Para cada máquina, calcular capacidade total do mês
+  for(const maq of MAQUINAS){
+    maqCapMes[maq]  = 0;
+    maqHrsProg[maq] = 0;
+    semanas.forEach(s => {
+      maqCapMes[maq] += weekHoursMaq(s.monday, maq);
+    });
+  }
+
+  // Montar matriz: maquina → produto → { semanas: [cx,...], hrsTotal, recs }
+  const matrizMes = {};  // { [maq]: { [prodKey]: { label, semanas:[cx,..], hrsTotal, cor, rec } } }
+  const colorMap  = {};
+  let   ci        = 0;
+  records.forEach(r => { colorMap[r.id] = BAR_COLORS[ci++ % BAR_COLORS.length]; });
+
+  for(const maq of MAQUINAS){
+    matrizMes[maq] = {};
+    semanas.forEach((s, si) => {
+      const { schedule } = buildSchedule(s.monday);
+      const entries = schedule[maq] || [];
+      entries.forEach(({ rec, segments, setupMin }) => {
+        const key = rec.id;
+        if(!matrizMes[maq][key]){
+          matrizMes[maq][key] = {
+            label:    rec.produto,
+            cod:      rec.prodCod || '—',
+            semanas:  Array(semanas.length).fill(0),
+            hrs:      Array(semanas.length).fill(0),
+            hrsTotal: 0,
+            cor:      colorMap[rec.id] || BAR_COLORS[0],
+            rec
+          };
+        }
+        const cxSem = segments.reduce((a, s) => a + (s.caixasNoDia || 0), 0);
+        const hrsSem = segments.reduce((a, s) => a + (s.hrsNoDia || 0), 0)
+                     + setupMin / 60;
+        matrizMes[maq][key].semanas[si] += cxSem;
+        matrizMes[maq][key].hrs[si]     += hrsSem;
+        matrizMes[maq][key].hrsTotal    += hrsSem;
+        maqHrsProg[maq]                 += hrsSem;
+      });
+    });
+  }
+
+  // ── Legenda ────────────────────────────────────────────────────
+  const legendEl = document.getElementById('gantt-legend');
+  if(legendEl){
+    const activeRecs = records.filter(r => r.status !== 'Concluído');
+    legendEl.innerHTML = activeRecs.slice(0,14).map(r => `
+      <div class="legend-item">
+        <div class="legend-dot" style="background:${colorMap[r.id]}"></div>
+        <span style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block">${r.produto.substring(0,30)}</span>
+      </div>`).join('');
+  }
+
+  // ── Construir HTML ─────────────────────────────────────────────
+  // Colunas: Máquina | Produto | Total Cx | Total Hrs | S1 | S2 | ... | Sn | Ocup.%
+  const nSem     = semanas.length;
+  const MAQ_W    = 80;   // px
+  const PROD_W   = 260;  // px
+  const TOT_CX_W = 64;
+  const TOT_HR_W = 64;
+  const SEM_W    = 110;  // px por semana
+  const OCC_W    = 72;
+
+  const gridCols = [
+    MAQ_W+'px',
+    PROD_W+'px',
+    TOT_CX_W+'px',
+    TOT_HR_W+'px',
+    ...Array(nSem).fill(SEM_W+'px'),
+    OCC_W+'px'
+  ].join(' ');
+
+  // ── Rótulos das semanas (Seg dd/mm – Dom dd/mm) ─────────────────
+  const semLabels = semanas.map((s, i) => {
+    const dL = fmtDate(s.monday);
+    const dR = fmtDate(s.sunday);
+    const totalHrsSem = weekHrsForMachine ? 0 : 0; // calculated per machine
+    return { label: `S${i+1}`, dL, dR };
+  });
+
+  let html = `<div class="gantt-wrap">`;
+
+  // ── Cabeçalho ──────────────────────────────────────────────────
+  html += `<div class="gantt-head-row" style="grid-template-columns:${gridCols}">
+    <div class="g-head-label" style="font-size:9px">Máquina</div>
+    <div class="g-head-label">Produto</div>
+    <div class="g-head-label" style="font-size:9px">Total<br>cx/mês</div>
+    <div class="g-head-label" style="font-size:9px">Total<br>h/mês</div>`;
+  semLabels.forEach(s => {
+    html += `<div class="g-head-day" style="flex-direction:column;justify-content:center;align-items:center;padding:4px 6px;text-align:center">
+      <div style="font-weight:700;font-size:11px">${s.label}</div>
+      <div class="g-date" style="font-size:9px">${s.dL}</div>
+      <div class="g-date" style="font-size:9px">↓ ${s.dR}</div>
+    </div>`;
+  });
+  html += `<div class="g-head-label" style="font-size:9px">Ocup.<br>%</div>`;
+  html += `</div>`;
+
+  // ── Linha de capacidade por semana (linha de contexto) ──────────
+  html += `<div style="grid-template-columns:${gridCols};display:grid;background:rgba(0,229,204,.04);border-bottom:1px solid var(--border2);border-top:1px solid var(--border2)">
+    <div style="padding:5px 8px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--text3);display:flex;align-items:center">CAP.</div>
+    <div style="padding:5px 8px;font-size:9px;color:var(--text3);display:flex;align-items:center">Capacidade disponível (total fábrica)</div>
+    <div style="padding:5px 6px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:700;color:var(--cyan);display:flex;align-items:center;justify-content:center">
+      ${records.filter(r=>r.status!=='Concluído').reduce((a,r)=>a+(r.qntCaixas||0),0).toLocaleString('pt-BR')}
+    </div>
+    <div style="padding:5px 6px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text3);display:flex;align-items:center;justify-content:center">—</div>`;
+  semanas.forEach(s => {
+    // Capacidade total de todas as máquinas nesta semana
+    const capSemTotal = MAQUINAS.reduce((acc, maq) => acc + weekHoursMaq(s.monday, maq), 0);
+    html += `<div style="padding:5px 6px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text3);display:flex;align-items:center;justify-content:center">${capSemTotal > 0 ? capSemTotal+'h' : '—'}</div>`;
+  });
+  html += `<div style="padding:5px 6px;display:flex;align-items:center;justify-content:center"></div>`;
+  html += `</div>`;
+
+  // ── Seções por máquina ─────────────────────────────────────────
+  let hasAny = false;
+  for(const maq of MAQUINAS){
+    const prodMap = matrizMes[maq];
+    const itens   = Object.values(prodMap);
+    if(!itens.length) continue;
+    hasAny = true;
+
+    const capMes  = maqCapMes[maq]  || 0;
+    const progMes = maqHrsProg[maq] || 0;
+    const occPct  = capMes > 0 ? Math.min(999, parseFloat((progMes / capMes * 100).toFixed(1))) : 0;
+    const occClr  = occPct > 100 ? 'var(--red)' : occPct >= 80 ? 'var(--warn)' : 'var(--green)';
+    const barW    = Math.min(100, occPct);
+
+    // Separator
+    html += `<div style="display:grid;grid-template-columns:${gridCols};background:var(--s2);border-top:2px solid var(--border2);border-bottom:1px solid var(--border)">
+      <div style="grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;padding:7px 12px">
+        <span style="font-size:11px;font-weight:700;color:var(--text)">⚙ ${maq} · ${itens.length} produto(s)</span>
+        <span style="font-family:'JetBrains Mono',monospace;font-size:10px;display:flex;align-items:center;gap:10px">
+          <span style="color:var(--text3)">${fmtHrs(progMes)} prog. / ${fmtHrs(capMes)} disp.</span>
+          <span style="color:${occClr};font-weight:700">${occPct}% ocupação</span>
+          <span style="display:inline-block;width:80px;height:6px;background:var(--s3);border-radius:3px;overflow:hidden;vertical-align:middle">
+            <span style="display:block;height:100%;width:${barW}%;background:${occClr};border-radius:3px"></span>
+          </span>
+        </span>
+      </div>
+    </div>`;
+
+    // Linhas de produto
+    itens.forEach(item => {
+      const totalCx  = item.semanas.reduce((a, v) => a + v, 0);
+      const maxCx    = Math.max(...item.semanas, 1);
+
+      html += `<div class="gantt-row" style="grid-template-columns:${gridCols}">`;
+
+      // Máquina col
+      html += `<div class="g-col-maq"><span class="g-col-maq-txt">${maq}</span></div>`;
+
+      // Produto col
+      html += `<div class="g-label"><strong title="${item.label}">${item.label}</strong>
+        <div style="font-size:9px;color:var(--text3);font-family:'JetBrains Mono',monospace;margin-top:1px">Cód: ${item.cod}</div>
+      </div>`;
+
+      // Total cx
+      html += `<div style="display:flex;align-items:center;justify-content:center;border-left:1px solid var(--border);background:var(--s1);font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:700;color:var(--cyan);padding:4px 3px;text-align:center">
+        ${totalCx > 0 ? totalCx.toLocaleString('pt-BR') : '—'}
+      </div>`;
+
+      // Total hrs
+      html += `<div style="display:flex;align-items:center;justify-content:center;border-left:1px solid var(--border);background:var(--s1);font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;color:var(--warn);padding:4px 3px;text-align:center">
+        ${item.hrsTotal > 0 ? fmtHrs(item.hrsTotal) : '—'}
+      </div>`;
+
+      // Células por semana — barra de Gantt proporcional
+      item.semanas.forEach((cx, si) => {
+        const hrs   = item.hrs[si] || 0;
+        const pct   = cx > 0 ? Math.round(cx / maxCx * 100) : 0;
+        const capSem = weekHoursMaq(semanas[si].monday, maq);
+        const occSem = capSem > 0 ? Math.min(100, Math.round(hrs / capSem * 100)) : 0;
+        const barClr = occSem > 85 ? 'var(--red)' : occSem > 60 ? 'var(--warn)' : item.cor;
+
+        if(cx > 0){
+          html += `<div style="padding:4px 6px;border-left:1px solid var(--border);background:var(--s1);display:flex;flex-direction:column;justify-content:center;gap:3px">
+            <!-- barra proporcional -->
+            <div style="height:6px;width:100%;background:rgba(255,255,255,.06);border-radius:3px;overflow:hidden">
+              <div style="height:6px;width:${pct}%;background:${barClr};border-radius:3px;transition:width .3s"></div>
+            </div>
+            <!-- cx e horas -->
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <span style="font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:700;color:var(--cyan)">${cx.toLocaleString('pt-BR')} cx</span>
+              <span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:var(--text3)">${fmtHrs(hrs)}</span>
+            </div>
+            <!-- % da capacidade semanal da máquina -->
+            <div style="font-size:9px;color:${occSem>85?'var(--red)':occSem>60?'var(--warn)':'var(--text3)'};font-family:'JetBrains Mono',monospace">${occSem}% cap.</div>
+          </div>`;
+        } else {
+          html += `<div style="padding:4px 6px;border-left:1px solid var(--border);background:var(--s1);display:flex;align-items:center;justify-content:center;color:var(--text4);font-size:11px">—</div>`;
+        }
+      });
+
+      // Ocupação total col
+      const occTot = capMes > 0 ? Math.min(999, parseFloat((item.hrsTotal / capMes * 100).toFixed(1))) : 0;
+      const occTotClr = occTot > 80 ? 'var(--warn)' : 'var(--text3)';
+      html += `<div style="display:flex;align-items:center;justify-content:center;border-left:2px solid var(--border2);background:var(--s1);font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:700;color:${occTotClr};padding:4px 2px;text-align:center">
+        ${occTot > 0 ? occTot+'%' : '—'}
+      </div>`;
+
+      html += `</div>`;
+    });
+
+    // Linha de resumo da máquina no mês
+    const totalCxMaq  = itens.reduce((a, it) => a + it.semanas.reduce((b,v) => b+v, 0), 0);
+    html += `<div style="display:grid;grid-template-columns:${gridCols};background:rgba(0,229,204,.03);border-top:1px dashed var(--border)">
+      <div style="padding:5px 8px;font-size:9px;color:var(--text3);display:flex;align-items:center">Total</div>
+      <div style="padding:5px 8px;font-size:9px;color:var(--text3);display:flex;align-items:center">${maq} — ${itens.length} produto(s)</div>
+      <div style="padding:5px 6px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:700;color:var(--cyan);display:flex;align-items:center;justify-content:center">${totalCxMaq.toLocaleString('pt-BR')} cx</div>
+      <div style="padding:5px 6px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:700;color:var(--warn);display:flex;align-items:center;justify-content:center">${fmtHrs(progMes)}</div>`;
+
+    // Totais por semana para esta máquina
+    semanas.forEach((s, si) => {
+      const cxSem  = itens.reduce((a, it) => a + (it.semanas[si] || 0), 0);
+      const hrsSem = itens.reduce((a, it) => a + (it.hrs[si]    || 0), 0);
+      const capSem = weekHoursMaq(s.monday, maq);
+      const occSem = capSem > 0 ? Math.min(100, Math.round(hrsSem / capSem * 100)) : 0;
+      const occClrSem = occSem > 85 ? 'var(--red)' : occSem > 60 ? 'var(--warn)' : 'var(--cyan)';
+      html += `<div style="padding:5px 6px;border-left:1px solid var(--border);background:rgba(0,229,204,.04);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px">
+        <span style="font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:700;color:${occClrSem}">${cxSem > 0 ? cxSem.toLocaleString('pt-BR') : '—'}</span>
+        <span style="font-family:'JetBrains Mono',monospace;font-size:9px;color:var(--text3)">${hrsSem > 0 ? fmtHrs(hrsSem)+' / '+occSem+'%' : ''}</span>
+      </div>`;
+    });
+
+    html += `<div style="padding:5px 6px;border-left:2px solid var(--border2);display:flex;align-items:center;justify-content:center;font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:700;color:${occClr}">${occPct}%</div>`;
+    html += `</div>`;
+  }
+
+  if(!hasAny){
+    html += `<div style="text-align:center;padding:60px 20px;color:var(--text3);font-size:13px">
+      <div style="font-size:40px;margin-bottom:12px">📅</div>
+      <div style="font-weight:600;margin-bottom:6px">Nenhuma produção programada para ${GANTT_MONTH_NAMES[mes]} ${ano}</div>
+      <div style="font-size:11px">Crie solicitações de produção no modo Semanal ou gere a programação automática.</div>
+    </div>`;
+  }
+
+  html += `</div>`;
+
+  document.getElementById('gantt-table').innerHTML = html;
+  document.getElementById('gantt-summary').innerHTML = '';
+}
 
 function renderGanttSummary(schedule,days){
   let html=`<div style="font-family:'JetBrains Mono',monospace;font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--text3);margin-bottom:10px">📦 Qtd por Dia</div>`;
@@ -6432,7 +6854,13 @@ function normalizeProdutoFirestore(data) {
     categoria: data.categoria || '',
     coberturaDias: data.coberturaDias || 0,
     estoqueMinimo: data.estoqueMinimo || 0,
-    ativo: data.ativo !== false
+    ativo: data.ativo !== false,
+    // ── Campos de cobertura e programação automática ──────────────
+    metaCoberturaDias:   parseInt(data.metaCoberturaDias)  || 0,
+    producaoMinima:      parseFloat(data.producaoMinima)   || 0,
+    multiploProducao:    parseFloat(data.multiploProducao) || 0,
+    tipoMinimo:          data.tipoMinimo          || '',
+    prioridadeProducao:  parseInt(data.prioridadeProducao) || 2
   };
 }
 
@@ -6478,6 +6906,12 @@ async function salvarProdutoFirestore(dados) {
     coberturaDias: parseInt(dados.coberturaDias) || 0,
     estoqueMinimo: parseFloat(dados.estoqueMinimo) || 0,
     ativo: dados.ativo !== false,
+    // ── Campos de cobertura e programação automática ──────────────
+    metaCoberturaDias:  parseInt(dados.metaCoberturaDias)  || 0,
+    producaoMinima:     parseFloat(dados.producaoMinima)   || 0,
+    multiploProducao:   parseFloat(dados.multiploProducao) || 0,
+    tipoMinimo:         dados.tipoMinimo          || '',
+    prioridadeProducao: parseInt(dados.prioridadeProducao) || 2,
     atualizadoEm: new Date().toISOString()
   };
   try {
@@ -6583,6 +7017,9 @@ function openAddProduto() {
   const sel = document.getElementById('pm-maq');
   if (sel) sel.innerHTML = MAQUINAS.map(m => `<option value="${m}">${m}</option>`).join('');
   ['pm-cod','pm-desc','pm-unid','pm-pcmin'].forEach(id => { const el = document.getElementById(id); if(el) el.value = ''; });
+  // Resetar novos campos de cobertura
+  ['pm-cobertura','pm-prod-min','pm-multiplo','pm-prioridade'].forEach(id => { const el = document.getElementById(id); if(el) el.value = ''; });
+  const tipoMin = document.getElementById('pm-tipo-min'); if(tipoMin) tipoMin.value = '';
   
   // Resetar título do modal
   document.getElementById('maq-modal-title').textContent = 'Novo Produto';
@@ -6608,6 +7045,12 @@ function editarProduto(cod, maquina, descricao) {
   document.getElementById('pm-desc').value = produto.descricao;
   document.getElementById('pm-unid').value = produto.unid || '';
   document.getElementById('pm-pcmin').value = produto.pc_min || '';
+  // Preencher novos campos de cobertura
+  const elCob = document.getElementById('pm-cobertura');   if(elCob)  elCob.value  = produto.metaCoberturaDias   || '';
+  const elPMin = document.getElementById('pm-prod-min');   if(elPMin) elPMin.value  = produto.producaoMinima      || '';
+  const elMult = document.getElementById('pm-multiplo');   if(elMult) elMult.value  = produto.multiploProducao    || '';
+  const elTipo = document.getElementById('pm-tipo-min');   if(elTipo) elTipo.value  = produto.tipoMinimo          || '';
+  const elPrio = document.getElementById('pm-prioridade'); if(elPrio) elPrio.value  = produto.prioridadeProducao  || '';
   
   // Popular máquinas no select
   const sel = document.getElementById('pm-maq');
@@ -6712,7 +7155,17 @@ function saveProdModal() {
     }
   }
   
-  const dados = { cod, descricao: desc, unid, kg_fd: 0, pc_min: pcmin, maquina: maq };
+  // Ler novos campos de cobertura (opcionais)
+  const metaCoberturaDias  = parseInt(document.getElementById('pm-cobertura')?.value)   || 0;
+  const producaoMinima     = parseFloat(document.getElementById('pm-prod-min')?.value)  || 0;
+  const multiploProducao   = parseFloat(document.getElementById('pm-multiplo')?.value)  || 0;
+  const tipoMinimo         = document.getElementById('pm-tipo-min')?.value              || '';
+  const prioridadeProducao = parseInt(document.getElementById('pm-prioridade')?.value)  || 2;
+
+  const dados = {
+    cod, descricao: desc, unid, kg_fd: 0, pc_min: pcmin, maquina: maq,
+    metaCoberturaDias, producaoMinima, multiploProducao, tipoMinimo, prioridadeProducao
+  };
   
   try {
     if (_produtoEditando) {
@@ -8850,7 +9303,19 @@ function paPopulaSemanas(){
 function pa_onSemanaChange(){ if(paResultados.length) renderProgAutomaticaResultado(); }
 
 function gerarProgAutomarica(){
-  // Validação: precisa de máquinas e produtos reais do Firestore
+  // ================================================================
+  //  PROGRAMAÇÃO AUTOMÁTICA EQUILIBRADA — v3 (simulação 4 semanas)
+  //  Lógica:
+  //   1. Monta candidatos com TODAS as máquinas compatíveis
+  //   2. Simula 4 semanas: a cada semana recalcula cobertura,
+  //      ordena por prioridade e aloca de forma intercalada
+  //      (round-robin) para evitar que um produto monopolize
+  //      a capacidade enquanto outros entram em ruptura
+  //   3. Para cada produto, escolhe a máquina mais rápida
+  //      disponível; divide produção entre máquinas se necessário
+  // ================================================================
+
+  // ── Validações iniciais ─────────────────────────────────────────
   if (!MAQUINAS.length) {
     const alertEl2 = document.getElementById('pa-alerta');
     if(alertEl2) alertEl2.innerHTML = '<div style="background:rgba(255,71,87,.1);border:1px solid rgba(255,71,87,.3);border-radius:8px;padding:12px 14px;font-size:12px;color:var(--red)">'
@@ -8869,228 +9334,406 @@ function gerarProgAutomarica(){
   projLoadManual();
   if(!projecaoCalculada.length) calcularProjecao();
 
-  const cobMin   = parseFloat(document.getElementById('pa-cobertura-min')?.value||'5');
-  const cobAlvo  = parseFloat(document.getElementById('pa-cobertura-alvo')?.value||'15');
-  const riscoLim = parseFloat(document.getElementById('pa-risco-critico')?.value||'3');
-  const maxPctMaq= parseFloat(document.getElementById('pa-max-pct-maq')?.value||'60') / 100;
+  const cobMin    = parseFloat(document.getElementById('pa-cobertura-min')?.value||'5');
+  const cobAlvo   = parseFloat(document.getElementById('pa-cobertura-alvo')?.value||'15');
+  const riscoLim  = parseFloat(document.getElementById('pa-risco-critico')?.value||'3');
+  const maxPctMaq = parseFloat(document.getElementById('pa-max-pct-maq')?.value||'60') / 100;
 
   const semanaSel = document.getElementById('pa-semana-sel')?.value;
-  const monday = semanaSel ? new Date(semanaSel+'T12:00:00') : getWeekMonday(new Date());
-  const days = getWeekDays(monday);
-
-  // Avisos de configuração
-  const alertEl = document.getElementById('pa-alerta');
-  const maqSemProdutos = MAQUINAS.filter(m => {
-    const d = getMaquinaData(m);
-    return !d || !Array.isArray(d.produtosCompativeis) || d.produtosCompativeis.length === 0;
-  });
+  const monday    = semanaSel ? new Date(semanaSel+'T12:00:00') : getWeekMonday(new Date());
+  const days      = getWeekDays(monday);
+  const alertEl   = document.getElementById('pa-alerta');
 
   if (!projecaoCalculada.length) {
-    if(alertEl) alertEl.innerHTML = '<div style="background:rgba(255,179,0,.1);border:1px solid rgba(255,179,0,.3);border-radius:8px;padding:12px 14px;font-size:12px;color:var(--warn);margin-bottom:8px">⚠️ <strong>Dados insuficientes:</strong> Nenhuma projeção de vendas encontrada. Importe o estoque e projeção na aba <strong>Importação/API</strong>.</div>';
+    if(alertEl) alertEl.innerHTML = '<div style="background:rgba(255,179,0,.1);border:1px solid rgba(255,179,0,.3);border-radius:8px;padding:12px 14px;font-size:12px;color:var(--warn);margin-bottom:8px">'
+      + '⚠️ <strong>Dados insuficientes:</strong> Nenhuma projeção encontrada. Importe estoque e projeção em <strong>Importação/API</strong>.</div>';
     document.getElementById('pa-body').innerHTML = '';
     paResultados = [];
     renderProgAutomaticaStats();
     return;
   }
 
-  if(alertEl) {
-    let alertHtml = '';
-    if (maqSemProdutos.length > 0) {
-      alertHtml += '<div style="background:rgba(255,179,0,.08);border:1px solid rgba(255,179,0,.25);border-radius:8px;padding:10px 14px;font-size:12px;color:var(--warn);margin-bottom:8px">⚠️ <strong>Máquinas sem produtos vinculados:</strong> ' + maqSemProdutos.join(', ') + '. Configure em <strong>Configurações → Máquinas</strong> → Produtos Compatíveis.</div>';
-    }
-    alertEl.innerHTML = alertHtml;
-  }
-
-  const candidates = [];
+  // ── PASSO 1: montar candidatos com todas as máquinas compatíveis ─
+  const allProds       = getAllProdutos();
   const prodSemMaquina = [];
+  const candidates     = [];   // estado dinâmico por produto
+
   projecaoCalculada.forEach(proj => {
-    const allProds = getAllProdutos();
-    const ficha = allProds.find(p => String(p.cod)===String(proj.cod) || p.descricao===proj.produto);
+    const ficha     = allProds.find(p => String(p.cod)===String(proj.cod) || p.descricao===proj.produto);
+    const fichaUnid = ficha ? (ficha.unid  || 1) : 1;
+    const fichaPcMin= ficha ? (ficha.pc_min || 0) : 0;
+    const primaryMaq= ficha ? ficha.maquina : null;
 
-    let maqNome = ficha ? ficha.maquina : null;
-    let fichaUnid = ficha ? (ficha.unid || 1) : 1;
-    let fichaPcMin = ficha ? (ficha.pc_min || 0) : 0;
+    // Encontrar TODAS as máquinas que produzem este produto
+    const maquinasCompativeis = [];
+    for(const maqNome of MAQUINAS){
+      const maqData = getMaquinaData(maqNome);
+      if(!maqData) continue;
+      const prodEntry = Array.isArray(maqData.produtosCompativeis)
+        ? maqData.produtosCompativeis.find(p =>
+            p.produto === proj.produto ||
+            (proj.produto && proj.produto.startsWith(p.produto)) ||
+            p.produto === (ficha && ficha.descricao))
+        : null;
+      if(prodEntry){
+        const vel = (prodEntry.velocidade > 0)
+          ? parseFloat(prodEntry.velocidade)
+          : (parseFloat(maqData.pcMin) || fichaPcMin || 0);
+        maquinasCompativeis.push({ maquina: maqNome, pc_min: vel });
+      } else if(maqNome === primaryMaq){
+        // Máquina principal sem entrada em produtosCompativeis
+        const vel = parseFloat(maqData.pcMin) || fichaPcMin || 0;
+        maquinasCompativeis.push({ maquina: maqNome, pc_min: vel });
+      }
+    }
 
-    if (!maqNome) {
-      // Tenta encontrar qual maquina tem este produto nos compativeis
-      const maqDataBusca = Object.values(window.MAQUINAS_DATA || {}).find(m =>
-        Array.isArray(m.produtosCompativeis) &&
-        m.produtosCompativeis.some(p => p.produto === proj.produto || (proj.produto && proj.produto.startsWith(p.produto)))
-      );
-      if (maqDataBusca) {
-        maqNome = maqDataBusca.nome;
-        const entry = maqDataBusca.produtosCompativeis.find(p => p.produto === proj.produto || (proj.produto && proj.produto.startsWith(p.produto)));
-        fichaPcMin = (entry && entry.velocidade) ? parseFloat(entry.velocidade) : (parseFloat(maqDataBusca.pcMin) || 0);
+    if(!maquinasCompativeis.length){
+      if(primaryMaq){
+        const maqData = getMaquinaData(primaryMaq);
+        maquinasCompativeis.push({ maquina: primaryMaq, pc_min: parseFloat(maqData?.pcMin)||fichaPcMin||0 });
       } else {
         prodSemMaquina.push(proj.produto);
         return;
       }
     }
 
-    // Buscar velocidade real da maquina no cadastro Firestore
-    const maqData = getMaquinaData(maqNome);
-    let pc_min = fichaPcMin; // 3: fallback catalogo
-    if (maqData) {
-      // 1: velocidade especifica do produto na maquina
-      const prodEntry = Array.isArray(maqData.produtosCompativeis)
-        ? maqData.produtosCompativeis.find(p => p.produto === proj.produto || (proj.produto && proj.produto.startsWith(p.produto)) || p.produto === (ficha && ficha.descricao))
-        : null;
-      if (prodEntry && prodEntry.velocidade != null && prodEntry.velocidade > 0) {
-        pc_min = parseFloat(prodEntry.velocidade);
-      } else if (maqData.pcMin && parseFloat(maqData.pcMin) > 0) {
-        pc_min = parseFloat(maqData.pcMin); // 2: velocidade padrao da maquina
-      }
-      // 3: fichaPcMin (ja definido acima) - fallback
-    }
-    if (!pc_min || pc_min <= 0) {
-      console.warn('[PA] Maquina sem velocidade:', maqNome, '| produto:', proj.produto);
-    }
+    // Ordenar por velocidade desc (máquina mais rápida primeiro)
+    maquinasCompativeis.sort((a,b) => b.pc_min - a.pc_min);
 
-    const demandaDiaria = proj.projFinal / 7;
-    const unidPorCx = fichaUnid;
-    const estoqueRaw = proj.estoque ?? 0;
-    const estoqueCaixas = unidPorCx > 1 ? estoqueRaw / unidPorCx : estoqueRaw;
-    const estoque = estoqueCaixas;
+    // Calcular estado inicial
+    const demandaDiaria  = proj.projFinal / 7;
+    const demandaSemanal = proj.projFinal;          // caixas/semana
+    const unidPorCx      = fichaUnid;
+    const estoqueRaw     = proj.estoque ?? 0;
+    // Converter unidades → caixas se necessário
+    const estoque = (unidPorCx > 1 && estoqueRaw > demandaSemanal * unidPorCx * 0.5)
+      ? estoqueRaw / unidPorCx
+      : estoqueRaw;
     const cobAtual = demandaDiaria > 0 ? estoque / demandaDiaria : 999;
-    const prioridade = calcPrioridade(cobAtual, demandaDiaria, riscoLim, cobMin);
+
+    // Ignorar produtos já acima da meta de cobertura
+    if(cobAtual > cobAlvo && cobAtual < 900) return;
+
     const estqAlvo = demandaDiaria * cobAlvo;
-    const qntCaixasNecessario = Math.max(0, Math.ceil((estqAlvo - estoque)));
-    if(qntCaixasNecessario <= 0 && cobAtual > cobAlvo) return;
-    const unidTotal = qntCaixasNecessario * unidPorCx;
-    const tempoMin  = pc_min > 0 ? unidTotal / pc_min : 0;
-    const tempoHrs  = tempoMin / 60;
-    const cobProjetada = demandaDiaria > 0 ? parseFloat(((estoque + qntCaixasNecessario) / demandaDiaria).toFixed(1)) : 999;
+    if(Math.max(0, estqAlvo - estoque) <= 0 && cobAtual > cobAlvo) return;
+
+    // Campos de mínimo/múltiplo do produto
+    const producaoMinima   = ficha ? (parseFloat(ficha.producaoMinima)   || 0) : 0;
+    const multiploProducao = ficha ? (parseFloat(ficha.multiploProducao) || 0) : 0;
+    const prioridadeProduto= ficha ? (parseInt(ficha.prioridadeProducao) || 2) : 2;
+
     candidates.push({
       prod: proj.produto,
-      cod: proj.cod,
-      maquina: maqNome,
-      pc_min,
+      cod:  proj.cod,
+      maquinasCompativeis,                        // lista ordenada de máquinas
       unid: unidPorCx,
       estoque,
-      cobAtual: parseFloat(cobAtual.toFixed(1)),
-      demandaDiaria: parseFloat(demandaDiaria.toFixed(2)),
-      demandaSemanal: parseFloat(proj.projFinal.toFixed(2)),
-      qntCaixasSugerida: qntCaixasNecessario,
-      tempoHrs: parseFloat(tempoHrs.toFixed(2)),
-      prioridade,
-      cobProjetada,
-      risco: cobAtual <= riscoLim ? 'critico' : cobAtual <= cobMin ? 'alto' : cobAtual <= cobMin*2 ? 'medio' : 'ok',
-      motivo: buildMotivo(cobAtual, demandaDiaria, riscoLim, cobMin, cobAlvo),
-      // flags de diagnóstico
-      velocidadeOrigem: maqData ? ((() => {
-        const e = Array.isArray(maqData.produtosCompativeis) ? maqData.produtosCompativeis.find(p => p.produto === proj.produto || p.produto === (ficha && ficha.descricao)) : null;
-        return e && e.velocidade ? 'produto' : (maqData.pcMin ? 'maquina' : 'catalogo');
-      })()) : 'catalogo'
+      estoqueSim: estoque,                        // estado simulado — evolui semana a semana
+      cobAtual:       parseFloat(cobAtual.toFixed(1)),
+      demandaDiaria:  parseFloat(demandaDiaria.toFixed(2)),
+      demandaSemanal: parseFloat(demandaSemanal.toFixed(2)),
+      demandaMensal:  parseFloat((demandaSemanal * 4).toFixed(2)),
+      producaoMinima,
+      multiploProducao,
+      prioridadeProduto,
+      risco: cobAtual <= riscoLim ? 'critico'
+           : cobAtual <= cobMin   ? 'alto'
+           : cobAtual <= cobMin*2 ? 'medio' : 'ok',
+      motivo: buildMotivo(cobAtual, demandaDiaria, riscoLim, cobMin, cobAlvo)
     });
   });
 
-  // Alertas de produtos sem maquina / maquinas sem velocidade
-  if (alertEl) {
-    let alertHtml = alertEl.innerHTML || '';
-    if (prodSemMaquina.length > 0) {
+  // ── Alertas de configuração ─────────────────────────────────────
+  if(alertEl){
+    let alertHtml = '';
+    const maqSemProdutos = MAQUINAS.filter(m => {
+      const d = getMaquinaData(m);
+      return !d || !Array.isArray(d.produtosCompativeis) || d.produtosCompativeis.length === 0;
+    });
+    if(maqSemProdutos.length){
+      alertHtml += '<div style="background:rgba(255,179,0,.08);border:1px solid rgba(255,179,0,.25);border-radius:8px;padding:10px 14px;font-size:12px;color:var(--warn);margin-bottom:8px">'
+        + '⚠️ <strong>Máquinas sem produtos vinculados:</strong> ' + maqSemProdutos.join(', ')
+        + '. Configure em <strong>Configurações → Máquinas → Produtos Compatíveis</strong>.</div>';
+    }
+    if(prodSemMaquina.length){
       alertHtml += '<div style="background:rgba(255,71,87,.08);border:1px solid rgba(255,71,87,.3);border-radius:8px;padding:10px 14px;font-size:12px;color:var(--red);margin-bottom:8px">'
-        + '\u26D4 <strong>Produtos sem maquina compativel cadastrada:</strong> '
+        + '⛔ <strong>Produtos sem máquina compatível:</strong> '
         + prodSemMaquina.slice(0,5).join(', ')
         + (prodSemMaquina.length > 5 ? ' e mais ' + (prodSemMaquina.length-5) : '')
-        + '. Vincule em <strong>Configuracoes > Maquinas > Produtos Compativeis</strong>.</div>';
+        + '. Vincule em <strong>Configurações → Máquinas → Produtos Compatíveis</strong>.</div>';
     }
-    const maqSemVel = Object.values(window.MAQUINAS_DATA || {}).filter(m => !(m.pcMin > 0));
-    if (maqSemVel.length > 0) {
+    const maqSemVel = Object.values(window.MAQUINAS_DATA||{}).filter(m => !(m.pcMin > 0));
+    if(maqSemVel.length){
       alertHtml += '<div style="background:rgba(255,179,0,.08);border:1px solid rgba(255,179,0,.25);border-radius:8px;padding:10px 14px;font-size:12px;color:var(--warn);margin-bottom:8px">'
-        + '\u26A0\uFE0F <strong>Maquinas sem velocidade configurada:</strong> '
+        + '⚠️ <strong>Máquinas sem velocidade configurada:</strong> '
         + maqSemVel.map(m => m.nome).join(', ')
-        + '. Configure em <strong>Configuracoes > Maquinas > Capacidade</strong>.</div>';
+        + '. Configure em <strong>Configurações → Máquinas → Capacidade</strong>.</div>';
     }
     alertEl.innerHTML = alertHtml;
   }
 
   if(!candidates.length){
-    document.getElementById('pa-body').innerHTML = '<div class="empty"><div class="ei">✅</div>Nenhum produto precisa de produção urgente com os parâmetros atuais.<br><small style="color:var(--text3)">Verifique se importou estoque e projeção na aba Importação/API</small></div>';
+    document.getElementById('pa-body').innerHTML = '<div class="empty"><div class="ei">✅</div>Nenhum produto precisa de produção com os parâmetros atuais.<br><small style="color:var(--text3)">Verifique se importou estoque e projeção na aba Importação/API</small></div>';
     paResultados = [];
     renderProgAutomaticaStats();
     return;
   }
 
-  const byMaq = {};
-  candidates.forEach(c => {
-    if(!byMaq[c.maquina]) byMaq[c.maquina] = [];
-    byMaq[c.maquina].push(c);
-  });
-
-  paResultados = [];
-
-  for(const maq of Object.keys(byMaq)){
-    const items = byMaq[maq].sort((a,b) => b.prioridade - a.prioridade);
-    const maqData2 = getMaquinaData(maq);
-
-    // Calcular capacidade semanal real respeitando hTurno, nTurnos e eficiência
+  // ── PASSO 2: calcular capacidade efetiva de cada máquina ─────────
+  const maqCapacidades = {};  // horas disponíveis por semana
+  for(const maq of MAQUINAS){
     let maqWeekHrs = weekHrsForMachine(maq, monday);
-    if (!maqWeekHrs || maqWeekHrs <= 0) {
-      if (maqData2 && parseFloat(maqData2.hTurno) > 0 && parseInt(maqData2.nTurnos) > 0) {
-        const hTurno = parseFloat(maqData2.hTurno);
-        const nTurnos = parseInt(maqData2.nTurnos);
-        const diasUteis = days.length || 5;
-        maqWeekHrs = hTurno * nTurnos * diasUteis;
+    const maqData2 = getMaquinaData(maq);
+    if(!maqWeekHrs || maqWeekHrs <= 0){
+      if(maqData2 && parseFloat(maqData2.hTurno) > 0 && parseInt(maqData2.nTurnos) > 0){
+        maqWeekHrs = parseFloat(maqData2.hTurno) * parseInt(maqData2.nTurnos) * (days.length || 5);
       } else {
-        maqWeekHrs = 44; // fallback padrão (8h × 1 turno × 5 dias + 1 hora extra)
+        maqWeekHrs = 44; // fallback: 8h × 1 turno × 5 dias + extra
       }
     }
-    // Aplicar eficiência da máquina na capacidade disponível
-    const efic = (maqData2 && parseFloat(maqData2.eficiencia) > 0) ? parseFloat(maqData2.eficiencia) / 100 : 1;
-    const maqCapacidadeEfetiva = maqWeekHrs * efic;
+    const efic = (maqData2 && parseFloat(maqData2.eficiencia) > 0)
+      ? parseFloat(maqData2.eficiencia) / 100 : 1;
+    maqCapacidades[maq] = maqWeekHrs * efic;
+  }
 
-    const maqWorkDays = days.filter(d => hoursOnMachineDay(maq,d) > 0);
-    let maqHrsRestantes = maqCapacidadeEfetiva;
-    items.forEach(item => {
-      const maxHrsItem = maqHrsRestantes * maxPctMaq;
-      const hrsAlocar  = Math.min(item.tempoHrs, maxHrsItem);
-      const pctUsado   = maqCapacidadeEfetiva > 0 ? (hrsAlocar / maqCapacidadeEfetiva * 100) : 0;
-      const cxAlocar   = item.pc_min > 0 && item.unid > 0
-        ? Math.floor(hrsAlocar * 60 * item.pc_min / item.unid)
-        : item.qntCaixasSugerida;
-      maqHrsRestantes -= hrsAlocar;
-      const diasDist = distribuirPorDia(cxAlocar, maqWorkDays, item);
-      const cobProjetadaReal = item.demandaDiaria > 0
-        ? parseFloat(((item.estoque + cxAlocar) / item.demandaDiaria).toFixed(1))
-        : 999;
+  // ── PASSO 3: simular 4 semanas com alocação intercalada ──────────
+  //
+  //  Estrutura de alocação por produto:
+  //    allocations[prod] = {
+  //      hrsTotal, cxTotal,
+  //      semanas: [cx_s1, cx_s2, cx_s3, cx_s4],
+  //      maquinas: { nomeMaq: cxAlocadas }
+  //    }
+  //
+  const allocations = {};
+  candidates.forEach(c => {
+    allocations[c.prod] = { hrsTotal: 0, cxTotal: 0, semanas: [0,0,0,0], maquinas: {} };
+  });
 
-      // Validação de insumos
-      const fichaTec = FICHA_TECNICA.find(f => String(f.cod)===String(item.cod) || f.desc===item.prod)
-                    || (typeof fichaTecnicaData!=='undefined' ? fichaTecnicaData.find(f => String(f.cod)===String(item.cod) || f.desc===item.prod) : null);
-      let insumosStatus = [];
-      let temFichasTecnica = !!(fichaTec && fichaTec.insumos && fichaTec.insumos.length);
-      let insumosOk = true;
-      let insumosFaltando = [];
-      if(temFichasTecnica && insumosEstoqueData.length > 0){
-        insumosStatus = fichaTec.insumos.map(ins => {
-          const consumo = (ins.qty||0) * cxAlocar;
-          const estoqueAtual = getEstoqueInsumo(ins.insumo);
-          const saldo = estoqueAtual != null ? estoqueAtual - consumo : null;
-          const falta = saldo != null && saldo < 0;
-          if(falta){ insumosOk = false; insumosFaltando.push({ nome: ins.insumo, consumo, estoqueAtual, saldo, deficit: Math.abs(saldo) }); }
-          return { nome: ins.insumo, consumo, estoqueAtual, saldo, falta };
-        }).filter(i => i.consumo > 0);
+  // Capacidade restante por semana × máquina
+  const maqHrsRestantes = Array.from({length:4}, () => {
+    const s = {};
+    MAQUINAS.forEach(m => { s[m] = maqCapacidades[m] || 0; });
+    return s;
+  });
+
+  for(let sem = 0; sem < 4; sem++){
+
+    // 3a. Recalcular cobertura e prioridade para esta semana
+    candidates.forEach(c => {
+      const cob = c.demandaDiaria > 0 ? c.estoqueSim / c.demandaDiaria : 999;
+      c._cobSem     = parseFloat(cob.toFixed(1));
+      c._priorSem   = calcPrioridadeEquilibrada(
+        cob, c.demandaDiaria, riscoLim, cobMin, c.prioridadeProduto, sem
+      );
+    });
+
+    // 3b. Ordenar: maior prioridade primeiro (produto mais crítico)
+    const fila = [...candidates].sort((a,b) => b._priorSem - a._priorSem);
+
+    // 3c. Alocação round-robin: percorre a fila várias vezes até
+    //     esgotar capacidade ou todos atingirem a cobertura alvo
+    const MAX_PASSES = 30;
+    for(let pass = 0; pass < MAX_PASSES; pass++){
+      let algumAlocado = false;
+
+      for(const c of fila){
+
+        // Já atingiu a cobertura alvo?
+        const cobSem = c.demandaDiaria > 0 ? c.estoqueSim / c.demandaDiaria : 999;
+        if(cobSem >= cobAlvo) continue;
+
+        // Quantidade ainda necessária
+        let cxNecessario = Math.max(0, Math.ceil(c.demandaDiaria * cobAlvo - c.estoqueSim));
+        if(cxNecessario <= 0) continue;
+
+        // Respeitar mínimo de produção e múltiplo
+        if(c.producaoMinima > 0 && cxNecessario < c.producaoMinima)
+          cxNecessario = c.producaoMinima;
+        if(c.multiploProducao > 0)
+          cxNecessario = Math.ceil(cxNecessario / c.multiploProducao) * c.multiploProducao;
+
+        // 3d. Escolher a melhor máquina disponível nesta semana
+        //     Critério: mais rápida E com horas disponíveis
+        let bestMaq = null, bestPcMin = 0, bestHrsDisp = 0;
+        for(const mc of c.maquinasCompativeis){
+          const hrsDisp = maqHrsRestantes[sem][mc.maquina] || 0;
+          if(hrsDisp <= 0) continue;
+          if(mc.pc_min > bestPcMin || (mc.pc_min === bestPcMin && hrsDisp > bestHrsDisp)){
+            bestMaq     = mc.maquina;
+            bestPcMin   = mc.pc_min;
+            bestHrsDisp = hrsDisp;
+          }
+        }
+        if(!bestMaq || bestPcMin <= 0) continue;
+
+        // Horas necessárias para produzir cxNecessario nesta máquina
+        const hrsNecessario = (cxNecessario * c.unid) / (bestPcMin * 60);
+        if(hrsNecessario <= 0) continue;
+
+        // Limitar pelo percentual máximo por produto/máquina
+        const maxHrsItem    = maqCapacidades[bestMaq] * maxPctMaq;
+        const hrsJaAlocadas = allocations[c.prod].maquinas[bestMaq]
+          ? (allocations[c.prod].maquinas[bestMaq] * c.unid) / (bestPcMin * 60)
+          : 0;
+        const hrsPermitidas = Math.max(0, maxHrsItem - hrsJaAlocadas);
+
+        const hrsAlocar = Math.min(hrsNecessario, maqHrsRestantes[sem][bestMaq], hrsPermitidas);
+        if(hrsAlocar < 0.01) continue;
+
+        const cxAlocar = Math.floor(hrsAlocar * 60 * bestPcMin / c.unid);
+        if(cxAlocar <= 0) continue;
+
+        // ── Registrar alocação ──────────────────────────────────
+        maqHrsRestantes[sem][bestMaq]                         -= hrsAlocar;
+        allocations[c.prod].hrsTotal                          += hrsAlocar;
+        allocations[c.prod].cxTotal                           += cxAlocar;
+        allocations[c.prod].semanas[sem]                      += cxAlocar;
+        allocations[c.prod].maquinas[bestMaq]                  =
+          (allocations[c.prod].maquinas[bestMaq] || 0) + cxAlocar;
+
+        // Atualizar estoque simulado com a produção alocada
+        c.estoqueSim += cxAlocar;
+        algumAlocado  = true;
       }
 
-      paResultados.push({
-        ...item,
-        hrsAlocadas: parseFloat(hrsAlocar.toFixed(2)),
-        cxAlocadas: cxAlocar,
-        pctMaquina: parseFloat(pctUsado.toFixed(1)),
-        cobProjetada: cobProjetadaReal,
-        diasDist,
-        insumosStatus,
-        insumosOk,
-        insumosFaltando,
-        temFichasTecnica
-      });
+      // Se nenhum produto recebeu alocação nesta passagem, parar
+      if(!algumAlocado) break;
+    }
+
+    // 3e. Avançar simulação: consumir demanda semanal
+    candidates.forEach(c => {
+      c.estoqueSim = Math.max(0, c.estoqueSim - c.demandaSemanal);
+    });
+  }
+
+  // ── PASSO 4: construir paResultados (semana 1 = semana selecionada) ──
+  paResultados = [];
+  const semanaDays = days.filter(d => true); // todos os dias da semana selecionada
+
+  for(const c of candidates){
+    const alloc = allocations[c.prod];
+    if(!alloc || alloc.cxTotal <= 0) continue;
+
+    // Máquina que mais produziu (para exibição principal)
+    const maqPrincipal = Object.entries(alloc.maquinas)
+      .sort((a,b) => b[1] - a[1])[0]?.[0] || c.maquinasCompativeis[0]?.maquina || '—';
+    const pcMinPrincipal = c.maquinasCompativeis.find(m => m.maquina === maqPrincipal)?.pc_min
+      || c.maquinasCompativeis[0]?.pc_min || 0;
+
+    // Semana 1 é o que vai para o Gantt atual
+    const cxSemana1  = alloc.semanas[0] || 0;
+    const hrsSemana1 = (cxSemana1 > 0 && pcMinPrincipal > 0)
+      ? (cxSemana1 * c.unid) / (pcMinPrincipal * 60) : 0;
+    const maqCap1    = maqCapacidades[maqPrincipal] || 1;
+    const pctMaquina = parseFloat((hrsSemana1 / maqCap1 * 100).toFixed(1));
+
+    // Cobertura projetada após toda a produção do mês
+    const cobProjetada = c.demandaDiaria > 0
+      ? parseFloat(((c.estoque + alloc.cxTotal) / c.demandaDiaria).toFixed(1))
+      : 999;
+
+    // Distribuir produção da semana 1 pelos dias úteis
+    const maqWorkDays = semanaDays.filter(d => hoursOnMachineDay(maqPrincipal, d) > 0);
+    const diasDist    = distribuirPorDia(cxSemana1, maqWorkDays, { ...c, maquina: maqPrincipal });
+
+    // Resumo das semanas e máquinas no motivo
+    const semInfo = alloc.semanas
+      .map((cx, i) => cx > 0 ? `S${i+1}:${cx}cx` : null)
+      .filter(Boolean).join(' · ');
+    const maqInfo = Object.keys(alloc.maquinas).length > 1
+      ? ' [' + Object.entries(alloc.maquinas).map(([m,cx]) => `${m.split(' ').pop()}:${cx}cx`).join(', ') + ']'
+      : '';
+    const motivoFinal = c.motivo + (semInfo ? ` | ${semInfo}${maqInfo}` : '');
+
+    // ── Validação de insumos ──────────────────────────────────────
+    const fichaTec = FICHA_TECNICA.find(f => String(f.cod)===String(c.cod) || f.desc===c.prod)
+                  || (typeof fichaTecnicaData!=='undefined'
+                      ? fichaTecnicaData.find(f => String(f.cod)===String(c.cod) || f.desc===c.prod)
+                      : null);
+    const temFichasTecnica = !!(fichaTec && fichaTec.insumos && fichaTec.insumos.length);
+    let insumosStatus = [], insumosOk = true, insumosFaltando = [];
+    if(temFichasTecnica && insumosEstoqueData.length > 0){
+      insumosStatus = fichaTec.insumos.map(ins => {
+        const consumo     = (ins.qty||0) * alloc.cxTotal;
+        const estoqueAtual= getEstoqueInsumo(ins.insumo);
+        const saldo       = estoqueAtual != null ? estoqueAtual - consumo : null;
+        const falta       = saldo != null && saldo < 0;
+        if(falta){ insumosOk = false; insumosFaltando.push({ nome: ins.insumo, consumo, estoqueAtual, saldo, deficit: Math.abs(saldo) }); }
+        return { nome: ins.insumo, consumo, estoqueAtual, saldo, falta };
+      }).filter(i => i.consumo > 0);
+    }
+
+    paResultados.push({
+      prod:             c.prod,
+      cod:              c.cod,
+      maquina:          maqPrincipal,
+      maquinasUsadas:   Object.keys(alloc.maquinas),
+      pc_min:           pcMinPrincipal,
+      unid:             c.unid,
+      estoque:          c.estoque,
+      cobAtual:         c.cobAtual,
+      demandaDiaria:    c.demandaDiaria,
+      demandaSemanal:   c.demandaSemanal,
+      qntCaixasSugerida:alloc.cxTotal,
+      hrsAlocadas:      parseFloat(hrsSemana1.toFixed(2)),
+      hrsAlocadasTotal: parseFloat(alloc.hrsTotal.toFixed(2)),
+      cxAlocadas:       cxSemana1,          // semana 1 → Gantt
+      cxAlocadasTotal:  alloc.cxTotal,      // total 4 semanas
+      semanas:          alloc.semanas,       // [cx_s1, cx_s2, cx_s3, cx_s4]
+      pctMaquina:       pctMaquina,
+      cobProjetada,
+      diasDist,
+      risco:            c.risco,
+      motivo:           motivoFinal,
+      insumosStatus,
+      insumosOk,
+      insumosFaltando,
+      temFichasTecnica,
+      velocidadeOrigem: 'equilibrado'
     });
   }
 
   renderProgAutomaticaResultado();
   renderProgAutomaticaStats();
   document.getElementById('pa-apply-btn').style.display = paResultados.length ? 'flex' : 'none';
-  toast('Programação gerada: ' + paResultados.length + ' sugestões', 'ok');
+  toast(`✅ Programação equilibrada: ${paResultados.length} produtos em 4 semanas`, 'ok');
+}
+
+// ─────────────────────────────────────────────────────────────────────
+//  calcPrioridadeEquilibrada — pontuação multi-critério
+//  Evita que produtos com alto volume dominem a capacidade
+//  enquanto produtos críticos aguardam
+// ─────────────────────────────────────────────────────────────────────
+function calcPrioridadeEquilibrada(cobAtual, demandaDiaria, riscoLim, cobMin, prioridadeProduto, semana){
+  let score = 0;
+
+  // 1. Risco de ruptura — peso dominante
+  if(cobAtual <= riscoLim){
+    score += 100000;                                // iminente: máxima urgência
+    score += Math.max(0, riscoLim - cobAtual) * 5000; // quanto mais próximo do zero, mais urgente
+  } else if(cobAtual <= cobMin){
+    score += 50000;                                 // abaixo do mínimo
+    score += Math.max(0, cobMin - cobAtual) * 1000;
+  } else if(cobAtual <= cobMin * 2){
+    score += 10000;                                 // cobertura baixa — atenção
+    score += Math.max(0, cobMin * 2 - cobAtual) * 200;
+  }
+
+  // 2. Demanda semanal — limitada para não dominar (cap = 2000)
+  //    Isso impede que produtos de alto volume "roubem" toda a capacidade
+  const demandaScore = Math.min(demandaDiaria * 7, 2000);
+  score += demandaScore;
+
+  // 3. Prioridade configurada no produto (1 = alta, 3 = baixa)
+  //    Inverte: prioridade 1 → +400pts, prioridade 3 → +0pts
+  const priorScore = Math.max(0, (4 - (prioridadeProduto || 2))) * 200;
+  score += priorScore;
+
+  // 4. Urgência da semana — semanas iniciais têm peso levemente maior
+  score += Math.max(0, 3 - semana) * 50;
+
+  return score;
 }
 
 function calcPrioridade(cobAtual, demandaDiaria, riscoLim, cobMin){
@@ -9122,23 +9765,34 @@ function distribuirPorDia(qntCaixas, workDays, item){
 }
 
 function renderProgAutomaticaStats(){
-  const riscos    = paResultados.filter(p => p.risco==='critico'||p.risco==='alto').length;
-  const totalHrs  = paResultados.reduce((a,p)=>a+p.hrsAlocadas,0);
-  const maqsEnvol = new Set(paResultados.map(p=>p.maquina)).size;
-  document.getElementById('pa-stat-risco').textContent      = riscos;
-  document.getElementById('pa-stat-sugestoes').textContent  = paResultados.length;
-  document.getElementById('pa-stat-maq').textContent        = maqsEnvol;
-  document.getElementById('pa-stat-hrs').textContent        = fmtHrs(totalHrs);
-  const sel = document.getElementById('pa-semana-sel');
+  const riscos      = paResultados.filter(p => p.risco==='critico'||p.risco==='alto').length;
+  const totalHrs    = paResultados.reduce((a,p) => a + p.hrsAlocadas, 0);
+  const totalHrsMes = paResultados.reduce((a,p) => a + (p.hrsAlocadasTotal || p.hrsAlocadas), 0);
+  const maqsEnvol   = new Set(paResultados.map(p => p.maquina)).size;
+  const totalCxMes  = paResultados.reduce((a,p) => a + (p.cxAlocadasTotal || p.cxAlocadas), 0);
+
+  document.getElementById('pa-stat-risco').textContent     = riscos;
+  document.getElementById('pa-stat-sugestoes').textContent = paResultados.length;
+  document.getElementById('pa-stat-maq').textContent       = maqsEnvol;
+  const hrsLabel = totalHrsMes > totalHrs
+    ? fmtHrs(totalHrs) + ' (mês: ' + fmtHrs(totalHrsMes) + ')'
+    : fmtHrs(totalHrs);
+  document.getElementById('pa-stat-hrs').textContent = hrsLabel;
+
+  const sel  = document.getElementById('pa-semana-sel');
   const sval = sel ? sel.value : '';
-  const mon = sval ? new Date(sval+'T12:00:00') : getWeekMonday(new Date());
-  const sun = new Date(mon); sun.setDate(mon.getDate()+6);
-  document.getElementById('pa-stat-semana').textContent = fmtDate(mon)+' – '+fmtDate(sun);
+  const mon  = sval ? new Date(sval+'T12:00:00') : getWeekMonday(new Date());
+  const sun  = new Date(mon); sun.setDate(mon.getDate()+6);
+  const cxLabel = totalCxMes > 0 ? ` · ${totalCxMes.toLocaleString('pt-BR')} cx/mês` : '';
+  document.getElementById('pa-stat-semana').textContent = fmtDate(mon)+' – '+fmtDate(sun) + cxLabel;
 }
 
 function renderProgAutomaticaResultado(){
   const el = document.getElementById('pa-body');
   if(!el) return;
+  // Ler parâmetros para coloração da cobertura projetada
+  const cobAlvo = parseFloat(document.getElementById('pa-cobertura-alvo')?.value||'15');
+  const cobMin  = parseFloat(document.getElementById('pa-cobertura-min')?.value||'5');
   const maqFilter = document.getElementById('pa-maq-filter')?.value || '';
   let data = maqFilter ? paResultados.filter(p => p.maquina === maqFilter) : paResultados;
   if(!data.length){
@@ -9151,14 +9805,16 @@ function renderProgAutomaticaResultado(){
   for(const maq of MAQUINAS){
     const items = byMaq[maq];
     if(!items || !items.length) continue;
-    const maqHrs  = items.reduce((a,p)=>a+p.hrsAlocadas,0);
-    const maqCox  = items.reduce((a,p)=>a+p.cxAlocadas,0);
+    const maqHrs    = items.reduce((a,p)=>a+p.hrsAlocadas,0);
+    const maqCox    = items.reduce((a,p)=>a+p.cxAlocadas,0);
+    const maqCoxMes = items.reduce((a,p)=>a+(p.cxAlocadasTotal||p.cxAlocadas),0);
     const maqCrit = items.filter(p=>p.risco==='critico').length;
     const maqSemInsumo = items.filter(p=>!p.insumosOk).length;
     const semanaSel = document.getElementById('pa-semana-sel')?.value;
     const monday = semanaSel ? new Date(semanaSel+'T12:00:00') : getWeekMonday(new Date());
     const maqWeekHrs = weekHrsForMachine(maq, monday);
     const pctTotal = maqWeekHrs > 0 ? Math.min(100,(maqHrs/maqWeekHrs*100)).toFixed(1) : 0;
+    const coxMesLabel = maqCoxMes > maqCox ? ` · ${maqCoxMes.toLocaleString('pt-BR')} cx/mês` : '';
     html += `<div class="pa-card">
       <div class="pa-card-header">
         <div style="display:flex;align-items:center;gap:10px">
@@ -9167,31 +9823,55 @@ function renderProgAutomaticaResultado(){
           ${maqSemInsumo>0?`<span style="background:rgba(255,71,87,.18);color:var(--red);padding:2px 8px;border-radius:6px;font-size:11px;font-weight:700">⚠️ ${maqSemInsumo} sem insumo</span>`:''}
         </div>
         <div style="display:flex;align-items:center;gap:14px;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text2)">
-          <span>${maqCox} cx · ${fmtHrs(maqHrs)} · ${pctTotal}% da semana</span>
+          <span>${maqCox} cx S1${coxMesLabel} · ${fmtHrs(maqHrs)} · ${pctTotal}% da semana</span>
           <div class="cov-bar-track" style="width:80px"><div class="cov-bar-fill" style="width:${pctTotal}%;background:${parseFloat(pctTotal)>85?'var(--red)':parseFloat(pctTotal)>65?'var(--warn)':'var(--cyan)'}"></div></div>
         </div>
       </div>
       <div class="pa-card-body" style="overflow-x:auto">
         <table class="pa-suggest-tbl">
           <thead><tr>
-            <th style="min-width:240px">Produto</th>
+            <th style="min-width:200px">Produto</th>
             <th>Motivo / Risco</th>
-            <th>Estoque Atual</th>
+            <th>Estoque</th>
             <th>Cob. Atual</th>
-            <th>Demanda Sem.</th>
-            <th>Qtd Sugerida</th>
+            <th>Dem. Sem.</th>
+            <th>Semana 1</th>
+            <th>Total Mês</th>
             <th>Tempo</th>
-            <th>% Máquina</th>
-            <th>Cob. Pós-Prod.</th>
+            <th>% Máq.</th>
+            <th>Cob. Final</th>
             <th>Insumos</th>
-            <th>Distribuição na Semana</th>
+            <th>Distribuição S1 + Plano 4 Sem.</th>
           </tr></thead>
           <tbody>${items.map((p,pi)=>{
             const cobColor = p.risco==='critico'?'var(--red)':p.risco==='alto'?'var(--warn)':p.risco==='medio'?'var(--cyan)':'var(--green)';
             const cobProjStr = p.cobProjetada < 900 ? p.cobProjetada+'d' : '∞';
+            const cobProjColor = p.cobProjetada >= cobAlvo ? 'var(--green)' : p.cobProjetada >= cobMin ? 'var(--warn)' : 'var(--red)';
             const dayPills = (p.diasDist||[]).map(d=>`<span class="pa-day-pill">${d.dayName} ${d.cx}cx</span>`).join('');
             const rowBg = !p.insumosOk ? 'background:rgba(255,71,87,.06);' : '';
             const rowBorder = !p.insumosOk ? 'border-left:3px solid var(--red);' : '';
+
+            // Mini plano 4 semanas
+            const semanas = p.semanas || [p.cxAlocadas||0, 0, 0, 0];
+            const maxSem  = Math.max(...semanas, 1);
+            const semPills = semanas.map((cx, i) => {
+              const barW   = Math.round(cx / maxSem * 40);
+              const barClr = i===0 ? 'var(--cyan)' : cx > 0 ? 'rgba(34,211,238,.5)' : 'rgba(255,255,255,.08)';
+              const label  = cx > 0 ? `${cx}cx` : '—';
+              return `<div style="display:inline-flex;flex-direction:column;align-items:center;gap:2px;min-width:44px">
+                <div style="font-size:8px;color:var(--text3);font-family:'JetBrains Mono',monospace">S${i+1}</div>
+                <div style="height:4px;width:44px;background:rgba(255,255,255,.08);border-radius:2px">
+                  <div style="height:4px;width:${barW}px;background:${barClr};border-radius:2px"></div>
+                </div>
+                <div style="font-size:9px;color:${i===0?'var(--cyan)':cx>0?'var(--text2)':'var(--text3)'};font-family:'JetBrains Mono',monospace;font-weight:${i===0?'700':'400'}">${label}</div>
+              </div>`;
+            }).join('');
+
+            // Máquinas secundárias
+            const maqExtra = (p.maquinasUsadas||[]).filter(m=>m!==p.maquina);
+            const maqExtraTag = maqExtra.length
+              ? `<div style="font-size:9px;color:var(--text3);margin-top:2px">+ ${maqExtra.join(', ')}</div>`
+              : '';
 
             // Badge de insumos
             let insBadge = '';
@@ -9200,7 +9880,7 @@ function renderProgAutomaticaResultado(){
             } else if(!insumosEstoqueData.length){
               insBadge = `<span style="background:rgba(255,255,255,.06);color:var(--text3);padding:2px 6px;border-radius:4px;font-size:10px">Sem estoque MP</span>`;
             } else if(!p.insumosOk){
-              insBadge = `<span style="cursor:pointer;background:rgba(255,71,87,.2);color:var(--red);padding:2px 7px;border-radius:4px;font-size:10px;font-weight:700" onclick="paToggleInsumos('pa-ins-${maq}-${pi}')">⚠️ Falta insumo ▾</span>`;
+              insBadge = `<span style="cursor:pointer;background:rgba(255,71,87,.2);color:var(--red);padding:2px 7px;border-radius:4px;font-size:10px;font-weight:700" onclick="paToggleInsumos('pa-ins-${maq}-${pi}')">⚠️ Falta ▾</span>`;
             } else {
               insBadge = `<span style="cursor:pointer;background:rgba(46,201,122,.1);color:var(--green);padding:2px 7px;border-radius:4px;font-size:10px" onclick="paToggleInsumos('pa-ins-${maq}-${pi}')">✅ OK ▾</span>`;
             }
@@ -9209,13 +9889,13 @@ function renderProgAutomaticaResultado(){
             let insDetail = '';
             if(p.insumosStatus && p.insumosStatus.length){
               insDetail = `<tr id="pa-ins-${maq}-${pi}" style="display:none">
-                <td colspan="11" style="padding:0">
+                <td colspan="12" style="padding:0">
                   <div style="background:var(--s2);border-top:1px solid var(--border);border-bottom:1px solid var(--border);padding:10px 16px">
                     <div style="font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--text3);margin-bottom:8px;font-weight:700">Consumo de Insumos — ${p.prod}</div>
                     <table style="width:100%;border-collapse:collapse;font-size:11px">
                       <thead><tr style="background:rgba(255,255,255,.03)">
                         <th style="padding:5px 8px;text-align:left;color:var(--text3);font-size:10px">Insumo</th>
-                        <th style="padding:5px 8px;text-align:right;color:var(--warn);font-size:10px">Necessário</th>
+                        <th style="padding:5px 8px;text-align:right;color:var(--warn);font-size:10px">Necessário (mês)</th>
                         <th style="padding:5px 8px;text-align:right;color:var(--cyan);font-size:10px">Estoque Atual</th>
                         <th style="padding:5px 8px;text-align:right;color:var(--text3);font-size:10px">Saldo Final</th>
                       </tr></thead>
@@ -9234,7 +9914,7 @@ function renderProgAutomaticaResultado(){
                     </table>
                     ${p.insumosFaltando && p.insumosFaltando.length ? `
                     <div style="margin-top:8px;padding:8px 10px;background:rgba(255,71,87,.1);border:1px solid rgba(255,71,87,.3);border-radius:6px;font-size:11px">
-                      <div style="color:var(--red);font-weight:700;margin-bottom:4px">⛔ Insumos insuficientes para produzir ${p.cxAlocadas} cx:</div>
+                      <div style="color:var(--red);font-weight:700;margin-bottom:4px">⛔ Insumos insuficientes para produzir ${p.cxAlocadasTotal||p.cxAlocadas} cx no mês:</div>
                       ${p.insumosFaltando.map(f=>`<div style="color:var(--red);padding:2px 0"><strong>${f.nome}</strong>: necessário ${f.consumo.toLocaleString('pt-BR',{maximumFractionDigits:3})} / estoque ${f.estoqueAtual!=null?f.estoqueAtual.toLocaleString('pt-BR',{maximumFractionDigits:3}):'—'} / <strong>déficit ${f.deficit.toLocaleString('pt-BR',{maximumFractionDigits:3})}</strong></div>`).join('')}
                     </div>`:'' }
                   </div>
@@ -9243,17 +9923,28 @@ function renderProgAutomaticaResultado(){
             }
 
             return `<tr style="${rowBg}${rowBorder}">
-              <td><div style="font-weight:600;font-size:12px">${p.prod}</div><div style="font-size:10px;color:var(--text3);font-family:'JetBrains Mono',monospace">Cód: ${p.cod||'—'}</div></td>
-              <td style="max-width:200px;white-space:normal;line-height:1.5;font-size:11px">${p.motivo}</td>
-              <td>${p.estoque != null ? p.estoque.toLocaleString('pt-BR') : '—'}</td>
+              <td>
+                <div style="font-weight:600;font-size:12px">${p.prod}</div>
+                <div style="font-size:10px;color:var(--text3);font-family:'JetBrains Mono',monospace">Cód: ${p.cod||'—'}</div>
+                ${maqExtraTag}
+              </td>
+              <td style="max-width:180px;white-space:normal;line-height:1.5;font-size:11px">${p.motivo}</td>
+              <td style="font-family:'JetBrains Mono',monospace;font-size:11px">${p.estoque != null ? p.estoque.toLocaleString('pt-BR') : '—'}</td>
               <td style="color:${cobColor};font-weight:700">${p.cobAtual}d</td>
-              <td>${p.demandaSemanal}</td>
+              <td style="font-family:'JetBrains Mono',monospace;font-size:11px">${p.demandaSemanal}</td>
               <td style="color:var(--cyan);font-weight:700;font-size:13px">${p.cxAlocadas} cx</td>
-              <td>${fmtHrs(p.hrsAlocadas)}</td>
-              <td><span style="color:${p.pctMaquina>50?'var(--warn)':'var(--text2)'}">${p.pctMaquina}%</span><div class="cov-bar-track" style="margin-top:3px"><div class="cov-bar-fill" style="width:${Math.min(100,p.pctMaquina)}%;background:${p.pctMaquina>50?'var(--warn)':'var(--cyan)'}"></div></div></td>
-              <td style="color:var(--green);font-weight:700">${cobProjStr}</td>
+              <td style="color:var(--purple);font-weight:600;font-size:12px">${p.cxAlocadasTotal||p.cxAlocadas} cx</td>
+              <td style="font-family:'JetBrains Mono',monospace;font-size:11px">${fmtHrs(p.hrsAlocadas)}</td>
+              <td>
+                <span style="color:${p.pctMaquina>50?'var(--warn)':'var(--text2)'}">${p.pctMaquina}%</span>
+                <div class="cov-bar-track" style="margin-top:3px"><div class="cov-bar-fill" style="width:${Math.min(100,p.pctMaquina)}%;background:${p.pctMaquina>50?'var(--warn)':'var(--cyan)'}"></div></div>
+              </td>
+              <td style="color:${cobProjColor};font-weight:700">${cobProjStr}</td>
               <td>${insBadge}</td>
-              <td style="white-space:normal">${dayPills||'—'}</td>
+              <td style="white-space:normal">
+                <div style="margin-bottom:6px">${dayPills||'—'}</div>
+                <div style="display:flex;gap:4px;flex-wrap:nowrap">${semPills}</div>
+              </td>
             </tr>${insDetail}`;
           }).join('')}</tbody>
         </table>
@@ -9411,6 +10102,10 @@ window.fteAddRow = fteAddRow;
 window.ganttToday = ganttToday;
 window.ganttWeek = ganttWeek;
 window.ganttGoDate = ganttGoDate;
+window.setGanttMode         = setGanttMode;
+window.ganttMesNav          = ganttMesNav;
+window.ganttMesHoje         = ganttMesHoje;
+window.ganttSelecionarSemana= ganttSelecionarSemana;
 window.insGeralToday = insGeralToday;
 window.insWeek = insWeek;
 window.insGoDate = insGoDate;
