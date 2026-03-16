@@ -1440,6 +1440,14 @@
         <input id="pm-prioridade" type="number" min="1" max="99" placeholder="2" style="width:100%;background:var(--s2);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-size:13px;outline:none;box-sizing:border-box">
       </div>
 
+      <div>
+        <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:5px">Status do produto</label>
+        <select id="pm-ativo" style="width:100%;background:var(--s2);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-size:13px;outline:none;box-sizing:border-box">
+          <option value="true">✅ Ativo — entra na programação</option>
+          <option value="false">⛔ Desativado — ignorado na programação</option>
+        </select>
+      </div>
+
     </div>
     <div class="modal-ft">
       <button class="btn btn-ghost" onclick="closeProdModal()">Cancelar</button>

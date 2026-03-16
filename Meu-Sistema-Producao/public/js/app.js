@@ -6860,7 +6860,8 @@ function normalizeProdutoFirestore(data) {
     producaoMinima:      parseFloat(data.producaoMinima)   || 0,
     multiploProducao:    parseFloat(data.multiploProducao) || 0,
     tipoMinimo:          data.tipoMinimo          || '',
-    prioridadeProducao:  parseInt(data.prioridadeProducao) || 2
+    prioridadeProducao:  parseInt(data.prioridadeProducao) || 2,
+    produtoAtivo:        data.produtoAtivo !== false   // default true
   };
 }
 
@@ -6912,6 +6913,7 @@ async function salvarProdutoFirestore(dados) {
     multiploProducao:   parseFloat(dados.multiploProducao) || 0,
     tipoMinimo:         dados.tipoMinimo          || '',
     prioridadeProducao: parseInt(dados.prioridadeProducao) || 2,
+    produtoAtivo:       dados.produtoAtivo !== false,
     atualizadoEm: new Date().toISOString()
   };
   try {
@@ -6956,11 +6958,14 @@ function renderProdutosCfg() {
   const all = getAllProdutos();
   if (cnt) cnt.textContent = all.length;
   if (!el) return;
-  const filtered = filter ? all.filter(p => p.descricao.toLowerCase().includes(filter.toLowerCase()) || String(p.cod).includes(filter)) : all;
+  const filtered = filter
+    ? all.filter(p => p.descricao.toLowerCase().includes(filter.toLowerCase()) || String(p.cod).includes(filter))
+    : all;
   if (!filtered.length) {
     el.innerHTML = '<div style="padding:20px;color:var(--text3);font-size:13px">Nenhum produto encontrado.</div>';
     return;
   }
+
   // Agrupa por descrição para listar todas as máquinas de cada produto
   const byDesc = new Map();
   filtered.forEach(p => {
@@ -6970,44 +6975,96 @@ function renderProdutosCfg() {
   });
   const groups = [...byDesc.values()];
 
-  el.innerHTML = groups.slice(0, 200).map(p => {
+  // Separar ativos e desativados
+  const ativos      = groups.filter(p => p.produtoAtivo !== false);
+  const desativados = groups.filter(p => p.produtoAtivo === false);
+
+  function renderRow(p, desativado = false) {
     const isExtra = PRODUTOS_EXTRA.findIndex(x => x.descricao === p.descricao) >= 0;
     const maqTags = p.maquinas.map(m =>
-      `<span style="font-size:10px;background:rgba(0,212,255,.08);border:1px solid rgba(0,212,255,.2);color:var(--cyan);padding:2px 8px;border-radius:20px;white-space:nowrap">${m}</span>`
+      `<span style="font-size:10px;background:rgba(0,212,255,.08);border:1px solid rgba(0,212,255,.2);color:${desativado?'var(--text4)':'var(--cyan)'};padding:2px 8px;border-radius:20px;white-space:nowrap">${m}</span>`
     ).join('');
+    const rowBg = desativado ? 'background:rgba(0,0,0,.18);opacity:.65;' : '';
+    const toggleLabel = desativado ? '✅ Ativar' : '⛔ Desativar';
+    const toggleColor = desativado ? 'var(--green)' : 'var(--text3)';
     return `
-    <div style="padding:9px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:10px">
+    <div style="padding:9px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:10px;${rowBg}">
       <div style="min-width:0;flex:1">
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-          <span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--cyan);flex-shrink:0">${p.cod}</span>
-          <span style="font-size:12px;color:var(--text)">${p.descricao}</span>
+          <span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:${desativado?'var(--text4)':'var(--cyan)'};flex-shrink:0">${p.cod}</span>
+          <span style="font-size:12px;color:${desativado?'var(--text3)':'var(--text)'}">${p.descricao}</span>
+          ${desativado ? '<span style="font-size:9px;font-weight:700;color:var(--red);background:rgba(255,71,87,.12);border:1px solid rgba(255,71,87,.3);padding:1px 7px;border-radius:10px;letter-spacing:.5px">DESATIVADO</span>' : ''}
         </div>
         <div style="display:flex;align-items:center;gap:6px;margin-top:5px;flex-wrap:wrap">
-          <span style="font-size:10px;color:var(--warn);font-family:'JetBrains Mono',monospace">${p.pc_min} und/min</span>
+          <span style="font-size:10px;color:${desativado?'var(--text4)':'var(--warn)'};font-family:'JetBrains Mono',monospace">${p.pc_min} und/min</span>
           <span style="font-size:10px;color:var(--text3);font-family:'JetBrains Mono',monospace">${p.unid}un/cx</span>
           <span style="color:var(--text3);font-size:10px">·</span>
           ${maqTags}
         </div>
       </div>
-      <div style="display:flex;gap:6px;align-items:center">
-        <button onclick="editarProduto(${p.cod},'${p.maquina.replace(/'/g,"\\'")}','${p.descricao.replace(/'/g,"\\'")}')" 
-                style="background:none;border:1px solid var(--border);border-radius:6px;padding:3px 8px;font-size:11px;color:var(--cyan);cursor:pointer;flex-shrink:0"
-                title="Editar produto">
-          ✏️
-        </button>
-        <button onclick="excluirProduto(${p.cod},'${p.maquina.replace(/'/g,"\\'")}','${p.descricao.replace(/'/g,"\\'")}')" 
-                style="background:none;border:1px solid var(--border);border-radius:6px;padding:3px 8px;font-size:11px;color:#ff6b6b;cursor:pointer;flex-shrink:0"
-                title="Excluir produto">
-          🗑️
-        </button>
-        ${!isExtra ? '<span style="font-size:9px;color:var(--text3);margin-left:8px">padrão</span>' : ''}
+      <div style="display:flex;gap:6px;align-items:center;flex-shrink:0">
+        <button onclick="toggleAtivoProduto(${p.cod},'${p.maquina.replace(/'/g,"\\'")}',${desativado})"
+                style="background:none;border:1px solid var(--border);border-radius:6px;padding:3px 8px;font-size:10px;color:${toggleColor};cursor:pointer;white-space:nowrap"
+                title="${toggleLabel}">${toggleLabel}</button>
+        <button onclick="editarProduto(${p.cod},'${p.maquina.replace(/'/g,"\\'")}','${p.descricao.replace(/'/g,"\\'")}')"
+                style="background:none;border:1px solid var(--border);border-radius:6px;padding:3px 8px;font-size:11px;color:var(--cyan);cursor:pointer"
+                title="Editar produto">✏️</button>
+        <button onclick="excluirProduto(${p.cod},'${p.maquina.replace(/'/g,"\\'")}','${p.descricao.replace(/'/g,"\\'")}')"
+                style="background:none;border:1px solid var(--border);border-radius:6px;padding:3px 8px;font-size:11px;color:#ff6b6b;cursor:pointer"
+                title="Excluir produto">🗑️</button>
+        ${!isExtra ? '<span style="font-size:9px;color:var(--text3)">padrão</span>' : ''}
       </div>
     </div>`;
-  }).join('');
-  if (groups.length > 200) el.innerHTML += `<div style="padding:12px;color:var(--text3);font-size:12px">... e mais ${groups.length - 200} produtos.</div>`;
+  }
+
+  let html = ativos.slice(0, 200).map(p => renderRow(p, false)).join('');
+
+  if (desativados.length) {
+    html += `<div style="padding:10px 14px;background:rgba(255,71,87,.06);border-top:2px solid rgba(255,71,87,.3);border-bottom:1px solid rgba(255,71,87,.2);display:flex;align-items:center;gap:10px">
+      <span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--red)">⛔ Produtos desativados (${desativados.length})</span>
+      <span style="font-size:10px;color:var(--text3)">— não entram na programação automática</span>
+    </div>`;
+    html += desativados.map(p => renderRow(p, true)).join('');
+  }
+
+  if (groups.length > 200) html += `<div style="padding:12px;color:var(--text3);font-size:12px">... e mais ${groups.length - 200} produtos.</div>`;
+  el.innerHTML = html;
 }
 
 // ===== FUNÇÕES APRIMORADAS DE PRODUTOS COM EDIÇÃO E EXCLUSÃO =====
+
+// Alterna produtoAtivo sem abrir o modal
+function toggleAtivoProduto(cod, maquina, estaDesativado){
+  const novoAtivo = estaDesativado; // inverte: estava desativado → ativar
+  const todos = getAllProdutos();
+  const produto = todos.find(p => String(p.cod)===String(cod) && p.maquina===maquina);
+  if(!produto){ toast('Produto não encontrado','err'); return; }
+
+  produto.produtoAtivo = novoAtivo;
+
+  // Atualizar no array global
+  if(Array.isArray(window.PRODUTOS)){
+    const i = window.PRODUTOS.findIndex(p => String(p.cod)===String(cod) && p.maquina===maquina);
+    if(i>=0) window.PRODUTOS[i].produtoAtivo = novoAtivo;
+  }
+  // Atualizar nos extras
+  const ei = PRODUTOS_EXTRA.findIndex(p => String(p.cod)===String(cod) && p.maquina===maquina);
+  if(ei>=0){
+    PRODUTOS_EXTRA[ei].produtoAtivo = novoAtivo;
+    localStorage.setItem('produtos_extra', JSON.stringify(PRODUTOS_EXTRA));
+  }
+
+  // Persistir no Firestore
+  if(typeof salvarProdutoFirestore === 'function'){
+    salvarProdutoFirestore({ ...produto, produtoAtivo: novoAtivo }).catch(e =>
+      console.warn('Erro ao salvar no Firestore:', e)
+    );
+  }
+
+  const label = novoAtivo ? 'ativado ✅' : 'desativado ⛔';
+  toast(`"${produto.descricao}" ${label}`, 'ok');
+  renderProdutosCfg();
+}
 
 // Variável global para o produto em edição
 let _produtoEditando = null;
@@ -7020,6 +7077,7 @@ function openAddProduto() {
   // Resetar novos campos de cobertura
   ['pm-cobertura','pm-prod-min','pm-multiplo','pm-prioridade'].forEach(id => { const el = document.getElementById(id); if(el) el.value = ''; });
   const tipoMin = document.getElementById('pm-tipo-min'); if(tipoMin) tipoMin.value = '';
+  const pmAtivo = document.getElementById('pm-ativo'); if(pmAtivo) pmAtivo.value = 'true';
   
   // Resetar título do modal
   document.getElementById('maq-modal-title').textContent = 'Novo Produto';
@@ -7051,6 +7109,7 @@ function editarProduto(cod, maquina, descricao) {
   const elMult = document.getElementById('pm-multiplo');   if(elMult) elMult.value  = produto.multiploProducao    || '';
   const elTipo = document.getElementById('pm-tipo-min');   if(elTipo) elTipo.value  = produto.tipoMinimo          || '';
   const elPrio = document.getElementById('pm-prioridade'); if(elPrio) elPrio.value  = produto.prioridadeProducao  || '';
+  const elAtivo= document.getElementById('pm-ativo');      if(elAtivo) elAtivo.value = (produto.produtoAtivo !== false) ? 'true' : 'false';
   
   // Popular máquinas no select
   const sel = document.getElementById('pm-maq');
@@ -7161,10 +7220,11 @@ function saveProdModal() {
   const multiploProducao   = parseFloat(document.getElementById('pm-multiplo')?.value)  || 0;
   const tipoMinimo         = document.getElementById('pm-tipo-min')?.value              || '';
   const prioridadeProducao = parseInt(document.getElementById('pm-prioridade')?.value)  || 2;
+  const produtoAtivo       = document.getElementById('pm-ativo')?.value !== 'false';
 
   const dados = {
     cod, descricao: desc, unid, kg_fd: 0, pc_min: pcmin, maquina: maq,
-    metaCoberturaDias, producaoMinima, multiploProducao, tipoMinimo, prioridadeProducao
+    metaCoberturaDias, producaoMinima, multiploProducao, tipoMinimo, prioridadeProducao, produtoAtivo
   };
   
   try {
@@ -9360,6 +9420,10 @@ function gerarProgAutomarica(){
 
   projecaoCalculada.forEach(proj => {
     const ficha     = allProds.find(p => String(p.cod)===String(proj.cod) || p.descricao===proj.produto);
+
+    // ── Produtos desativados não entram na programação ──────────────
+    if(ficha && ficha.produtoAtivo === false) return;
+
     const fichaUnid = ficha ? (ficha.unid  || 1) : 1;
     const fichaPcMin= ficha ? (ficha.pc_min || 0) : 0;
     const primaryMaq= ficha ? ficha.maquina : null;
@@ -9480,7 +9544,7 @@ function gerarProgAutomarica(){
   }
 
   // ── PASSO 2: calcular capacidade efetiva de cada máquina ─────────
-  const maqCapacidades = {};  // horas disponíveis por semana
+  const maqCapacidades = {};  // horas efetivas disponíveis/semana
   for(const maq of MAQUINAS){
     let maqWeekHrs = weekHrsForMachine(maq, monday);
     const maqData2 = getMaquinaData(maq);
@@ -9488,7 +9552,7 @@ function gerarProgAutomarica(){
       if(maqData2 && parseFloat(maqData2.hTurno) > 0 && parseInt(maqData2.nTurnos) > 0){
         maqWeekHrs = parseFloat(maqData2.hTurno) * parseInt(maqData2.nTurnos) * (days.length || 5);
       } else {
-        maqWeekHrs = 44; // fallback: 8h × 1 turno × 5 dias + extra
+        maqWeekHrs = 44;
       }
     }
     const efic = (maqData2 && parseFloat(maqData2.eficiencia) > 0)
@@ -9496,115 +9560,310 @@ function gerarProgAutomarica(){
     maqCapacidades[maq] = maqWeekHrs * efic;
   }
 
-  // ── PASSO 3: simular 4 semanas com alocação intercalada ──────────
+  // ── Demanda diária média global — define "alto giro" vs "baixo giro" ─
+  const demandaMediaGlobal = candidates.length > 0
+    ? candidates.reduce((a, c) => a + c.demandaDiaria, 0) / candidates.length
+    : 1;
+
+  // ── PASSO 3: simular 4 semanas (v6 — multi-máquina + balanceamento) ──
   //
-  //  Estrutura de alocação por produto:
-  //    allocations[prod] = {
-  //      hrsTotal, cxTotal,
-  //      semanas: [cx_s1, cx_s2, cx_s3, cx_s4],
-  //      maquinas: { nomeMaq: cxAlocadas }
-  //    }
+  //  Novidades em relação à v5:
+  //
+  //  3d-SCORE: escolha de máquina por pontuação ponderada
+  //    score = velocidade × √(hrsDisp/cap) × fatorGiro
+  //    → produto de alto giro recebe bônus na velocidade
+  //    → máquinas com mais folga ganham pontuação extra
+  //    → resultado: alta demanda → máquina mais rápida
+  //               baixa demanda → máquina secundária com mais espaço
+  //
+  //  3d-SPLIT: divisão de produção entre máquinas
+  //    se a melhor máquina não consegue absorver o lote inteiro
+  //    (por % cap ou por horas disponíveis), o restante transborda
+  //    para a 2ª melhor máquina compatível na mesma semana.
+  //
+  //  PASSO 4: equalização de carga pós-simulação
+  //    alvo: 70–90% de ocupação por máquina/semana
+  //    semanas > 90%: tenta adiar produto menos urgente para semana mais leve
+  //    semanas < 70%: tenta antecipar produto de semana mais carregada
+  //    restrição: nunca gera ruptura (cobFim >= cobMin após o movimento)
   //
   const allocations = {};
   candidates.forEach(c => {
-    allocations[c.prod] = { hrsTotal: 0, cxTotal: 0, semanas: [0,0,0,0], maquinas: {} };
+    allocations[c.prod] = {
+      hrsTotal: 0, cxTotal: 0,
+      semanas: [0,0,0,0],
+      maquinas: {},
+      // detalhe por semana+maquina para a equalização
+      detalhes: Array.from({length:4}, ()=>([]))
+      // detalhes[sem] = [{maq, cx, hrs, pcMin, unid}]
+    };
   });
 
-  // Capacidade restante por semana × máquina
-  const maqHrsRestantes = Array.from({length:4}, () => {
-    const s = {};
-    MAQUINAS.forEach(m => { s[m] = maqCapacidades[m] || 0; });
-    return s;
+  // Horas usadas (para ocupação): inicialmente zero
+  const maqHrsUsadas    = Array.from({length:4}, () => {
+    const s = {}; MAQUINAS.forEach(m => { s[m] = 0; }); return s;
   });
+  // Horas restantes (capacidade disponível)
+  const maqHrsRestantes = Array.from({length:4}, () => {
+    const s = {}; MAQUINAS.forEach(m => { s[m] = maqCapacidades[m] || 0; }); return s;
+  });
+
+  // ── Helper: score de uma máquina para um produto ─────────────────
+  function scoreMaquina(mc, sem, demandaDiaria){
+    const hrsDisp = maqHrsRestantes[sem][mc.maquina] || 0;
+    if(hrsDisp <= 0 || mc.pc_min <= 0) return -1;
+    const cap        = maqCapacidades[mc.maquina] || 1;
+    const fatorEspaco= Math.sqrt(hrsDisp / cap);        // bônus para máquina com mais folga
+    const altogiro   = demandaDiaria * 7 > demandaMediaGlobal * 7;
+    const fatorGiro  = altogiro ? 1.3 : 0.85;           // alto giro → máquina rápida
+    return mc.pc_min * fatorEspaco * fatorGiro;
+  }
+
+  // ── Helper: aplicar uma alocação ────────────────────────────────
+  function registrarAlocacao(prod, sem, maq, cx, hrs, pcMin, unid){
+    maqHrsRestantes[sem][maq] -= hrs;
+    maqHrsUsadas[sem][maq]    += hrs;
+    allocations[prod].hrsTotal          += hrs;
+    allocations[prod].cxTotal           += cx;
+    allocations[prod].semanas[sem]      += cx;
+    allocations[prod].maquinas[maq]      =
+      (allocations[prod].maquinas[maq] || 0) + cx;
+    allocations[prod].detalhes[sem].push({ maq, cx, hrs, pcMin, unid });
+  }
 
   for(let sem = 0; sem < 4; sem++){
 
     // 3a. Recalcular cobertura e prioridade para esta semana
     candidates.forEach(c => {
       const cob = c.demandaDiaria > 0 ? c.estoqueSim / c.demandaDiaria : 999;
-      c._cobSem     = parseFloat(cob.toFixed(1));
-      c._priorSem   = calcPrioridadeEquilibrada(
+      c._cobSem   = parseFloat(cob.toFixed(1));
+      c._priorSem = calcPrioridadeEquilibrada(
         cob, c.demandaDiaria, riscoLim, cobMin, c.prioridadeProduto, sem
       );
     });
 
-    // 3b. Ordenar: maior prioridade primeiro (produto mais crítico)
+    // 3b. Ordenar: maior urgência primeiro
     const fila = [...candidates].sort((a,b) => b._priorSem - a._priorSem);
 
-    // 3c. Alocação round-robin: percorre a fila várias vezes até
-    //     esgotar capacidade ou todos atingirem a cobertura alvo
-    const MAX_PASSES = 30;
+    // 3c. Alocação por necessidade real — multi-máquina com split
+    const MAX_PASSES = 8;
     for(let pass = 0; pass < MAX_PASSES; pass++){
       let algumAlocado = false;
 
       for(const c of fila){
+        if(c.demandaDiaria <= 0) continue;
 
-        // Já atingiu a cobertura alvo?
-        const cobSem = c.demandaDiaria > 0 ? c.estoqueSim / c.demandaDiaria : 999;
-        if(cobSem >= cobAlvo) continue;
+        const estoqueFinSem = Math.max(0, c.estoqueSim - c.demandaSemanal);
+        const cobAtualSem   = c.estoqueSim  / c.demandaDiaria;
+        const cobFimSemana  = estoqueFinSem / c.demandaDiaria;
 
-        // Quantidade ainda necessária
-        let cxNecessario = Math.max(0, Math.ceil(c.demandaDiaria * cobAlvo - c.estoqueSim));
+        // Gatilho: só produz quando o estoque vai realmente faltar
+        if(cobAtualSem >= cobMin && cobFimSemana >= cobMin) continue;
+
+        // Teto: não produz se estoque já está muito acima da meta
+        if(c.estoqueSim >= c.demandaDiaria * cobAlvo * 1.1) continue;
+
+        // Quantidade necessária
+        let cxNecessario = Math.max(0, Math.ceil(
+          c.demandaDiaria * cobAlvo - estoqueFinSem
+        ));
         if(cxNecessario <= 0) continue;
 
-        // Respeitar mínimo de produção e múltiplo
+        // Respeitar mínimo e múltiplo
         if(c.producaoMinima > 0 && cxNecessario < c.producaoMinima)
           cxNecessario = c.producaoMinima;
         if(c.multiploProducao > 0)
           cxNecessario = Math.ceil(cxNecessario / c.multiploProducao) * c.multiploProducao;
 
-        // 3d. Escolher a melhor máquina disponível nesta semana
-        //     Critério: mais rápida E com horas disponíveis
-        let bestMaq = null, bestPcMin = 0, bestHrsDisp = 0;
-        for(const mc of c.maquinasCompativeis){
-          const hrsDisp = maqHrsRestantes[sem][mc.maquina] || 0;
-          if(hrsDisp <= 0) continue;
-          if(mc.pc_min > bestPcMin || (mc.pc_min === bestPcMin && hrsDisp > bestHrsDisp)){
-            bestMaq     = mc.maquina;
-            bestPcMin   = mc.pc_min;
-            bestHrsDisp = hrsDisp;
-          }
+        // Teto rígido pós-lote: não ultrapassar cobAlvo × 1.2
+        const cobMaxPermitida = cobAlvo * 1.2;
+        const cobPosProd = (estoqueFinSem + cxNecessario) / c.demandaDiaria;
+        if(cobPosProd > cobMaxPermitida){
+          const cxTeto = Math.ceil(c.demandaDiaria * cobMaxPermitida - estoqueFinSem);
+          if(cxTeto >= (c.producaoMinima || 0)) cxNecessario = cxTeto;
         }
-        if(!bestMaq || bestPcMin <= 0) continue;
 
-        // Horas necessárias para produzir cxNecessario nesta máquina
-        const hrsNecessario = (cxNecessario * c.unid) / (bestPcMin * 60);
-        if(hrsNecessario <= 0) continue;
+        // 3d-SCORE: ordenar máquinas compatíveis por score ponderado
+        const maqsOrdenadas = [...c.maquinasCompativeis]
+          .map(mc => ({ ...mc, score: scoreMaquina(mc, sem, c.demandaDiaria) }))
+          .filter(mc => mc.score >= 0)
+          .sort((a, b) => b.score - a.score);
 
-        // Limitar pelo percentual máximo por produto/máquina
-        const maxHrsItem    = maqCapacidades[bestMaq] * maxPctMaq;
-        const hrsJaAlocadas = allocations[c.prod].maquinas[bestMaq]
-          ? (allocations[c.prod].maquinas[bestMaq] * c.unid) / (bestPcMin * 60)
-          : 0;
-        const hrsPermitidas = Math.max(0, maxHrsItem - hrsJaAlocadas);
+        if(!maqsOrdenadas.length) continue;
 
-        const hrsAlocar = Math.min(hrsNecessario, maqHrsRestantes[sem][bestMaq], hrsPermitidas);
-        if(hrsAlocar < 0.01) continue;
+        let cxRestante = cxNecessario;
 
-        const cxAlocar = Math.floor(hrsAlocar * 60 * bestPcMin / c.unid);
-        if(cxAlocar <= 0) continue;
+        // 3d-SPLIT: tenta alocar em até 2 máquinas (primária + secundária)
+        for(let mi = 0; mi < Math.min(2, maqsOrdenadas.length) && cxRestante > 0; mi++){
+          const mc         = maqsOrdenadas[mi];
+          const hrsNec     = (cxRestante * c.unid) / (mc.pc_min * 60);
+          const maxHrsItem = maqCapacidades[mc.maquina] * maxPctMaq;
+          const hrsJaAloc  = allocations[c.prod].maquinas[mc.maquina]
+            ? (allocations[c.prod].maquinas[mc.maquina] * c.unid) / (mc.pc_min * 60)
+            : 0;
+          const hrsPermit  = Math.max(0, maxHrsItem - hrsJaAloc);
+          const hrsAlocar  = Math.min(hrsNec, maqHrsRestantes[sem][mc.maquina], hrsPermit);
+          if(hrsAlocar < 0.01) continue;
 
-        // ── Registrar alocação ──────────────────────────────────
-        maqHrsRestantes[sem][bestMaq]                         -= hrsAlocar;
-        allocations[c.prod].hrsTotal                          += hrsAlocar;
-        allocations[c.prod].cxTotal                           += cxAlocar;
-        allocations[c.prod].semanas[sem]                      += cxAlocar;
-        allocations[c.prod].maquinas[bestMaq]                  =
-          (allocations[c.prod].maquinas[bestMaq] || 0) + cxAlocar;
+          const cxAlocar = Math.floor(hrsAlocar * 60 * mc.pc_min / c.unid);
+          if(cxAlocar <= 0) continue;
 
-        // Atualizar estoque simulado com a produção alocada
-        c.estoqueSim += cxAlocar;
-        algumAlocado  = true;
+          registrarAlocacao(c.prod, sem, mc.maquina, cxAlocar, hrsAlocar, mc.pc_min, c.unid);
+          c.estoqueSim += cxAlocar;
+          cxRestante   -= cxAlocar;
+          algumAlocado  = true;
+        }
       }
 
-      // Se nenhum produto recebeu alocação nesta passagem, parar
       if(!algumAlocado) break;
     }
 
-    // 3e. Avançar simulação: consumir demanda semanal
+    // 3e. Consumir demanda semanal
     candidates.forEach(c => {
       c.estoqueSim = Math.max(0, c.estoqueSim - c.demandaSemanal);
     });
+  }
+
+  // ── PASSO 4: equalização de carga (alvo 70–90 % por máquina/semana) ─
+  //
+  //  Para cada máquina+semana fora da faixa ideal:
+  //    > 90 %: tenta adiar produto menos urgente para semana mais leve
+  //    < 70 %: tenta antecipar produto de semana mais carregada
+  //
+  //  Restrição: o produto só pode ser movido se a cobertura
+  //  na semana de origem não cair abaixo de cobMin
+  //  e na semana de destino não ultrapassar cobAlvo × 1.2.
+  //
+  const ALVO_MIN_OCC = 0.70;  // 70 %
+  const ALVO_MAX_OCC = 0.90;  // 90 %
+
+  // Snapshot dos estoques simulados para verificação de movimentos
+  // Reconstrói caminho de estoque de cada candidato
+  function recalcEstoquePath(c){
+    let estoq = c.estoque;
+    const path = [estoq]; // estoque ao início de cada semana
+    for(let s = 0; s < 4; s++){
+      estoq = Math.max(0, estoq + (allocations[c.prod].semanas[s] || 0) - c.demandaSemanal);
+      path.push(estoq);
+    }
+    return path; // path[0]=inicial, path[4]=final
+  }
+
+  // Tentar mover alocação de semSrc para semDst para uma máquina
+  function tentarMover(prod, maq, semSrc, semDst){
+    const candidato = candidates.find(c => c.prod === prod);
+    if(!candidato) return false;
+
+    const det = allocations[prod].detalhes[semSrc].find(d => d.maq === maq);
+    if(!det || det.cx <= 0) return false;
+
+    const cap    = maqCapacidades[maq] || 1;
+    const occDst = maqHrsUsadas[semDst][maq] / cap;
+    // Destino não pode ficar acima de 90% depois do movimento
+    if(occDst + det.hrs / cap > ALVO_MAX_OCC + 0.05) return false;
+    // Destino tem horas disponíveis?
+    if(maqHrsRestantes[semDst][maq] < det.hrs - 0.01) return false;
+
+    // Verificar se o produto não entra em ruptura na semana de origem
+    // sem esta produção: cobFim(semSrc) sem det.cx
+    const cxSemana = allocations[prod].semanas[semSrc] - det.cx;
+    const pathSrc  = recalcEstoquePath(candidato);
+    // Simular estoque na semana de origem sem esta alocação
+    let estoqCheck = candidato.estoque;
+    for(let s = 0; s <= semSrc; s++){
+      const cx = s === semSrc
+        ? (allocations[prod].semanas[s] - det.cx)
+        : allocations[prod].semanas[s];
+      estoqCheck = Math.max(0, estoqCheck + cx - candidato.demandaSemanal);
+    }
+    const cobAposMov = estoqCheck / candidato.demandaDiaria;
+    if(cobAposMov < cobMin) return false; // causaria ruptura — não mover
+
+    // Verificar teto no destino
+    let estoqDst = candidato.estoque;
+    for(let s = 0; s <= semDst; s++){
+      const extra = s === semDst ? det.cx : 0;
+      const cx    = s === semSrc ? (allocations[prod].semanas[s] - det.cx) : allocations[prod].semanas[s];
+      estoqDst = Math.max(0, estoqDst + cx + extra - candidato.demandaSemanal);
+    }
+    const cobDst = estoqDst / candidato.demandaDiaria;
+    if(cobDst > cobAlvo * 1.2) return false; // causaria excesso — não mover
+
+    // ── Executar o movimento ─────────────────────────────────────────
+    // Remover de semSrc
+    allocations[prod].semanas[semSrc]       -= det.cx;
+    allocations[prod].detalhes[semSrc]       =
+      allocations[prod].detalhes[semSrc].filter(d => d !== det);
+    maqHrsRestantes[semSrc][maq]            += det.hrs;
+    maqHrsUsadas[semSrc][maq]               -= det.hrs;
+    allocations[prod].hrsTotal              -= det.hrs;
+    allocations[prod].maquinas[maq]         -= det.cx;
+    allocations[prod].cxTotal               -= det.cx;
+
+    // Adicionar em semDst
+    allocations[prod].semanas[semDst]       += det.cx;
+    allocations[prod].detalhes[semDst].push(det);
+    maqHrsRestantes[semDst][maq]            -= det.hrs;
+    maqHrsUsadas[semDst][maq]               += det.hrs;
+    allocations[prod].hrsTotal              += det.hrs;
+    allocations[prod].maquinas[maq]         += det.cx;
+    allocations[prod].cxTotal               += det.cx;
+
+    return true;
+  }
+
+  // Duas passagens de equalização
+  for(let eq = 0; eq < 2; eq++){
+    for(const maq of MAQUINAS){
+      const cap = maqCapacidades[maq] || 1;
+
+      for(let semOrig = 0; semOrig < 4; semOrig++){
+        const occ = maqHrsUsadas[semOrig][maq] / cap;
+
+        if(occ > ALVO_MAX_OCC){
+          // Semana cheia → tenta adiar para semana mais leve
+          // Candidatos: produtos nesta semana nesta máquina, do menos urgente para o mais urgente
+          const movCandidatos = candidates
+            .filter(c => allocations[c.prod].detalhes[semOrig].some(d => d.maq === maq))
+            .sort((a, b) => a._priorSem - b._priorSem); // menos urgente primeiro
+
+          for(const c of movCandidatos){
+            if(maqHrsUsadas[semOrig][maq] / cap <= ALVO_MAX_OCC) break;
+            // Tenta semanas seguintes
+            for(let semDst = semOrig + 1; semDst < 4; semDst++){
+              const occDst = maqHrsUsadas[semDst][maq] / cap;
+              if(occDst < ALVO_MAX_OCC){
+                if(tentarMover(c.prod, maq, semOrig, semDst)) break;
+              }
+            }
+          }
+        }
+
+        if(occ < ALVO_MIN_OCC){
+          // Semana vazia → tenta antecipar da semana mais carregada
+          const movCandidatos = candidates
+            .filter(c => {
+              // Produto tem alocação em semana futura mais cheia?
+              for(let semFut = semOrig + 1; semFut < 4; semFut++){
+                const occFut = maqHrsUsadas[semFut][maq] / cap;
+                if(occFut > ALVO_MIN_OCC &&
+                   allocations[c.prod].detalhes[semFut].some(d => d.maq === maq)) return true;
+              }
+              return false;
+            })
+            .sort((a, b) => b._priorSem - a._priorSem); // mais urgente primeiro
+
+          for(const c of movCandidatos){
+            if(maqHrsUsadas[semOrig][maq] / cap >= ALVO_MIN_OCC) break;
+            for(let semSrc = semOrig + 1; semSrc < 4; semSrc++){
+              if(allocations[c.prod].detalhes[semSrc].some(d => d.maq === maq)){
+                if(tentarMover(c.prod, maq, semSrc, semOrig)) break;
+              }
+            }
+          }
+        }
+      }
+    }
   }
 
   // ── PASSO 4: construir paResultados (semana 1 = semana selecionada) ──
@@ -9743,10 +10002,11 @@ function calcPrioridade(cobAtual, demandaDiaria, riscoLim, cobMin){
 }
 
 function buildMotivo(cobAtual, demandaDiaria, riscoLim, cobMin, cobAlvo){
+  if(cobAtual <= 0)        return `🔴 Estoque zerado — produção imediata`;
   if(cobAtual <= riscoLim) return `🔴 Ruptura em ${cobAtual.toFixed(1)}d — produção urgente`;
   if(cobAtual <= cobMin)   return `🟠 Abaixo do mínimo (${cobMin}d) — cobertura atual ${cobAtual.toFixed(1)}d`;
-  if(cobAtual <= cobMin*2) return `🟡 Cobertura baixa (${cobAtual.toFixed(1)}d) — repor para ${cobAlvo}d`;
-  return `🟢 Preventivo — repor estoque para ${cobAlvo} dias`;
+  if(cobAtual <= cobMin*2) return `🟡 Vai cair abaixo do mínimo — cobertura atual ${cobAtual.toFixed(1)}d`;
+  return `🟢 Reposição preventiva — cobertura ${cobAtual.toFixed(1)}d → meta ${cobAlvo}d`;
 }
 
 function distribuirPorDia(qntCaixas, workDays, item){
@@ -11380,6 +11640,7 @@ window.pdCardControlado = pdCardControlado;
 window.adicionarEstilosControlados = adicionarEstilosControlados;
 window.editarProduto = editarProduto;
 window.excluirProduto = excluirProduto;
+window.toggleAtivoProduto = toggleAtivoProduto;
 window.carregarHorariosMaquinas = carregarHorariosMaquinas;
 window.salvarHorariosMaquinas = salvarHorariosMaquinas;
 window.definirHorariosMaquina = definirHorariosMaquina;
