@@ -935,6 +935,7 @@ async function reloadFresh() {
   }
 }
 
+async function reload() {
   // Usa cache quando disponível; força recarga (forceReload=true) após gravações
   records = await dbAllCached(false);
   if(!Array.isArray(records)) records = [];
