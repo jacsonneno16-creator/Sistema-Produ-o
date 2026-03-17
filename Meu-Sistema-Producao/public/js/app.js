@@ -465,6 +465,67 @@ let MAQUINAS = [];
 // Populado por carregarSetupFirestore(). Fallback: SETUP_DATA estático abaixo.
 let SETUP_FIRESTORE = {};
 
+// ===================================================================
+// ===== CAMADA DE CACHE — evita leituras repetidas ao Firestore =====
+// ===================================================================
+//
+//  Cada coleção é carregada UMA VEZ e armazenada aqui.
+//  Flags _carregado* impedem buscas duplicadas na mesma sessão.
+//  Para forçar recarga (após gravação), chame invalidateCache('colecao').
+//
+const _cache = {
+  _carregadoMaquinas:   false,
+  _carregadoProdutos:   false,
+  _carregadoSetup:      false,
+  _carregadoRegistros:  false,
+};
+
+// Invalida o cache de uma ou mais coleções, forçando recarga na próxima chamada
+function invalidateCache(...colecoes){
+  if(!colecoes.length){
+    // Invalida tudo
+    Object.keys(_cache).forEach(k => { _cache[k] = false; });
+    return;
+  }
+  colecoes.forEach(col => {
+    if(col === 'maquinas')  _cache._carregadoMaquinas  = false;
+    if(col === 'produtos')  _cache._carregadoProdutos  = false;
+    if(col === 'setup')     _cache._carregadoSetup     = false;
+    if(col === 'registros') _cache._carregadoRegistros = false;
+  });
+}
+
+// Versão cached de dbAll — só consulta Firestore se cache inválido
+async function dbAllCached(forceReload = false) {
+  if(!forceReload && _cache._carregadoRegistros && records.length >= 0){
+    return records; // retorna cache em memória
+  }
+  const result = await dbAll();
+  _cache._carregadoRegistros = true;
+  return result;
+}
+
+// Versão cached de carregarMaquinasFirestore
+async function carregarMaquinasCached(forceReload = false) {
+  if(!forceReload && _cache._carregadoMaquinas && MAQUINAS.length > 0) return;
+  await carregarMaquinasFirestore();
+  _cache._carregadoMaquinas = true;
+}
+
+// Versão cached de carregarProdutosFirestore
+async function carregarProdutosCached(forceReload = false) {
+  if(!forceReload && _cache._carregadoProdutos && PRODUTOS.length > 0) return;
+  await carregarProdutosFirestore();
+  _cache._carregadoProdutos = true;
+}
+
+// Versão cached de carregarSetupFirestore
+async function carregarSetupCached(forceReload = false) {
+  if(!forceReload && _cache._carregadoSetup) return;
+  await carregarSetupFirestore();
+  _cache._carregadoSetup = true;
+}
+
 // Carrega setup_maquinas do Firestore e popula SETUP_FIRESTORE
 async function carregarSetupFirestore() {
   try {
@@ -506,7 +567,8 @@ async function salvarSetupFirestore(maquina, prodOrigem, prodDestino, tempoMinut
     } else {
       await addDoc(lojaCol('setup_maquinas'), payload);
     }
-    await carregarSetupFirestore();
+    invalidateCache('setup');
+    await carregarSetupCached(true);
   } catch(e) { toast('Erro ao salvar setup: ' + e.message, 'err'); }
 }
 
@@ -811,9 +873,10 @@ async function appInit() {
     mostrarSeletorLoja();
     return;
   }
-  await carregarMaquinasFirestore();
-  await carregarProdutosFirestore();
-  await carregarSetupFirestore();
+  // Carregar coleções estáticas UMA VEZ — cache evita repetições
+  await carregarMaquinasCached();
+  await carregarProdutosCached();
+  await carregarSetupCached();
   const sel = document.getElementById('s-maq');
   if(sel) {
     MAQUINAS.forEach(m => {
@@ -839,12 +902,41 @@ async function appInit() {
   setInterval(updateClock, 1000);
 }
 
-async function reload() {
-  // Mostra feedback de carregamento na tabela
-  const tbodyEl = document.getElementById('tbody');
-  if(tbodyEl) tbodyEl.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:20px;color:var(--text3);font-size:12px">⏳ Carregando...</td></tr>';
+// reloadFresh — invalida cache de registros e recarrega do Firestore
+// Deve ser chamado APÓS qualquer escrita em 'registros'
+async function reloadFresh() {
+  invalidateCache('registros');
+  records = await dbAllCached(true); // forceReload=true
+  if(!Array.isArray(records)) records = [];
+  _pdCacheWeek = null;
+  _pdGanttMap = {};
+  if(prodBaseMonday && typeof pdBuildGanttMap === 'function') {
+    pdBuildGanttMap(prodBaseMonday);
+  }
+  updateHeader();
+  renderDashboard();
+  renderTable();
+  populateWeekFilters();
+  const sMaqSel = document.getElementById('s-maq');
+  if(sMaqSel) {
+    const currentVal = sMaqSel.value;
+    const maqs = [...new Set(records.map(r=>r.maquina).filter(Boolean))].sort();
+    sMaqSel.innerHTML = '<option value="">Todas as máquinas</option>' +
+      maqs.map(m=>`<option value="${m}"${m===currentVal?' selected':''}>${m}</option>`).join('');
+  }
+  if(!ganttManualNav) {
+    const sorted = [...records].filter(r=>r.dtDesejada||r.dtSolicitacao)
+      .sort((a,b)=>{const da=b.dtDesejada||b.dtSolicitacao||'';const db2=a.dtDesejada||a.dtSolicitacao||'';return da.localeCompare(db2);});
+    if(sorted.length>0) {
+      ganttBaseMonday = getWeekMonday(new Date((sorted[0].dtDesejada||sorted[0].dtSolicitacao)+'T12:00:00'));
+    } else if(!ganttBaseMonday) {
+      ganttBaseMonday = getWeekMonday(new Date());
+    }
+  }
+}
 
-  records = await dbAll();
+  // Usa cache quando disponível; força recarga (forceReload=true) após gravações
+  records = await dbAllCached(false);
   if(!Array.isArray(records)) records = [];
   // Invalida cache do Gantt quando registros são recarregados
   // pdLoadWeek será chamado na próxima abertura de dia/produção-dia
@@ -1538,7 +1630,7 @@ async function confirmClearAll(){
     const snap = await getDocs(lojaCol('registros'));
     const dels = snap.docs.map(d => deleteDoc(lojaDoc('registros', d.id)));
     await Promise.all(dels);
-    await reload();
+    await reloadFresh();
     if(typeof showToast==='function') showToast('Programação apagada com sucesso.','ok');
     else alert('Programação apagada com sucesso!');
   }catch(e){alert('Erro ao limpar: '+e);}
@@ -2048,7 +2140,7 @@ async function saveForm(){
     return;
   }
   closeForm();
-  await reload();
+  await reloadFresh();
   toast(eid?'Solicitação atualizada!':'Solicitação criada!','ok');
 }
 
@@ -2064,7 +2156,7 @@ async function doDelete(){
   if(!r){ toast('Registro não encontrado.','err'); closeConf(); return; }
   await dbDel(r.id);
   closeConf();
-  await reload();
+  await reloadFresh();
   toast('Solicitação excluída','ok');
 }
 
@@ -3877,7 +3969,7 @@ async function saveReorder(){
     }
   }
   await Promise.all(updates);
-  await reload();
+  await reloadFresh();
   closeReorderModal();
   renderGantt();
   toast('Ordem de produção atualizada!','ok');
@@ -3976,10 +4068,16 @@ async function excluirFichaByCod(cod) {
   if (!confirm('Excluir este produto da ficha técnica?')) return;
   // Remove da memória
   fichaTecnicaData = fichaTecnicaData.filter(p => p.cod !== codNum);
-  // Remove do Firestore
+  // Remove do Firestore — usar _firestoreId do cache, sem nova leitura
   try {
-    const snap = await getDocs(query(lojaCol('fichaTecnica'), where('cod', '==', codNum)));
-    await Promise.all(snap.docs.map(d => deleteDoc(lojaDoc('fichaTecnica', d.id))));
+    const base = fichaTecnicaData.find(p => p.cod === codNum);
+    if (base && base._firestoreId) {
+      await deleteDoc(lojaDoc('fichaTecnica', base._firestoreId));
+    } else {
+      // Fallback: buscar apenas se _firestoreId não disponível
+      const snap = await getDocs(query(lojaCol('fichaTecnica'), where('cod', '==', codNum)));
+      await Promise.all(snap.docs.map(d => deleteDoc(lojaDoc('fichaTecnica', d.id))));
+    }
     toast('Produto removido da ficha técnica.', 'ok');
   } catch(e) {
     toast('Removido da memória, erro no banco: ' + e.message, 'warn');
@@ -4197,10 +4295,8 @@ async function saveFichaByCod(cod){
 
   document.getElementById('ft-edit-modal').remove();
 
-  // Salva no Firestore (coleção fichaTecnica)
+  // Salva no Firestore (coleção fichaTecnica) — sem re-leitura, usa _id do cache
   try {
-    const snap = await getDocs(query(lojaCol('fichaTecnica'), where('cod', '==', codNum)));
-    // Pega o primeiro registro com esse cod para montar o documento
     const base = fichaTecnicaData.find(p => p.cod === codNum) || {};
     const payload = {
       cod: codNum,
@@ -4211,10 +4307,16 @@ async function saveFichaByCod(cod){
       insumos: newInsumos,
       atualizadoEm: new Date().toISOString()
     };
-    if (!snap.empty) {
-      await setDoc(lojaDoc('fichaTecnica', snap.docs[0].id), payload);
+    if (base._firestoreId) {
+      await setDoc(lojaDoc('fichaTecnica', base._firestoreId), payload);
     } else {
-      await addDoc(lojaCol('fichaTecnica'), { ...payload, criadoEm: new Date().toISOString() });
+      // Fallback: buscar apenas se não temos o _id em memória
+      const snap = await getDocs(query(lojaCol('fichaTecnica'), where('cod', '==', codNum)));
+      if (!snap.empty) {
+        await setDoc(lojaDoc('fichaTecnica', snap.docs[0].id), payload);
+      } else {
+        await addDoc(lojaCol('fichaTecnica'), { ...payload, criadoEm: new Date().toISOString() });
+      }
     }
     toast(`Ficha técnica salva! ${count} registro(s) · ${newInsumos.length} insumos.`, 'ok');
   } catch(e) {
@@ -6356,8 +6458,10 @@ function getPcMinMaquinaProduto(nomeMaq, nomeProduto) {
 async function salvarMaquinaFirestore(dados) {
   const nomeUp = (dados.nome || '').trim().toUpperCase();
   if (!nomeUp) return;
-  const snap = await getDocs(lojaCol('maquinas'));
-  const existe = snap.docs.find(d => (d.data().nome||'').toUpperCase() === nomeUp && d.id !== dados._id);
+  // Verificar duplicata usando cache em memória — sem nova leitura ao Firestore
+  const existe = Object.values(window.MAQUINAS_DATA || {}).find(
+    m => (m.nome||'').toUpperCase() === nomeUp && m._id !== dados._id
+  );
   if (existe) { toast('Máquina já cadastrada!', 'err'); return; }
   const payload = {
     nome: nomeUp,
@@ -6381,18 +6485,21 @@ async function salvarMaquinaFirestore(dados) {
     await addDoc(lojaCol('maquinas'), payload);
     toast('Máquina "' + nomeUp + '" cadastrada!', 'ok');
   }
-  await carregarMaquinasFirestore();
+  // Invalidar cache e recarregar máquinas
+  invalidateCache('maquinas');
+  await carregarMaquinasCached(true);
   renderCadastroMaquinas();
 }
 
 async function excluirMaquinaFirestore(nome) {
   if(!can('maquinas','excluir')){ toast('Sem permissão para excluir máquinas.','err'); return; }
   try {
-    const snap = await getDocs(lojaCol('maquinas'));
-    const found = snap.docs.find(d => d.data().nome === nome);
-    if (found) {
-      await deleteDoc(lojaDoc('maquinas', found.id));
-      await carregarMaquinasFirestore();
+    // Buscar _id no cache em memória — sem nova leitura ao Firestore
+    const maqData = (window.MAQUINAS_DATA || {})[nome];
+    if (maqData && maqData._id) {
+      await deleteDoc(lojaDoc('maquinas', maqData._id));
+      invalidateCache('maquinas');
+      await carregarMaquinasCached(true);
       renderCadastroMaquinas();
       toast('Máquina removida!', 'ok');
     }
@@ -6702,8 +6809,9 @@ async function importarMaquinasExcel(file) {
       return;
     }
     
-    const snap = await getDocs(lojaCol('maquinas'));
-    const existentes = snap.docs.map(d => (d.data().nome||'').toUpperCase());
+    // Usar cache MAQUINAS_DATA para verificar existentes sem nova leitura ao Firestore
+    await carregarMaquinasCached();
+    const existentes = Object.keys(window.MAQUINAS_DATA || {}).map(n => n.toUpperCase());
     let adicionadas = 0, atualizadas = 0;
     
     for (const row of dataRows) {
@@ -6747,7 +6855,8 @@ async function importarMaquinasExcel(file) {
       }
     }
     
-    await carregarMaquinasFirestore();
+    invalidateCache('maquinas');
+    await carregarMaquinasCached(true);
     renderCadastroMaquinas();
     toast(`${adicionadas} máquina(s) criada(s), ${atualizadas} atualizada(s)!`, 'ok');
   } catch(e) { 
@@ -6880,11 +6989,11 @@ async function carregarProdutosFirestore() {
   } catch(e) {
     console.warn('[PRODUTOS] Erro ao carregar do Firestore:', e.message);
   }
-  // Recarregar fichaTecnicaData a partir do Firestore
+  // Recarregar fichaTecnicaData a partir do Firestore — guardar _firestoreId para salvar sem re-leitura
   try {
     const snap2 = await getDocs(lojaCol('fichaTecnica'));
     if (!snap2.empty) {
-      const ftArr = snap2.docs.map(d => d.data());
+      const ftArr = snap2.docs.map(d => ({ ...d.data(), _firestoreId: d.id }));
       FICHA_TECNICA = ftArr;
       fichaTecnicaData = JSON.parse(JSON.stringify(ftArr));
     }
@@ -6927,7 +7036,8 @@ async function salvarProdutoFirestore(dados) {
     if (payload.maquina && payload.nome) {
       await _syncProdutoNaMaquina(payload.maquina, payload.nome, payload.velocidadePadrao);
     }
-    await carregarProdutosFirestore();
+    invalidateCache('produtos');
+    await carregarProdutosCached(true);
   } catch(e) {
     toast('Erro ao salvar produto: ' + e.message, 'err');
   }
@@ -6936,16 +7046,17 @@ async function salvarProdutoFirestore(dados) {
 // Garante que um produto está listado nos produtosCompativeis de uma máquina
 async function _syncProdutoNaMaquina(nomeMaq, nomeProduto, velocidade) {
   try {
-    const snap = await getDocs(query(lojaCol('maquinas'), where('nome', '==', nomeMaq)));
-    if (snap.empty) return; // máquina não cadastrada, não força
-    const maqDoc = snap.docs[0];
-    const maqData = maqDoc.data();
+    // Usar cache MAQUINAS_DATA em vez de consultar Firestore
+    const maqCached = (window.MAQUINAS_DATA || {})[nomeMaq];
+    if (!maqCached || !maqCached._id) return; // máquina não cadastrada
+    const maqData = maqCached;
     const prods = Array.isArray(maqData.produtosCompativeis) ? [...maqData.produtosCompativeis] : [];
     const exists = prods.findIndex(p => p.produto === nomeProduto);
     if (exists >= 0) return; // já está vinculado
     prods.push({ produto: nomeProduto, velocidade: velocidade || null });
-    await setDoc(lojaDoc('maquinas', maqDoc.id), { ...maqData, produtosCompativeis: prods, atualizadoEm: new Date().toISOString() });
-    await carregarMaquinasFirestore();
+    await setDoc(lojaDoc('maquinas', maqCached._id), { ...maqData, produtosCompativeis: prods, atualizadoEm: new Date().toISOString() });
+    invalidateCache('maquinas');
+    await carregarMaquinasCached(true);
   } catch(e) {
     console.warn('[SYNC] Não foi possível sincronizar produto na máquina:', e.message);
   }
@@ -7342,11 +7453,11 @@ function importProdutosExcel(input) {
       });
       
       // Segunda passa: criar/atualizar máquinas com produtos vinculados
-      const snapMaquinas = await getDocs(lojaCol('maquinas'));
+      // Usar cache MAQUINAS_DATA em vez de nova leitura ao Firestore
+      await carregarMaquinasCached(); // garante que o cache está populado
       const maquinasExistentes = new Map();
-      snapMaquinas.docs.forEach(d => {
-        const data = d.data();
-        if (data.nome) maquinasExistentes.set(data.nome.toUpperCase(), {id: d.id, data});
+      Object.values(window.MAQUINAS_DATA || {}).forEach(d => {
+        if (d.nome) maquinasExistentes.set(d.nome.toUpperCase(), { id: d._id, data: d });
       });
       
       for (const [nomeMaq, info] of maquinasMap) {
@@ -7399,8 +7510,9 @@ function importProdutosExcel(input) {
         }
       }
       
-      await carregarMaquinasFirestore();
-      await carregarProdutosFirestore();
+      invalidateCache('maquinas', 'produtos');
+      await carregarMaquinasCached(true);
+      await carregarProdutosCached(true);
       renderProdutosCfg();
       renderCadastroMaquinas();
       
@@ -10560,7 +10672,7 @@ async function aplicarProgAutomaticaNoGantt(){
     await dbPut(obj);
     criados++;
   }
-  await reload();
+  await reloadFresh();
   switchTabSidebar('gantt');
   renderGantt();
   toast(`✅ ${criados} solicitações criadas na programação!`,'ok');
@@ -10779,15 +10891,28 @@ window.getAllProdutos = getAllProdutos;
 let _setupRegistros = [];
 
 async function recarregarSetup() {
-  await carregarSetupFirestore();
+  invalidateCache('setup');
+  await carregarSetupCached(true);
   renderSetupMaquinas();
   toast('Setup recarregado!', 'ok');
 }
 
 async function renderSetupMaquinas() {
   try {
-    const snap = await getDocs(lojaCol('setup_maquinas'));
-    _setupRegistros = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    // Usar cache em memória (SETUP_FIRESTORE) em vez de nova leitura ao Firestore
+    // _setupRegistros é reconstruído a partir do SETUP_FIRESTORE já carregado
+    await carregarSetupCached(); // noop se já carregado
+    _setupRegistros = [];
+    for(const maq of Object.keys(SETUP_FIRESTORE)){
+      for(const pA of Object.keys(SETUP_FIRESTORE[maq])){
+        for(const pB of Object.keys(SETUP_FIRESTORE[maq][pA])){
+          const tempo = SETUP_FIRESTORE[maq][pA][pB];
+          if(tempo > 0){
+            _setupRegistros.push({ id: `${maq}_${pA}_${pB}`, maquina: maq, produto_origem: pA, produto_destino: pB, tempo_setup: tempo });
+          }
+        }
+      }
+    }
   } catch(e) {
     _setupRegistros = [];
     toast('Erro ao carregar setup: ' + e.message, 'err');
@@ -10912,7 +11037,8 @@ async function saveSetupModal() {
       await addDoc(lojaCol('setup_maquinas'), payload);
       toast('Setup cadastrado!', 'ok');
     }
-    await carregarSetupFirestore();
+    invalidateCache('setup');
+    await carregarSetupCached(true);
     closeSetupModal();
     renderSetupMaquinas();
   } catch(e) {
@@ -10924,7 +11050,8 @@ async function excluirSetup(id) {
   if (!confirm('Remover este tempo de setup?')) return;
   try {
     await deleteDoc(lojaDoc('setup_maquinas', id));
-    await carregarSetupFirestore();
+    invalidateCache('setup');
+    await carregarSetupCached(true);
     renderSetupMaquinas();
     toast('Setup removido.', 'ok');
   } catch(e) { toast('Erro ao remover: ' + e.message, 'err'); }
@@ -12805,6 +12932,8 @@ window.updateHeader = updateHeader;
 window.renderDashboard = renderDashboard;
 window.renderTable = renderTable;
 window.reload = reload;
+window.reloadFresh = reloadFresh;
+window.invalidateCache = invalidateCache;
 window.loadReorderList = loadReorderList;
 
 // ===== API SYNC EXPORTS =====
