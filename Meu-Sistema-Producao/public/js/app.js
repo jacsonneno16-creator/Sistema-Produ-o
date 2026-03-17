@@ -7093,7 +7093,7 @@ function renderProdutosCfg() {
 
   function renderRow(p, desativado = false) {
     const isExtra = PRODUTOS_EXTRA.findIndex(x => x.descricao === p.descricao) >= 0;
-    const maqTags = p.maquinas.map(m =>
+    const maqTags = [...new Set(p.maquinas)].map(m =>
       `<span style="font-size:10px;background:rgba(0,212,255,.08);border:1px solid rgba(0,212,255,.2);color:${desativado?'var(--text4)':'var(--cyan)'};padding:2px 8px;border-radius:20px;white-space:nowrap">${m}</span>`
     ).join('');
     const rowBg = desativado ? 'background:rgba(0,0,0,.18);opacity:.65;' : '';
@@ -7149,28 +7149,34 @@ function renderProdutosCfg() {
 function toggleAtivoProduto(cod, maquina, estaDesativado){
   const novoAtivo = estaDesativado; // inverte: estava desativado → ativar
   const todos = getAllProdutos();
-  const produto = todos.find(p => String(p.cod)===String(cod) && p.maquina===maquina);
-  if(!produto){ toast('Produto não encontrado','err'); return; }
+  // Busca TODOS os registros com este cod (pode existir um por máquina)
+  const matches = todos.filter(p => String(p.cod)===String(cod));
+  if(!matches.length){ toast('Produto não encontrado','err'); return; }
+  const produto = matches[0];
 
-  produto.produtoAtivo = novoAtivo;
-
-  // Atualizar no array global
+  // Atualizar TODOS no array global
   if(Array.isArray(window.PRODUTOS)){
-    const i = window.PRODUTOS.findIndex(p => String(p.cod)===String(cod) && p.maquina===maquina);
-    if(i>=0) window.PRODUTOS[i].produtoAtivo = novoAtivo;
+    window.PRODUTOS.forEach((p,i) => {
+      if(String(p.cod)===String(cod)) window.PRODUTOS[i].produtoAtivo = novoAtivo;
+    });
   }
-  // Atualizar nos extras
-  const ei = PRODUTOS_EXTRA.findIndex(p => String(p.cod)===String(cod) && p.maquina===maquina);
-  if(ei>=0){
-    PRODUTOS_EXTRA[ei].produtoAtivo = novoAtivo;
-    localStorage.setItem('produtos_extra', JSON.stringify(PRODUTOS_EXTRA));
-  }
+  // Atualizar TODOS nos extras
+  let extraChanged = false;
+  PRODUTOS_EXTRA.forEach((p,i) => {
+    if(String(p.cod)===String(cod)){
+      PRODUTOS_EXTRA[i].produtoAtivo = novoAtivo;
+      extraChanged = true;
+    }
+  });
+  if(extraChanged) localStorage.setItem('produtos_extra', JSON.stringify(PRODUTOS_EXTRA));
 
-  // Persistir no Firestore
+  // Persistir TODOS no Firestore (um por máquina)
   if(typeof salvarProdutoFirestore === 'function'){
-    salvarProdutoFirestore({ ...produto, produtoAtivo: novoAtivo }).catch(e =>
-      console.warn('Erro ao salvar no Firestore:', e)
-    );
+    matches.forEach(m => {
+      salvarProdutoFirestore({ ...m, produtoAtivo: novoAtivo }).catch(e =>
+        console.warn('Erro ao salvar no Firestore:', e)
+      );
+    });
   }
 
   const label = novoAtivo ? 'ativado ✅' : 'desativado ⛔';
@@ -7272,12 +7278,21 @@ function excluirProduto(cod, maquina, descricao) {
       }
     }
     
-    if (removidoSucesso) {
+    // Deletar TODOS os docs correspondentes do Firestore (um por máquina)
+    const todosParaDeletar = [...(window.PRODUTOS || []), ...PRODUTOS_EXTRA]
+      .filter(p => String(p.cod) === String(cod));
+    todosParaDeletar.forEach(p => {
+      if(p._id){
+        deleteDoc(lojaDoc('produtos', p._id)).catch(e =>
+          console.warn('Erro ao excluir doc Firestore:', e)
+        );
+      }
+    });
+
+    if (removidoSucesso || todosParaDeletar.length > 0) {
       toast(`Produto "${descricao}" excluído com sucesso`, 'ok');
-      
-      // Recarregar lista
-      renderProdutosCfg();
-      
+      invalidateCache('produtos');
+
       // Registrar auditoria
       registrarAuditoria('PRODUTO_EXCLUIDO', {
         cod: cod,
@@ -7285,10 +7300,9 @@ function excluirProduto(cod, maquina, descricao) {
         maquina: maquina,
         registrosVinculados: registrosVinculados.length
       });
-      
-      // TODO: Remover do Firestore se implementado
-      // await deleteDoc(doc(lojaCol('produtos'), produtoId));
-      
+
+      // Recarregar lista
+      renderProdutosCfg();
     } else {
       toast('Produto não encontrado nos dados locais', 'warn');
     }
