@@ -7365,7 +7365,7 @@ function closeProdModal() {
   _produtoEditando = null;
 }
 
-function saveProdModal() {
+async function saveProdModal() {
   const cod = parseInt(document.getElementById('pm-cod').value);
   const desc = document.getElementById('pm-desc').value.trim();
   const unid = parseInt(document.getElementById('pm-unid').value);
@@ -7455,13 +7455,10 @@ function saveProdModal() {
       });
     }
 
-    // ── Garantir entrada na Ficha Técnica ─────────────────────────
-    // Se o produto não tem ficha técnica ainda, criar uma em branco
-    // e abrir o modal de insumos logo em seguida
+    // ── Garantir entrada na Ficha Técnica (aguarda persistência antes de prosseguir) ──
     const codNum = parseInt(cod);
     const fichaExistente = fichaTecnicaData.find(f => f.cod === codNum);
     if (!fichaExistente) {
-      // Criar entrada na memória
       const novaFicha = {
         cod: codNum,
         desc: desc,
@@ -7471,36 +7468,34 @@ function saveProdModal() {
         insumos: [],
         criadoEm: new Date().toISOString()
       };
+      // Adicionar na memória imediatamente
       fichaTecnicaData.push(novaFicha);
       FICHA_TECNICA.push({ ...novaFicha });
 
-      // Salvar no Firestore (fichaTecnica)
-      addDoc(lojaCol('fichaTecnica'), { ...novaFicha, atualizadoEm: new Date().toISOString() })
-        .then(docRef => {
-          // Guardar _firestoreId para edições futuras sem re-leitura
-          novaFicha._firestoreId = docRef.id;
-          const ft = FICHA_TECNICA.find(f => f.cod === codNum);
-          if(ft) ft._firestoreId = docRef.id;
-        })
-        .catch(e => console.warn('Erro ao criar ficha técnica:', e));
+      // Salvar no Firestore e aguardar para garantir que o _firestoreId exista
+      try {
+        const docRef = await addDoc(lojaCol('fichaTecnica'), { ...novaFicha, atualizadoEm: new Date().toISOString() });
+        novaFicha._firestoreId = docRef.id;
+        const ft = FICHA_TECNICA.find(f => f.cod === codNum);
+        if (ft) ft._firestoreId = docRef.id;
+      } catch(e) {
+        console.warn('Erro ao criar ficha técnica no Firestore:', e);
+      }
     }
 
-    // Recarregar lista e fechar modal
-    renderProdutosCfg();
-    if (typeof renderFichaTecnicaCfg === 'function') renderFichaTecnicaCfg();
     // ── Guardar flag ANTES de fechar o modal (closeProdModal zera _produtoEditando) ──
     const _eraNovoProduto = !_produtoEditando;
+
+    // Recarregar listas e fechar modal
+    renderProdutosCfg();
+    if (typeof renderFichaTecnicaCfg === 'function') renderFichaTecnicaCfg();
+    if (typeof renderFichaTecnica === 'function') renderFichaTecnica();
     closeProdModal();
 
     // ── Abrir modal de insumos imediatamente após criar ────────────
     if (_eraNovoProduto) {
-      // Pequeno delay para garantir que o prod-modal fechou antes de abrir o de insumos
       setTimeout(() => {
-        // Confirmar se o usuário quer cadastrar insumos agora
-        if (confirm(`Produto "${desc}" salvo!
-
-Deseja cadastrar os insumos agora?
-(você pode fazer isso depois em Configurações → Ficha Técnica)`)) {
+        if (confirm(`Produto "${desc}" salvo com sucesso!\n\nDeseja cadastrar os insumos agora?\n(você pode fazer isso depois em Configurações → Ficha Técnica)`)) {
           editFichaByCod(codNum);
         }
       }, 150);
