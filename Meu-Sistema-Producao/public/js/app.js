@@ -4090,20 +4090,40 @@ async function excluirFichaByCod(cod) {
 function renderFichaTecnica(){
   const q=(document.getElementById('ft-search')?.value||'').toLowerCase().trim();
 
-  // Deduplicate by desc — one entry per unique product description
+  // Merge: produtos com ficha + produtos cadastrados sem ficha (deduplicado por cod)
   const seen = new Set();
   const deduped = [];
+
+  // 1. Produtos que já têm ficha técnica
   fichaTecnicaData.forEach(p=>{
-    const key = p.desc.trim().toLowerCase();
+    const key = String(p.cod);
     if(seen.has(key)) return;
     seen.add(key);
     deduped.push(p);
   });
 
+  // 2. Produtos cadastrados que ainda NÃO têm ficha — exibidos com insumos vazios
+  if(typeof getAllProdutos === 'function'){
+    getAllProdutos().forEach(p=>{
+      const key = String(p.cod);
+      if(seen.has(key) || !p.cod || !p.descricao) return;
+      seen.add(key);
+      deduped.push({
+        cod:     p.cod,
+        desc:    p.descricao,
+        unid:    p.unid || 1,
+        pc_min:  p.pc_min || 0,
+        maquina: p.maquina || '',
+        insumos: [],
+        _semFicha: true
+      });
+    });
+  }
+
   let filtered = deduped.filter(p=>{
     if(!q) return true;
-    if(p.desc.toLowerCase().includes(q)) return true;
-    if(p.insumos.some(i=>i.insumo.toLowerCase().includes(q))) return true;
+    if((p.desc||'').toLowerCase().includes(q)) return true;
+    if((p.insumos||[]).some(i=>i.insumo.toLowerCase().includes(q))) return true;
     return false;
   });
 
@@ -7468,10 +7488,12 @@ function saveProdModal() {
     // Recarregar lista e fechar modal
     renderProdutosCfg();
     if (typeof renderFichaTecnicaCfg === 'function') renderFichaTecnicaCfg();
+    // ── Guardar flag ANTES de fechar o modal (closeProdModal zera _produtoEditando) ──
+    const _eraNovoProduto = !_produtoEditando;
     closeProdModal();
 
     // ── Abrir modal de insumos imediatamente após criar ────────────
-    if (!_produtoEditando) {
+    if (_eraNovoProduto) {
       // Pequeno delay para garantir que o prod-modal fechou antes de abrir o de insumos
       setTimeout(() => {
         // Confirmar se o usuário quer cadastrar insumos agora
