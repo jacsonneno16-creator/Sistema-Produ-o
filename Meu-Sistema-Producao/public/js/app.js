@@ -6972,7 +6972,7 @@ function normalizeProdutoFirestore(data) {
     tipoMinimo:          data.tipoMinimo          || '',
     prioridadeProducao:  parseInt(data.prioridadeProducao) || 2,
     produtoAtivo:        data.produtoAtivo !== false,  // default true
-    _id:                 data._id || null               // Firestore doc ID — NUNCA descartar
+    _id:                 data._id || null               // Firestore doc ID
   };
 }
 
@@ -7148,29 +7148,22 @@ function renderProdutosCfg() {
 
 // Alterna produtoAtivo sem abrir o modal
 function toggleAtivoProduto(cod, maquina, estaDesativado){
-  const novoAtivo = estaDesativado; // inverte: estava desativado → ativar
+  const novoAtivo = estaDesativado;
   const todos = getAllProdutos();
-  // Busca TODOS os registros com este cod — pode haver um doc por máquina no Firestore
   const matches = todos.filter(p => String(p.cod) === String(cod));
   if(!matches.length){ toast('Produto não encontrado','err'); return; }
 
-  // Atualizar TODOS no array global window.PRODUTOS
   if(Array.isArray(window.PRODUTOS)){
-    window.PRODUTOS.forEach((p, i) => {
-      if(String(p.cod) === String(cod)) window.PRODUTOS[i].produtoAtivo = novoAtivo;
+    window.PRODUTOS.forEach((p,i) => {
+      if(String(p.cod)===String(cod)) window.PRODUTOS[i].produtoAtivo = novoAtivo;
     });
   }
-  // Atualizar TODOS nos extras
   let extraChanged = false;
-  PRODUTOS_EXTRA.forEach((p, i) => {
-    if(String(p.cod) === String(cod)){
-      PRODUTOS_EXTRA[i].produtoAtivo = novoAtivo;
-      extraChanged = true;
-    }
+  PRODUTOS_EXTRA.forEach((p,i) => {
+    if(String(p.cod)===String(cod)){ PRODUTOS_EXTRA[i].produtoAtivo = novoAtivo; extraChanged = true; }
   });
   if(extraChanged) localStorage.setItem('produtos_extra', JSON.stringify(PRODUTOS_EXTRA));
 
-  // Persistir TODOS no Firestore — cada match tem seu próprio _id
   if(typeof salvarProdutoFirestore === 'function'){
     matches.forEach(p => {
       salvarProdutoFirestore({ ...p, produtoAtivo: novoAtivo }).catch(e =>
@@ -7278,7 +7271,6 @@ function excluirProduto(cod, maquina, descricao) {
       }
     }
     
-    // Deletar do Firestore todos os docs com este cod (um por máquina)
     const firestoreMatches = (window.PRODUTOS || []).filter(p => String(p.cod) === String(cod));
     firestoreMatches.forEach(p => {
       if(p._id){
@@ -7291,16 +7283,10 @@ function excluirProduto(cod, maquina, descricao) {
 
     if (removidoSucesso || firestoreMatches.length > 0) {
       toast(`Produto "${descricao}" excluído com sucesso`, 'ok');
-
-      // Registrar auditoria
       registrarAuditoria('PRODUTO_EXCLUIDO', {
-        cod: cod,
-        descricao: descricao,
-        maquina: maquina,
+        cod: cod, descricao: descricao, maquina: maquina,
         registrosVinculados: registrosVinculados.length
       });
-
-      // Recarregar lista
       renderProdutosCfg();
     } else {
       toast('Produto não encontrado nos dados locais', 'warn');
@@ -9539,6 +9525,31 @@ function gerarProgAutomarica(){
     return;
   }
 
+  // ── Mapa de produção já programada (records Pendente / Em Andamento) ─
+  // Soma as caixas já criadas para cada produto na semana selecionada
+  // para que a programação automática não sugira o que já foi enviado
+  const _semanaSel2  = document.getElementById('pa-semana-sel')?.value;
+  const _mon2        = _semanaSel2 ? new Date(_semanaSel2+'T12:00:00') : getWeekMonday(new Date());
+  const _wdays2      = getWeekDays(_mon2);
+  const _wStart      = dateStr(_wdays2[0]);
+  const _wEnd        = dateStr(_wdays2[6]);
+  const _jaProgMap   = {};   // cod (string) → caixas já programadas (semana atual)
+  const _jaProgMes   = {};   // cod (string) → caixas já programadas (mês = 4 semanas)
+  if(Array.isArray(records)){
+    records.forEach(r => {
+      if(r.status === 'Concluído') return;   // concluído já virou estoque
+      const codKey = String(r.prodCod || 0);
+      if(codKey === '0') return;
+      // Caixas do mês inteiro (4 semanas a partir da segunda selecionada)
+      _jaProgMes[codKey] = (_jaProgMes[codKey] || 0) + (parseInt(r.qntCaixas) || 0);
+      // Caixas apenas da semana selecionada
+      const dt = r.dtDesejada || r.dtSolicitacao || '';
+      if(dt >= _wStart && dt <= _wEnd){
+        _jaProgMap[codKey] = (_jaProgMap[codKey] || 0) + (parseInt(r.qntCaixas) || 0);
+      }
+    });
+  }
+
   // ── PASSO 1: montar candidatos com todas as máquinas compatíveis ─
   const allProds       = getAllProdutos();
   const prodSemMaquina = [];
@@ -9599,13 +9610,20 @@ function gerarProgAutomarica(){
     const estoque = (unidPorCx > 1 && estoqueRaw > demandaSemanal * unidPorCx * 0.5)
       ? estoqueRaw / unidPorCx
       : estoqueRaw;
-    const cobAtual = demandaDiaria > 0 ? estoque / demandaDiaria : 999;
 
-    // Ignorar produtos já acima da meta de cobertura
+    // Descontar o que já está programado (Pendente/Em Andamento)
+    // Tratamos como estoque futuro garantido para não sugerir de novo
+    const codKeyPA    = String(proj.cod || 0);
+    const cxJaMes     = _jaProgMes[codKeyPA] || 0;
+    const estoqueEfetivo = estoque + cxJaMes;   // estoque real + já programado
+
+    const cobAtual = demandaDiaria > 0 ? estoqueEfetivo / demandaDiaria : 999;
+
+    // Ignorar produtos já acima da meta de cobertura (com o que já foi programado)
     if(cobAtual > cobAlvo && cobAtual < 900) return;
 
     const estqAlvo = demandaDiaria * cobAlvo;
-    if(Math.max(0, estqAlvo - estoque) <= 0 && cobAtual > cobAlvo) return;
+    if(Math.max(0, estqAlvo - estoqueEfetivo) <= 0 && cobAtual > cobAlvo) return;
 
     // Campos de mínimo/múltiplo do produto
     const producaoMinima   = ficha ? (parseFloat(ficha.producaoMinima)   || 0) : 0;
@@ -9617,8 +9635,8 @@ function gerarProgAutomarica(){
       cod:  proj.cod,
       maquinasCompativeis,                        // lista ordenada de máquinas
       unid: unidPorCx,
-      estoque,
-      estoqueSim: estoque,                        // estado simulado — evolui semana a semana
+      estoque:    estoqueEfetivo,
+      estoqueSim: estoqueEfetivo,                 // estado simulado — inclui o já programado
       cobAtual:       parseFloat(cobAtual.toFixed(1)),
       demandaDiaria:  parseFloat(demandaDiaria.toFixed(2)),
       demandaSemanal: parseFloat(demandaSemanal.toFixed(2)),
@@ -10687,6 +10705,15 @@ async function aplicarProgAutomaticaNoGantt(){
     criados++;
   }
   await reloadFresh();
+
+  // Limpar resultados para que a tela não mostre os itens como "ainda a enviar"
+  paResultados = [];
+  const paBody = document.getElementById('pa-body');
+  if(paBody) paBody.innerHTML = '<div class="empty"><div class="ei">✅</div>Programação enviada com sucesso!<br><small style="color:var(--text3)">Clique em "Gerar Programação Automática" para uma nova sugestão.</small></div>';
+  const applyBtn = document.getElementById('pa-apply-btn');
+  if(applyBtn) applyBtn.style.display = 'none';
+  renderProgAutomaticaStats();
+
   switchTabSidebar('gantt');
   renderGantt();
   toast(`✅ ${criados} solicitações criadas na programação!`,'ok');
