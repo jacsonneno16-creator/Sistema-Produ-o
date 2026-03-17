@@ -6872,21 +6872,48 @@ function renderFichaTecnicaCfg() {
   const el = document.getElementById('ft-cfg-list');
   const cnt = document.getElementById('ft-cfg-count');
 
-  // Deduplica por desc (igual ao renderFichaTecnica)
+  // Merge: produtos cadastrados (getAllProdutos) + fichaTecnicaData
+  // Garante que todo produto apareça na Ficha Técnica, mesmo sem insumos
   const seen = new Set();
   const deduped = [];
+
+  // 1. Primeiro: produtos que já têm ficha técnica
   fichaTecnicaData.forEach(p => {
-    const key = p.desc.trim().toLowerCase();
+    const key = String(p.cod);
     if (seen.has(key)) return;
     seen.add(key);
     deduped.push(p);
+  });
+
+  // 2. Depois: produtos cadastrados que AINDA NÃO têm ficha técnica
+  getAllProdutos().forEach(p => {
+    const key = String(p.cod);
+    if (seen.has(key)) return;
+    if (!p.cod || !p.descricao) return;
+    seen.add(key);
+    // Criar entrada virtual (sem insumos) para exibição
+    deduped.push({
+      cod:     p.cod,
+      desc:    p.descricao,
+      unid:    p.unid || 1,
+      pc_min:  p.pc_min || 0,
+      maquina: p.maquina || '',
+      insumos: [],
+      _semFicha: true   // flag: ainda não tem ficha no Firestore
+    });
+  });
+
+  // Ordenar: com ficha primeiro, depois sem ficha; dentro de cada grupo, por desc
+  deduped.sort((a, b) => {
+    if(!!a._semFicha !== !!b._semFicha) return a._semFicha ? 1 : -1;
+    return (a.desc||'').localeCompare(b.desc||'');
   });
 
   if (cnt) cnt.textContent = deduped.length;
   if (!el) return;
 
   const filtered = search
-    ? deduped.filter(p => p.desc.toLowerCase().includes(search.toLowerCase()) || String(p.cod).includes(search))
+    ? deduped.filter(p => (p.desc||'').toLowerCase().includes(search.toLowerCase()) || String(p.cod).includes(search))
     : deduped;
 
   if (!filtered.length) {
@@ -6917,15 +6944,18 @@ function renderFichaTecnicaCfg() {
         </div>
         <div style="display:flex;gap:12px;align-items:center;flex-shrink:0;margin-left:10px">
           <span style="font-size:11px;color:var(--warn);font-family:'JetBrains Mono',monospace">${p.pc_min} und/min</span>
-          <span style="font-size:10px;background:${insCount?'rgba(0,212,255,.1)':'var(--s2)'};border:1px solid ${insCount?'rgba(0,212,255,.2)':'var(--border)'};color:${insCount?'var(--cyan)':'var(--text3)'};padding:1px 7px;border-radius:20px">${insCount} insumo${insCount!==1?'s':''}</span>
+          ${p._semFicha
+            ? `<span style="background:rgba(255,71,87,.12);border:1px solid rgba(255,71,87,.3);color:var(--red);padding:1px 7px;border-radius:20px;font-size:10px;font-weight:700">⚠️ Sem insumos</span>`
+            : `<span style="font-size:10px;background:${insCount?'rgba(0,212,255,.1)':'var(--s2)'};border:1px solid ${insCount?'rgba(0,212,255,.2)':'var(--border)'};color:${insCount?'var(--cyan)':'var(--text3)'};padding:1px 7px;border-radius:20px">${insCount} insumo${insCount!==1?'s':''}</span>`
+          }
         </div>
       </div>
       <div class="ft-cfg-panel" style="display:none;padding:10px 16px 12px 36px;background:rgba(0,0,0,.15)">
         <div style="margin-bottom:8px">${insHtml}</div>
-        <button onclick="event.stopPropagation();editFichaByCod(this.dataset.cod)" data-cod="${p.cod}"
-                style="background:rgba(0,212,255,.1);border:1px solid rgba(0,212,255,.25);border-radius:6px;padding:5px 12px;font-size:11px;color:var(--cyan);cursor:pointer;font-family:'Space Grotesk',sans-serif;display:inline-flex;align-items:center;gap:6px">
+        <button onclick="event.stopPropagation();ftCfgAbrirFicha(this.dataset.cod, ${!!p._semFicha})" data-cod="${p.cod}"
+                style="background:${p._semFicha?'rgba(255,179,0,.12)':'rgba(0,212,255,.1)'};border:1px solid ${p._semFicha?'rgba(255,179,0,.4)':'rgba(0,212,255,.25)'};border-radius:6px;padding:5px 12px;font-size:11px;color:${p._semFicha?'var(--warn)':'var(--cyan)'};cursor:pointer;font-family:'Space Grotesk',sans-serif;display:inline-flex;align-items:center;gap:6px">
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-          Editar insumos e quantidades
+          ${p._semFicha ? '+ Cadastrar insumos' : 'Editar insumos e quantidades'}
         </button>
         <button onclick="event.stopPropagation();excluirFichaByCod(this.dataset.cod)" data-cod="${p.cod}"
                 style="background:rgba(255,71,87,.08);border:1px solid rgba(255,71,87,.3);border-radius:6px;padding:5px 12px;font-size:11px;color:#ff6b6b;cursor:pointer;font-family:'Space Grotesk',sans-serif;display:inline-flex;align-items:center;gap:6px">
@@ -6934,6 +6964,39 @@ function renderFichaTecnicaCfg() {
       </div>
     </div>`;
   }).join('');
+}
+
+// Abre ficha técnica para edição; se _semFicha=true cria a entrada antes
+function ftCfgAbrirFicha(cod, semFicha) {
+  const codNum = parseInt(cod);
+  if (semFicha) {
+    // Produto sem ficha: criar entrada em branco antes de abrir o modal
+    const prod = getAllProdutos().find(p => parseInt(p.cod) === codNum);
+    if (!prod) { toast('Produto não encontrado', 'err'); return; }
+    const jaExiste = fichaTecnicaData.find(f => f.cod === codNum);
+    if (!jaExiste) {
+      const novaFicha = {
+        cod: codNum,
+        desc: prod.descricao,
+        unid: prod.unid || 1,
+        pc_min: prod.pc_min || 0,
+        maquina: prod.maquina || '',
+        insumos: [],
+        criadoEm: new Date().toISOString()
+      };
+      fichaTecnicaData.push(novaFicha);
+      FICHA_TECNICA.push({ ...novaFicha });
+      // Salvar no Firestore
+      addDoc(lojaCol('fichaTecnica'), { ...novaFicha, atualizadoEm: new Date().toISOString() })
+        .then(docRef => {
+          novaFicha._firestoreId = docRef.id;
+          const ft = FICHA_TECNICA.find(f => f.cod === codNum);
+          if(ft) ft._firestoreId = docRef.id;
+        })
+        .catch(e => console.warn('Erro ao criar ficha:', e));
+    }
+  }
+  editFichaByCod(codNum);
 }
 
 function ftCfgToggle(header) {
@@ -6972,7 +7035,7 @@ function normalizeProdutoFirestore(data) {
     tipoMinimo:          data.tipoMinimo          || '',
     prioridadeProducao:  parseInt(data.prioridadeProducao) || 2,
     produtoAtivo:        data.produtoAtivo !== false,  // default true
-    _id:                 data._id || null               // Firestore doc ID
+    _id:                 data._id || null
   };
 }
 
@@ -7152,26 +7215,15 @@ function toggleAtivoProduto(cod, maquina, estaDesativado){
   const todos = getAllProdutos();
   const matches = todos.filter(p => String(p.cod) === String(cod));
   if(!matches.length){ toast('Produto não encontrado','err'); return; }
-
   if(Array.isArray(window.PRODUTOS)){
-    window.PRODUTOS.forEach((p,i) => {
-      if(String(p.cod)===String(cod)) window.PRODUTOS[i].produtoAtivo = novoAtivo;
-    });
+    window.PRODUTOS.forEach((p,i) => { if(String(p.cod)===String(cod)) window.PRODUTOS[i].produtoAtivo = novoAtivo; });
   }
   let extraChanged = false;
-  PRODUTOS_EXTRA.forEach((p,i) => {
-    if(String(p.cod)===String(cod)){ PRODUTOS_EXTRA[i].produtoAtivo = novoAtivo; extraChanged = true; }
-  });
+  PRODUTOS_EXTRA.forEach((p,i) => { if(String(p.cod)===String(cod)){ PRODUTOS_EXTRA[i].produtoAtivo = novoAtivo; extraChanged = true; } });
   if(extraChanged) localStorage.setItem('produtos_extra', JSON.stringify(PRODUTOS_EXTRA));
-
   if(typeof salvarProdutoFirestore === 'function'){
-    matches.forEach(p => {
-      salvarProdutoFirestore({ ...p, produtoAtivo: novoAtivo }).catch(e =>
-        console.warn('Erro ao salvar no Firestore:', e)
-      );
-    });
+    matches.forEach(p => { salvarProdutoFirestore({ ...p, produtoAtivo: novoAtivo }).catch(e => console.warn('Firestore toggle err:', e)); });
   }
-
   const label = novoAtivo ? 'ativado ✅' : 'desativado ⛔';
   toast(`"${matches[0].descricao}" ${label}`, 'ok');
   renderProdutosCfg();
@@ -7272,21 +7324,11 @@ function excluirProduto(cod, maquina, descricao) {
     }
     
     const firestoreMatches = (window.PRODUTOS || []).filter(p => String(p.cod) === String(cod));
-    firestoreMatches.forEach(p => {
-      if(p._id){
-        deleteDoc(lojaDoc('produtos', p._id)).catch(e =>
-          console.warn('Erro ao excluir doc Firestore:', p._id, e)
-        );
-      }
-    });
+    firestoreMatches.forEach(p => { if(p._id){ deleteDoc(lojaDoc('produtos', p._id)).catch(e => console.warn('Firestore delete err:', p._id, e)); } });
     invalidateCache('produtos');
-
     if (removidoSucesso || firestoreMatches.length > 0) {
       toast(`Produto "${descricao}" excluído com sucesso`, 'ok');
-      registrarAuditoria('PRODUTO_EXCLUIDO', {
-        cod: cod, descricao: descricao, maquina: maquina,
-        registrosVinculados: registrosVinculados.length
-      });
+      registrarAuditoria('PRODUTO_EXCLUIDO', { cod, descricao, maquina, registrosVinculados: registrosVinculados.length });
       renderProdutosCfg();
     } else {
       toast('Produto não encontrado nos dados locais', 'warn');
@@ -7383,7 +7425,7 @@ function saveProdModal() {
       registrarAuditoria('PRODUTO_ADICIONADO', dados);
     }
     
-    // Tentar salvar no Firestore (se função existir)
+    // Salvar no Firestore
     if (typeof salvarProdutoFirestore === 'function') {
       salvarProdutoFirestore(dados).then(() => {
         console.log('Produto sincronizado com Firestore');
@@ -7392,11 +7434,56 @@ function saveProdModal() {
         toast('Produto salvo localmente, mas erro ao sincronizar', 'warn');
       });
     }
-    
+
+    // ── Garantir entrada na Ficha Técnica ─────────────────────────
+    // Se o produto não tem ficha técnica ainda, criar uma em branco
+    // e abrir o modal de insumos logo em seguida
+    const codNum = parseInt(cod);
+    const fichaExistente = fichaTecnicaData.find(f => f.cod === codNum);
+    if (!fichaExistente) {
+      // Criar entrada na memória
+      const novaFicha = {
+        cod: codNum,
+        desc: desc,
+        unid: unid || 1,
+        pc_min: pcmin || 0,
+        maquina: maq,
+        insumos: [],
+        criadoEm: new Date().toISOString()
+      };
+      fichaTecnicaData.push(novaFicha);
+      FICHA_TECNICA.push({ ...novaFicha });
+
+      // Salvar no Firestore (fichaTecnica)
+      addDoc(lojaCol('fichaTecnica'), { ...novaFicha, atualizadoEm: new Date().toISOString() })
+        .then(docRef => {
+          // Guardar _firestoreId para edições futuras sem re-leitura
+          novaFicha._firestoreId = docRef.id;
+          const ft = FICHA_TECNICA.find(f => f.cod === codNum);
+          if(ft) ft._firestoreId = docRef.id;
+        })
+        .catch(e => console.warn('Erro ao criar ficha técnica:', e));
+    }
+
     // Recarregar lista e fechar modal
     renderProdutosCfg();
+    if (typeof renderFichaTecnicaCfg === 'function') renderFichaTecnicaCfg();
     closeProdModal();
-    
+
+    // ── Abrir modal de insumos imediatamente após criar ────────────
+    if (!_produtoEditando) {
+      // Pequeno delay para garantir que o prod-modal fechou antes de abrir o de insumos
+      setTimeout(() => {
+        // Confirmar se o usuário quer cadastrar insumos agora
+        if (confirm(`Produto "${desc}" salvo!
+
+Deseja cadastrar os insumos agora?
+(você pode fazer isso depois em Configurações → Ficha Técnica)`)) {
+          editFichaByCod(codNum);
+        }
+      }, 150);
+    }
+
   } catch(e) {
     console.error('Erro ao salvar produto:', e);
     toast('Erro ao salvar produto: ' + e.message, 'err');
@@ -9525,31 +9612,6 @@ function gerarProgAutomarica(){
     return;
   }
 
-  // ── Mapa de produção já programada (records Pendente / Em Andamento) ─
-  // Soma as caixas já criadas para cada produto na semana selecionada
-  // para que a programação automática não sugira o que já foi enviado
-  const _semanaSel2  = document.getElementById('pa-semana-sel')?.value;
-  const _mon2        = _semanaSel2 ? new Date(_semanaSel2+'T12:00:00') : getWeekMonday(new Date());
-  const _wdays2      = getWeekDays(_mon2);
-  const _wStart      = dateStr(_wdays2[0]);
-  const _wEnd        = dateStr(_wdays2[6]);
-  const _jaProgMap   = {};   // cod (string) → caixas já programadas (semana atual)
-  const _jaProgMes   = {};   // cod (string) → caixas já programadas (mês = 4 semanas)
-  if(Array.isArray(records)){
-    records.forEach(r => {
-      if(r.status === 'Concluído') return;   // concluído já virou estoque
-      const codKey = String(r.prodCod || 0);
-      if(codKey === '0') return;
-      // Caixas do mês inteiro (4 semanas a partir da segunda selecionada)
-      _jaProgMes[codKey] = (_jaProgMes[codKey] || 0) + (parseInt(r.qntCaixas) || 0);
-      // Caixas apenas da semana selecionada
-      const dt = r.dtDesejada || r.dtSolicitacao || '';
-      if(dt >= _wStart && dt <= _wEnd){
-        _jaProgMap[codKey] = (_jaProgMap[codKey] || 0) + (parseInt(r.qntCaixas) || 0);
-      }
-    });
-  }
-
   // ── PASSO 1: montar candidatos com todas as máquinas compatíveis ─
   const allProds       = getAllProdutos();
   const prodSemMaquina = [];
@@ -9610,20 +9672,13 @@ function gerarProgAutomarica(){
     const estoque = (unidPorCx > 1 && estoqueRaw > demandaSemanal * unidPorCx * 0.5)
       ? estoqueRaw / unidPorCx
       : estoqueRaw;
+    const cobAtual = demandaDiaria > 0 ? estoque / demandaDiaria : 999;
 
-    // Descontar o que já está programado (Pendente/Em Andamento)
-    // Tratamos como estoque futuro garantido para não sugerir de novo
-    const codKeyPA    = String(proj.cod || 0);
-    const cxJaMes     = _jaProgMes[codKeyPA] || 0;
-    const estoqueEfetivo = estoque + cxJaMes;   // estoque real + já programado
-
-    const cobAtual = demandaDiaria > 0 ? estoqueEfetivo / demandaDiaria : 999;
-
-    // Ignorar produtos já acima da meta de cobertura (com o que já foi programado)
+    // Ignorar produtos já acima da meta de cobertura
     if(cobAtual > cobAlvo && cobAtual < 900) return;
 
     const estqAlvo = demandaDiaria * cobAlvo;
-    if(Math.max(0, estqAlvo - estoqueEfetivo) <= 0 && cobAtual > cobAlvo) return;
+    if(Math.max(0, estqAlvo - estoque) <= 0 && cobAtual > cobAlvo) return;
 
     // Campos de mínimo/múltiplo do produto
     const producaoMinima   = ficha ? (parseFloat(ficha.producaoMinima)   || 0) : 0;
@@ -9635,8 +9690,8 @@ function gerarProgAutomarica(){
       cod:  proj.cod,
       maquinasCompativeis,                        // lista ordenada de máquinas
       unid: unidPorCx,
-      estoque:    estoqueEfetivo,
-      estoqueSim: estoqueEfetivo,                 // estado simulado — inclui o já programado
+      estoque,
+      estoqueSim: estoque,                        // estado simulado — evolui semana a semana
       cobAtual:       parseFloat(cobAtual.toFixed(1)),
       demandaDiaria:  parseFloat(demandaDiaria.toFixed(2)),
       demandaSemanal: parseFloat(demandaSemanal.toFixed(2)),
@@ -10705,15 +10760,12 @@ async function aplicarProgAutomaticaNoGantt(){
     criados++;
   }
   await reloadFresh();
-
-  // Limpar resultados para que a tela não mostre os itens como "ainda a enviar"
   paResultados = [];
   const paBody = document.getElementById('pa-body');
-  if(paBody) paBody.innerHTML = '<div class="empty"><div class="ei">✅</div>Programação enviada com sucesso!<br><small style="color:var(--text3)">Clique em "Gerar Programação Automática" para uma nova sugestão.</small></div>';
+  if(paBody) paBody.innerHTML = '<div class="empty"><div class="ei">✅</div>Programação enviada! Clique em "Gerar Programação Automática" para nova sugestão.</div>';
   const applyBtn = document.getElementById('pa-apply-btn');
   if(applyBtn) applyBtn.style.display = 'none';
   renderProgAutomaticaStats();
-
   switchTabSidebar('gantt');
   renderGantt();
   toast(`✅ ${criados} solicitações criadas na programação!`,'ok');
@@ -11120,6 +11172,7 @@ window.toggleMaqDetail = toggleMaqDetail;
 window.toggleMaqCardDetail = toggleMaqCardDetail;
 window.renderFichaTecnicaCfg = renderFichaTecnicaCfg;
 window.ftCfgToggle = ftCfgToggle;
+window.ftCfgAbrirFicha = ftCfgAbrirFicha;
 window.importFichaTecnicaExcel = loadFichaTecnica;
 window.loadFichaTecnica = loadFichaTecnica;
 window.excluirMaquinaFirestore = excluirMaquinaFirestore;
