@@ -3980,15 +3980,50 @@ async function saveReorder(){
 let fichaTecnicaData = JSON.parse(JSON.stringify(FICHA_TECNICA)); // working copy (editable)
 
 function initFichaTecnica(){
-  // Populate machine filter
+  // Populate machine filter usando todos os produtos (ficha + cadastrados)
   const sel=document.getElementById('ft-maq-filter');
   if(!sel) return;
-  const maqs=[...new Set(FICHA_TECNICA.map(p=>p.maquina))].sort();
+  const merged = getFichaTecnicaMerged();
+  const maqs=[...new Set(merged.map(p=>p.maquina).filter(Boolean))].sort();
+  // Limpar opções existentes exceto "Todas"
+  while(sel.options.length > 1) sel.remove(1);
   maqs.forEach(m=>{
     const o=document.createElement('option');
     o.value=m; o.textContent=m;
     sel.appendChild(o);
   });
+}
+
+// Fonte única da verdade: merge de fichaTecnicaData + produtos cadastrados sem ficha
+// Retorna array deduplicado por cod, com produtos sem ficha marcados como _semFicha:true
+function getFichaTecnicaMerged() {
+  const seen = new Set();
+  const result = [];
+  // 1. Fichas técnicas existentes
+  (fichaTecnicaData || []).forEach(p => {
+    const key = String(p.cod);
+    if (seen.has(key)) return;
+    seen.add(key);
+    result.push({ ...p, insumos: p.insumos || [] });
+  });
+  // 2. Produtos cadastrados que ainda não têm ficha
+  if (typeof getAllProdutos === 'function') {
+    getAllProdutos().forEach(p => {
+      const key = String(p.cod);
+      if (seen.has(key) || !p.cod || !p.descricao) return;
+      seen.add(key);
+      result.push({
+        cod:      p.cod,
+        desc:     p.descricao,
+        unid:     p.unid   || 1,
+        pc_min:   p.pc_min || 0,
+        maquina:  p.maquina || '',
+        insumos:  [],
+        _semFicha: true
+      });
+    });
+  }
+  return result;
 }
 
 function loadFichaTecnica(input){
@@ -4090,35 +4125,8 @@ async function excluirFichaByCod(cod) {
 function renderFichaTecnica(){
   const q=(document.getElementById('ft-search')?.value||'').toLowerCase().trim();
 
-  // Merge: produtos com ficha + produtos cadastrados sem ficha (deduplicado por cod)
-  const seen = new Set();
-  const deduped = [];
-
-  // 1. Produtos que já têm ficha técnica
-  fichaTecnicaData.forEach(p=>{
-    const key = String(p.cod);
-    if(seen.has(key)) return;
-    seen.add(key);
-    deduped.push(p);
-  });
-
-  // 2. Produtos cadastrados que ainda NÃO têm ficha — exibidos com insumos vazios
-  if(typeof getAllProdutos === 'function'){
-    getAllProdutos().forEach(p=>{
-      const key = String(p.cod);
-      if(seen.has(key) || !p.cod || !p.descricao) return;
-      seen.add(key);
-      deduped.push({
-        cod:     p.cod,
-        desc:    p.descricao,
-        unid:    p.unid || 1,
-        pc_min:  p.pc_min || 0,
-        maquina: p.maquina || '',
-        insumos: [],
-        _semFicha: true
-      });
-    });
-  }
+  // Usa fonte única: fichas existentes + produtos cadastrados sem ficha
+  const deduped = getFichaTecnicaMerged();
 
   let filtered = deduped.filter(p=>{
     if(!q) return true;
@@ -6892,39 +6900,8 @@ function renderFichaTecnicaCfg() {
   const el = document.getElementById('ft-cfg-list');
   const cnt = document.getElementById('ft-cfg-count');
 
-  // Merge: produtos cadastrados (getAllProdutos) + fichaTecnicaData
-  // Garante que todo produto apareça na Ficha Técnica, mesmo sem insumos
-  const seen = new Set();
-  const deduped = [];
-
-  // 1. Primeiro: produtos que já têm ficha técnica
-  fichaTecnicaData.forEach(p => {
-    const key = String(p.cod);
-    if (seen.has(key)) return;
-    seen.add(key);
-    deduped.push(p);
-  });
-
-  // 2. Depois: produtos cadastrados que AINDA NÃO têm ficha técnica
-  getAllProdutos().forEach(p => {
-    const key = String(p.cod);
-    if (seen.has(key)) return;
-    if (!p.cod || !p.descricao) return;
-    seen.add(key);
-    // Criar entrada virtual (sem insumos) para exibição
-    deduped.push({
-      cod:     p.cod,
-      desc:    p.descricao,
-      unid:    p.unid || 1,
-      pc_min:  p.pc_min || 0,
-      maquina: p.maquina || '',
-      insumos: [],
-      _semFicha: true   // flag: ainda não tem ficha no Firestore
-    });
-  });
-
-  // Ordenar: com ficha primeiro, depois sem ficha; dentro de cada grupo, por desc
-  deduped.sort((a, b) => {
+  // Usa fonte única: fichas existentes + produtos cadastrados sem ficha
+  const deduped = getFichaTecnicaMerged().sort((a, b) => {
     if(!!a._semFicha !== !!b._semFicha) return a._semFicha ? 1 : -1;
     return (a.desc||'').localeCompare(b.desc||'');
   });
@@ -7074,13 +7051,16 @@ async function carregarProdutosFirestore() {
   } catch(e) {
     console.warn('[PRODUTOS] Erro ao carregar do Firestore:', e.message);
   }
-  // Recarregar fichaTecnicaData a partir do Firestore — guardar _firestoreId para salvar sem re-leitura
+  // Recarregar fichaTecnicaData a partir do Firestore — merge com memória local para não perder fichas recém-criadas
   try {
     const snap2 = await getDocs(lojaCol('fichaTecnica'));
     if (!snap2.empty) {
       const ftArr = snap2.docs.map(d => ({ ...d.data(), _firestoreId: d.id }));
       FICHA_TECNICA = ftArr;
-      fichaTecnicaData = JSON.parse(JSON.stringify(ftArr));
+      // Merge: manter fichas que estão na memória mas ainda não chegaram ao Firestore
+      const ftArrCods = new Set(ftArr.map(f => f.cod));
+      const fichasApenasNaMemoria = fichaTecnicaData.filter(f => !ftArrCods.has(f.cod));
+      fichaTecnicaData = [...JSON.parse(JSON.stringify(ftArr)), ...fichasApenasNaMemoria];
     }
   } catch(e) { /* ficha técnica opcional */ }
 }
@@ -7366,145 +7346,173 @@ function closeProdModal() {
 }
 
 async function saveProdModal() {
-  const cod = parseInt(document.getElementById('pm-cod').value);
-  const desc = document.getElementById('pm-desc').value.trim();
-  const unid = parseInt(document.getElementById('pm-unid').value);
+  const cod   = parseInt(document.getElementById('pm-cod').value);
+  const desc  = document.getElementById('pm-desc').value.trim();
+  const unid  = parseInt(document.getElementById('pm-unid').value);
   const pcmin = parseFloat(document.getElementById('pm-pcmin').value);
-  const maq = document.getElementById('pm-maq').value;
-  
-  if (!cod || !desc || !unid || !pcmin || !maq) { 
-    toast('Preencha todos os campos', 'err'); 
-    return; 
+  const maq   = document.getElementById('pm-maq').value;
+
+  if (!cod || !desc || !unid || !pcmin || !maq) {
+    toast('Preencha todos os campos obrigatórios', 'err');
+    return;
   }
-  
-  // Verificar se já existe produto com mesmo código e máquina (apenas em modo criação)
+
+  // Verificar duplicidade (apenas criação)
   if (!_produtoEditando) {
-    const produtos = getAllProdutos();
-    const produtoExistente = produtos.find(p => String(p.cod) === String(cod) && p.maquina === maq);
-    if (produtoExistente) {
-      toast('Já existe um produto com este código nesta máquina', 'err');
-      return;
-    }
+    const existente = getAllProdutos().find(p => String(p.cod) === String(cod) && p.maquina === maq);
+    if (existente) { toast('Já existe um produto com este código nesta máquina', 'err'); return; }
   }
-  
-  // Ler novos campos de cobertura (opcionais)
-  const metaCoberturaDias  = parseInt(document.getElementById('pm-cobertura')?.value)   || 0;
-  const producaoMinima     = parseFloat(document.getElementById('pm-prod-min')?.value)  || 0;
-  const multiploProducao   = parseFloat(document.getElementById('pm-multiplo')?.value)  || 0;
-  const tipoMinimo         = document.getElementById('pm-tipo-min')?.value              || '';
-  const prioridadeProducao = parseInt(document.getElementById('pm-prioridade')?.value)  || 2;
+
+  // Campos opcionais de cobertura
+  const metaCoberturaDias  = parseInt(document.getElementById('pm-cobertura')?.value)  || 0;
+  const producaoMinima     = parseFloat(document.getElementById('pm-prod-min')?.value) || 0;
+  const multiploProducao   = parseFloat(document.getElementById('pm-multiplo')?.value) || 0;
+  const tipoMinimo         = document.getElementById('pm-tipo-min')?.value             || '';
+  const prioridadeProducao = parseInt(document.getElementById('pm-prioridade')?.value) || 2;
   const produtoAtivo       = document.getElementById('pm-ativo')?.value !== 'false';
 
   const dados = {
     cod, descricao: desc, unid, kg_fd: 0, pc_min: pcmin, maquina: maq,
     metaCoberturaDias, producaoMinima, multiploProducao, tipoMinimo, prioridadeProducao, produtoAtivo
   };
-  
+
+  const eraNovoProduto = !_produtoEditando;
+
   try {
+    // ── 1. Persistir produto em memória ──────────────────────────────
     if (_produtoEditando) {
-      // Modo edição - atualizar produto existente
-      let atualizadoSucesso = false;
-      
-      // Atualizar no array de extras se for produto extra
-      const extraIndex = PRODUTOS_EXTRA.findIndex(p => 
-        String(p.cod) === String(_produtoEditando.cod) && p.maquina === _produtoEditando.maquina
-      );
-      if (extraIndex >= 0) {
-        PRODUTOS_EXTRA[extraIndex] = dados;
-        localStorage.setItem('produtos_extra', JSON.stringify(PRODUTOS_EXTRA));
-        atualizadoSucesso = true;
+      const extraIdx = PRODUTOS_EXTRA.findIndex(p =>
+        String(p.cod) === String(_produtoEditando.cod) && p.maquina === _produtoEditando.maquina);
+      if (extraIdx >= 0) { PRODUTOS_EXTRA[extraIdx] = dados; localStorage.setItem('produtos_extra', JSON.stringify(PRODUTOS_EXTRA)); }
+      if (Array.isArray(window.PRODUTOS)) {
+        const gi = window.PRODUTOS.findIndex(p =>
+          String(p.cod) === String(_produtoEditando.cod) && p.maquina === _produtoEditando.maquina);
+        if (gi >= 0) window.PRODUTOS[gi] = dados;
       }
-      
-      // Atualizar no array global se existir
-      if (typeof window.PRODUTOS !== 'undefined' && Array.isArray(window.PRODUTOS)) {
-        const globalIndex = window.PRODUTOS.findIndex(p => 
-          String(p.cod) === String(_produtoEditando.cod) && p.maquina === _produtoEditando.maquina
-        );
-        if (globalIndex >= 0) {
-          window.PRODUTOS[globalIndex] = dados;
-          atualizadoSucesso = true;
-        }
-      }
-      
-      if (atualizadoSucesso) {
-        toast(`Produto "${desc}" atualizado com sucesso`, 'ok');
-        
-        registrarAuditoria('PRODUTO_EDITADO', {
-          produtoAnterior: _produtoEditando,
-          produtoNovo: dados
-        });
-      }
-      
+      registrarAuditoria('PRODUTO_EDITADO', { produtoAnterior: _produtoEditando, produtoNovo: dados });
     } else {
-      // Modo criação - adicionar novo produto
       PRODUTOS_EXTRA.push(dados);
       localStorage.setItem('produtos_extra', JSON.stringify(PRODUTOS_EXTRA));
-      
-      toast(`Produto "${desc}" adicionado com sucesso`, 'ok');
-      
       registrarAuditoria('PRODUTO_ADICIONADO', dados);
     }
-    
-    // Salvar no Firestore
-    if (typeof salvarProdutoFirestore === 'function') {
-      salvarProdutoFirestore(dados).then(() => {
-        console.log('Produto sincronizado com Firestore');
-      }).catch(e => {
-        console.warn('Erro ao salvar produto no Firestore:', e);
-        toast('Produto salvo localmente, mas erro ao sincronizar', 'warn');
-      });
-    }
 
-    // ── Garantir entrada na Ficha Técnica (aguarda persistência antes de prosseguir) ──
+    // ── 2. Criar ficha técnica base na memória + Firestore ────────────
+    //    Feito ANTES de salvarProdutoFirestore para evitar race condition
+    //    (salvarProdutoFirestore dispara carregarProdutosFirestore que sobrescreveria fichaTecnicaData)
     const codNum = parseInt(cod);
-    const fichaExistente = fichaTecnicaData.find(f => f.cod === codNum);
-    if (!fichaExistente) {
-      const novaFicha = {
-        cod: codNum,
-        desc: desc,
-        unid: unid || 1,
-        pc_min: pcmin || 0,
-        maquina: maq,
-        insumos: [],
-        criadoEm: new Date().toISOString()
-      };
-      // Adicionar na memória imediatamente
-      fichaTecnicaData.push(novaFicha);
-      FICHA_TECNICA.push({ ...novaFicha });
-
-      // Salvar no Firestore e aguardar para garantir que o _firestoreId exista
+    let fichaObj = fichaTecnicaData.find(f => f.cod === codNum);
+    if (!fichaObj) {
+      fichaObj = { cod: codNum, desc, unid: unid||1, pc_min: pcmin||0, maquina: maq, insumos: [], criadoEm: new Date().toISOString() };
+      fichaTecnicaData.push(fichaObj);
+      FICHA_TECNICA.push({ ...fichaObj });
       try {
-        const docRef = await addDoc(lojaCol('fichaTecnica'), { ...novaFicha, atualizadoEm: new Date().toISOString() });
-        novaFicha._firestoreId = docRef.id;
-        const ft = FICHA_TECNICA.find(f => f.cod === codNum);
-        if (ft) ft._firestoreId = docRef.id;
-      } catch(e) {
-        console.warn('Erro ao criar ficha técnica no Firestore:', e);
-      }
+        const docRef = await addDoc(lojaCol('fichaTecnica'), { ...fichaObj, atualizadoEm: new Date().toISOString() });
+        fichaObj._firestoreId = docRef.id;
+        const ftMem = FICHA_TECNICA.find(f => f.cod === codNum);
+        if (ftMem) ftMem._firestoreId = docRef.id;
+      } catch(e) { console.warn('Erro ao criar ficha técnica:', e); }
     }
 
-    // ── Guardar flag ANTES de fechar o modal (closeProdModal zera _produtoEditando) ──
-    const _eraNovoProduto = !_produtoEditando;
+    // ── 3. Salvar produto no Firestore (await evita race condition) ───
+    if (typeof salvarProdutoFirestore === 'function') {
+      try { await salvarProdutoFirestore(dados); }
+      catch(e) { console.warn('Erro ao sincronizar produto:', e); toast('Produto salvo localmente, mas erro ao sincronizar', 'warn'); }
+    }
 
-    // Recarregar listas e fechar modal
+    // ── 4. Atualizar listas e fechar modal do produto ─────────────────
     renderProdutosCfg();
     if (typeof renderFichaTecnicaCfg === 'function') renderFichaTecnicaCfg();
     if (typeof renderFichaTecnica === 'function') renderFichaTecnica();
     closeProdModal();
 
-    // ── Abrir modal de insumos imediatamente após criar ────────────
-    if (_eraNovoProduto) {
-      setTimeout(() => {
-        if (confirm(`Produto "${desc}" salvo com sucesso!\n\nDeseja cadastrar os insumos agora?\n(você pode fazer isso depois em Configurações → Ficha Técnica)`)) {
-          editFichaByCod(codNum);
-        }
-      }, 150);
+    // ── 5. Se produto novo: abrir etapa 2 — cadastro de insumos ──────
+    if (eraNovoProduto) {
+      _abrirEtapa2Insumos(codNum, desc);
+    } else {
+      toast(`Produto "${desc}" atualizado com sucesso`, 'ok');
     }
 
   } catch(e) {
     console.error('Erro ao salvar produto:', e);
     toast('Erro ao salvar produto: ' + e.message, 'err');
   }
+}
+
+// ── Etapa 2: modal de insumos da ficha técnica, aberto direto após cadastro ──
+function _abrirEtapa2Insumos(codNum, desc) {
+  // Garante que a ficha existe na memória (criada na etapa 1)
+  const ficha = fichaTecnicaData.find(f => f.cod === codNum);
+  if (!ficha) { toast(`Produto "${desc}" salvo! Acesse Ficha Técnica para cadastrar os insumos.`, 'ok'); return; }
+
+  document.getElementById('ft-edit-modal')?.remove();
+  const modal = document.createElement('div');
+  modal.className = 'conf-overlay on';
+  modal.id = 'ft-edit-modal';
+  modal.style.zIndex = '1200';
+  modal.innerHTML = `
+    <div class="modal-box" style="max-width:720px">
+      <div class="modal-hd" style="gap:10px">
+        <div style="display:flex;flex-direction:column;min-width:0;flex:1">
+          <div style="display:flex;align-items:center;gap:8px">
+            <span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--cyan);background:rgba(0,212,255,.1);border:1px solid rgba(0,212,255,.25);padding:2px 8px;border-radius:20px;flex-shrink:0">Etapa 2 de 2</span>
+            <span style="font-size:11px;color:var(--text3)">Produto salvo ✓</span>
+          </div>
+          <h2 style="font-size:14px;margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Insumos — ${ficha.desc}</h2>
+        </div>
+        <button class="btn btn-ghost" onclick="_fecharEtapa2()" style="padding:6px 10px;flex-shrink:0">✕ Pular</button>
+      </div>
+      <div class="modal-bd">
+        <div style="background:rgba(0,212,255,.06);border:1px solid rgba(0,212,255,.18);border-radius:8px;padding:10px 14px;margin-bottom:16px;font-size:12px;color:var(--text2);line-height:1.6">
+          <strong style="color:var(--cyan)">📋 Ficha técnica criada!</strong> Agora cadastre os insumos consumidos por caixa deste produto.<br>
+          <span style="color:var(--text3);font-size:11px">Você pode pular e cadastrar depois em <strong>Configurações → Ficha Técnica</strong>.</span>
+        </div>
+        <div class="fg" style="margin-bottom:16px">
+          <div class="frow">
+            <label class="flbl">Unid/Caixa</label>
+            <input class="finp" type="number" id="fte-unid" value="${ficha.unid}" min="1">
+          </div>
+          <div class="frow">
+            <label class="flbl">Peças/Minuto</label>
+            <input class="finp" type="number" id="fte-pcmin" value="${ficha.pc_min}" min="0.1" step="0.1">
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+          <div class="flbl" style="font-size:12px;font-weight:600">Insumos <span style="font-size:10px;color:var(--text3);font-weight:400">(quantidade por caixa)</span></div>
+          <button onclick="fteAddRow()" class="btn btn-ghost" style="padding:5px 12px;font-size:12px">+ Adicionar insumo</button>
+        </div>
+        <div style="display:grid;grid-template-columns:100px 1fr 32px;gap:6px;margin-bottom:6px;padding:0 0 6px 0;border-bottom:1px solid var(--border)">
+          <div class="flbl" style="font-size:9px">Quantidade</div>
+          <div class="flbl" style="font-size:9px">Nome do Insumo</div>
+          <div></div>
+        </div>
+        <div id="fte-insumos-list" style="max-height:300px;overflow-y:auto;padding-right:4px">
+          ${fteRenderInsumos(ficha.insumos || [])}
+        </div>
+      </div>
+      <div class="modal-ft" style="gap:8px">
+        <button class="btn btn-ghost" onclick="_fecharEtapa2()">Pular por agora</button>
+        <button class="btn btn-primary" onclick="saveFichaByCod(${ficha.cod});_fecharEtapa2Pos()">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+          Salvar insumos e concluir
+        </button>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+  // Foco no primeiro campo de insumo se já houver, senão no botão adicionar
+  setTimeout(() => {
+    const firstQty = modal.querySelector('.fte-qty');
+    if (firstQty) firstQty.focus();
+  }, 80);
+}
+
+function _fecharEtapa2() {
+  document.getElementById('ft-edit-modal')?.remove();
+  toast('Produto cadastrado! Adicione insumos depois em Configurações → Ficha Técnica.', 'ok');
+}
+
+function _fecharEtapa2Pos() {
+  // Chamado pelo botão "Salvar insumos" — saveFichaByCod já remove o modal via remove()
+  // Este hook existe para ações futuras após salvar
 }
 
 // Manter compatibilidade com função antiga
@@ -12807,6 +12815,9 @@ window.renderProdutosCfg = renderProdutosCfg;
 window.openAddProduto = openAddProduto;
 window.closeProdModal = closeProdModal;
 window.saveProdModal = saveProdModal;
+window._abrirEtapa2Insumos = _abrirEtapa2Insumos;
+window._fecharEtapa2 = _fecharEtapa2;
+window._fecharEtapa2Pos = _fecharEtapa2Pos;
 window.deleteExtraProduto = deleteExtraProduto;
 window.importProdutosExcel = importProdutosExcel;
 window.downloadProdTemplate = downloadProdTemplate;
