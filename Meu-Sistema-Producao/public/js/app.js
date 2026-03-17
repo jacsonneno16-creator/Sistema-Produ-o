@@ -6971,7 +6971,8 @@ function normalizeProdutoFirestore(data) {
     multiploProducao:    parseFloat(data.multiploProducao) || 0,
     tipoMinimo:          data.tipoMinimo          || '',
     prioridadeProducao:  parseInt(data.prioridadeProducao) || 2,
-    produtoAtivo:        data.produtoAtivo !== false   // default true
+    produtoAtivo:        data.produtoAtivo !== false,  // default true
+    _id:                 data._id || null               // Firestore doc ID — NUNCA descartar
   };
 }
 
@@ -7149,38 +7150,37 @@ function renderProdutosCfg() {
 function toggleAtivoProduto(cod, maquina, estaDesativado){
   const novoAtivo = estaDesativado; // inverte: estava desativado → ativar
   const todos = getAllProdutos();
-  // Busca TODOS os registros com este cod (pode existir um por máquina)
-  const matches = todos.filter(p => String(p.cod)===String(cod));
+  // Busca TODOS os registros com este cod — pode haver um doc por máquina no Firestore
+  const matches = todos.filter(p => String(p.cod) === String(cod));
   if(!matches.length){ toast('Produto não encontrado','err'); return; }
-  const produto = matches[0];
 
-  // Atualizar TODOS no array global
+  // Atualizar TODOS no array global window.PRODUTOS
   if(Array.isArray(window.PRODUTOS)){
-    window.PRODUTOS.forEach((p,i) => {
-      if(String(p.cod)===String(cod)) window.PRODUTOS[i].produtoAtivo = novoAtivo;
+    window.PRODUTOS.forEach((p, i) => {
+      if(String(p.cod) === String(cod)) window.PRODUTOS[i].produtoAtivo = novoAtivo;
     });
   }
   // Atualizar TODOS nos extras
   let extraChanged = false;
-  PRODUTOS_EXTRA.forEach((p,i) => {
-    if(String(p.cod)===String(cod)){
+  PRODUTOS_EXTRA.forEach((p, i) => {
+    if(String(p.cod) === String(cod)){
       PRODUTOS_EXTRA[i].produtoAtivo = novoAtivo;
       extraChanged = true;
     }
   });
   if(extraChanged) localStorage.setItem('produtos_extra', JSON.stringify(PRODUTOS_EXTRA));
 
-  // Persistir TODOS no Firestore (um por máquina)
+  // Persistir TODOS no Firestore — cada match tem seu próprio _id
   if(typeof salvarProdutoFirestore === 'function'){
-    matches.forEach(m => {
-      salvarProdutoFirestore({ ...m, produtoAtivo: novoAtivo }).catch(e =>
+    matches.forEach(p => {
+      salvarProdutoFirestore({ ...p, produtoAtivo: novoAtivo }).catch(e =>
         console.warn('Erro ao salvar no Firestore:', e)
       );
     });
   }
 
   const label = novoAtivo ? 'ativado ✅' : 'desativado ⛔';
-  toast(`"${produto.descricao}" ${label}`, 'ok');
+  toast(`"${matches[0].descricao}" ${label}`, 'ok');
   renderProdutosCfg();
 }
 
@@ -7278,20 +7278,19 @@ function excluirProduto(cod, maquina, descricao) {
       }
     }
     
-    // Deletar TODOS os docs correspondentes do Firestore (um por máquina)
-    const todosParaDeletar = [...(window.PRODUTOS || []), ...PRODUTOS_EXTRA]
-      .filter(p => String(p.cod) === String(cod));
-    todosParaDeletar.forEach(p => {
+    // Deletar do Firestore todos os docs com este cod (um por máquina)
+    const firestoreMatches = (window.PRODUTOS || []).filter(p => String(p.cod) === String(cod));
+    firestoreMatches.forEach(p => {
       if(p._id){
         deleteDoc(lojaDoc('produtos', p._id)).catch(e =>
-          console.warn('Erro ao excluir doc Firestore:', e)
+          console.warn('Erro ao excluir doc Firestore:', p._id, e)
         );
       }
     });
+    invalidateCache('produtos');
 
-    if (removidoSucesso || todosParaDeletar.length > 0) {
+    if (removidoSucesso || firestoreMatches.length > 0) {
       toast(`Produto "${descricao}" excluído com sucesso`, 'ok');
-      invalidateCache('produtos');
 
       // Registrar auditoria
       registrarAuditoria('PRODUTO_EXCLUIDO', {
