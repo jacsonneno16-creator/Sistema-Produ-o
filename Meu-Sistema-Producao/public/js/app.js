@@ -7232,19 +7232,32 @@ function toggleAtivoProduto(cod, maquina, estaDesativado){
 // Variável global para o produto em edição
 let _produtoEditando = null;
 
+// Adiciona uma linha de insumo no modal de cadastro de produto
+function pmAddInsumoRow() {
+  const container = document.getElementById('pm-insumos-list');
+  if (!container) return;
+  const div = document.createElement('div');
+  div.className = 'fte-ins-row';
+  div.style = 'display:grid;grid-template-columns:100px 1fr 32px;gap:6px;margin-bottom:6px;align-items:center';
+  div.innerHTML = `
+    <input class="finp fte-qty" type="number" step="any" min="0" value="" style="font-family:'JetBrains Mono',monospace;font-size:12px;padding:7px 8px" placeholder="Qtd">
+    <input class="finp fte-name" value="" style="font-size:12px;padding:7px 10px" placeholder="Nome do insumo">
+    <button type="button" onclick="this.closest('.fte-ins-row').remove()" class="btn btn-danger" style="padding:4px 8px;font-size:14px;min-width:32px;justify-content:center">−</button>`;
+  container.appendChild(div);
+  div.querySelector('.fte-qty').focus();
+}
+
 function openAddProduto() {
-  _produtoEditando = null; // Resetar modo edição
+  _produtoEditando = null;
   const sel = document.getElementById('pm-maq');
   if (sel) sel.innerHTML = MAQUINAS.map(m => `<option value="${m}">${m}</option>`).join('');
   ['pm-cod','pm-desc','pm-unid','pm-pcmin'].forEach(id => { const el = document.getElementById(id); if(el) el.value = ''; });
-  // Resetar novos campos de cobertura
   ['pm-cobertura','pm-prod-min','pm-multiplo','pm-prioridade'].forEach(id => { const el = document.getElementById(id); if(el) el.value = ''; });
   const tipoMin = document.getElementById('pm-tipo-min'); if(tipoMin) tipoMin.value = '';
   const pmAtivo = document.getElementById('pm-ativo'); if(pmAtivo) pmAtivo.value = 'true';
-  
-  // Resetar título do modal
-  document.getElementById('maq-modal-title').textContent = 'Novo Produto';
-  
+  const pmInsumos = document.getElementById('pm-insumos-list'); if(pmInsumos) pmInsumos.innerHTML = '';
+  const titleEl = document.getElementById('prod-modal-title') || document.getElementById('maq-modal-title');
+  if(titleEl) titleEl.textContent = 'Novo Produto';
   document.getElementById('prod-modal').style.display = 'flex';
   setTimeout(() => { const el = document.getElementById('pm-cod'); if(el) el.focus(); }, 80);
 }
@@ -7279,17 +7292,26 @@ function editarProduto(cod, maquina, descricao) {
   if (sel) {
     sel.innerHTML = MAQUINAS.map(m => `<option value="${m}" ${m === maquina ? 'selected' : ''}>${m}</option>`).join('');
   }
-  
+
+  // Popular insumos existentes da ficha técnica
+  const pmInsumos = document.getElementById('pm-insumos-list');
+  if (pmInsumos) {
+    const ficha = fichaTecnicaData.find(f => f.cod === parseInt(cod));
+    pmInsumos.innerHTML = ficha && ficha.insumos && ficha.insumos.length
+      ? fteRenderInsumos(ficha.insumos)
+      : '';
+  }
+
   // Mudar título do modal
-  const titleEl = document.getElementById('maq-modal-title');
+  const titleEl = document.getElementById('prod-modal-title') || document.getElementById('maq-modal-title');
   if (titleEl) titleEl.textContent = 'Editar Produto';
-  
+
   // Abrir modal
   document.getElementById('prod-modal').style.display = 'flex';
   setTimeout(() => { const el = document.getElementById('pm-desc'); if(el) el.focus(); }, 80);
 }
 
-function excluirProduto(cod, maquina, descricao) {
+async function excluirProduto(cod, maquina, descricao) {
   if (!confirm(`Tem certeza que deseja excluir o produto:\n\n${descricao} (${cod}) - ${maquina}\n\nEsta ação não pode ser desfeita.`)) {
     return;
   }
@@ -7305,16 +7327,22 @@ function excluirProduto(cod, maquina, descricao) {
     
     // Remover produto dos arrays globais
     let removidoSucesso = false;
-    
-    // Tentar remover do array de produtos extras
+
+    // Buscar todos os registros com este cod (inclui _id do Firestore)
+    const todosOsProdutos = getAllProdutos();
+    const produtosParaExcluir = todosOsProdutos.filter(p =>
+      String(p.cod) === String(cod) && p.maquina === maquina
+    );
+
+    // Tentar remover do array de produtos extras (localStorage)
     const extraIndex = PRODUTOS_EXTRA.findIndex(p => String(p.cod) === String(cod) && p.maquina === maquina);
     if (extraIndex >= 0) {
       PRODUTOS_EXTRA.splice(extraIndex, 1);
       localStorage.setItem('produtos_extra', JSON.stringify(PRODUTOS_EXTRA));
       removidoSucesso = true;
     }
-    
-    // Tentar remover do array global de produtos (se existir)
+
+    // Tentar remover do array global de produtos (Firestore cache)
     if (typeof window.PRODUTOS !== 'undefined' && Array.isArray(window.PRODUTOS)) {
       const globalIndex = window.PRODUTOS.findIndex(p => String(p.cod) === String(cod) && p.maquina === maquina);
       if (globalIndex >= 0) {
@@ -7322,16 +7350,35 @@ function excluirProduto(cod, maquina, descricao) {
         removidoSucesso = true;
       }
     }
-    
-    const firestoreMatches = (window.PRODUTOS || []).filter(p => String(p.cod) === String(cod));
-    firestoreMatches.forEach(p => { if(p._id){ deleteDoc(lojaDoc('produtos', p._id)).catch(e => console.warn('Firestore delete err:', p._id, e)); } });
+
+    // Excluir do Firestore usando _id quando disponível, ou buscar por cod como fallback
+    const firestoreMatches = produtosParaExcluir.filter(p => p._id);
+    if (firestoreMatches.length > 0) {
+      firestoreMatches.forEach(p => {
+        deleteDoc(lojaDoc('produtos', p._id)).catch(e => console.warn('Firestore delete err:', p._id, e));
+      });
+      removidoSucesso = true;
+    } else {
+      // Fallback: buscar no Firestore pelo cod caso _id não esteja em memória
+      try {
+        const snap = await getDocs(query(lojaCol('produtos'), where('cod', '==', parseInt(cod))));
+        snap.docs.forEach(d => {
+          const data = d.data();
+          if (!maquina || data.maquina === maquina) {
+            deleteDoc(lojaDoc('produtos', d.id)).catch(e => console.warn('Firestore delete fallback err:', d.id, e));
+            removidoSucesso = true;
+          }
+        });
+      } catch(e) { console.warn('Erro ao buscar produto no Firestore para exclusão:', e); }
+    }
+
     invalidateCache('produtos');
-    if (removidoSucesso || firestoreMatches.length > 0) {
+    if (removidoSucesso) {
       toast(`Produto "${descricao}" excluído com sucesso`, 'ok');
       registrarAuditoria('PRODUTO_EXCLUIDO', { cod, descricao, maquina, registrosVinculados: registrosVinculados.length });
       renderProdutosCfg();
     } else {
-      toast('Produto não encontrado nos dados locais', 'warn');
+      toast('Produto não encontrado. Recarregue a página e tente novamente.', 'warn');
     }
     
   } catch(e) {
@@ -7396,13 +7443,20 @@ async function saveProdModal() {
       registrarAuditoria('PRODUTO_ADICIONADO', dados);
     }
 
-    // ── 2. Criar ficha técnica base na memória + Firestore ────────────
-    //    Feito ANTES de salvarProdutoFirestore para evitar race condition
-    //    (salvarProdutoFirestore dispara carregarProdutosFirestore que sobrescreveria fichaTecnicaData)
+    // ── 2. Coletar insumos inseridos no modal ────────────────────────
+    const pmInsRows = document.getElementById('pm-insumos-list')?.querySelectorAll('.fte-ins-row') || [];
+    const insumosDoModal = [];
+    pmInsRows.forEach(row => {
+      const qty  = parseFloat(row.querySelector('.fte-qty')?.value) || 0;
+      const name = row.querySelector('.fte-name')?.value.trim() || '';
+      if (name) insumosDoModal.push({ insumo: name, qty });
+    });
+
+    // ── 3. Criar/atualizar ficha técnica base na memória + Firestore ──
     const codNum = parseInt(cod);
     let fichaObj = fichaTecnicaData.find(f => f.cod === codNum);
     if (!fichaObj) {
-      fichaObj = { cod: codNum, desc, unid: unid||1, pc_min: pcmin||0, maquina: maq, insumos: [], criadoEm: new Date().toISOString() };
+      fichaObj = { cod: codNum, desc, unid: unid||1, pc_min: pcmin||0, maquina: maq, insumos: insumosDoModal, criadoEm: new Date().toISOString() };
       fichaTecnicaData.push(fichaObj);
       FICHA_TECNICA.push({ ...fichaObj });
       try {
@@ -7411,26 +7465,37 @@ async function saveProdModal() {
         const ftMem = FICHA_TECNICA.find(f => f.cod === codNum);
         if (ftMem) ftMem._firestoreId = docRef.id;
       } catch(e) { console.warn('Erro ao criar ficha técnica:', e); }
+    } else {
+      // Atualizar insumos apenas se foram preenchidos no modal
+      if (insumosDoModal.length > 0) fichaObj.insumos = insumosDoModal;
+      fichaObj.unid   = unid   || fichaObj.unid;
+      fichaObj.pc_min = pcmin  || fichaObj.pc_min;
+      // Persistir ficha atualizada no Firestore
+      try {
+        const fichaPayload = { cod: codNum, desc: fichaObj.desc, unid: fichaObj.unid, pc_min: fichaObj.pc_min, maquina: fichaObj.maquina, insumos: fichaObj.insumos, atualizadoEm: new Date().toISOString() };
+        if (fichaObj._firestoreId) {
+          await setDoc(lojaDoc('fichaTecnica', fichaObj._firestoreId), fichaPayload);
+        } else {
+          const snap = await getDocs(query(lojaCol('fichaTecnica'), where('cod', '==', codNum)));
+          if (!snap.empty) { await setDoc(lojaDoc('fichaTecnica', snap.docs[0].id), fichaPayload); }
+          else { await addDoc(lojaCol('fichaTecnica'), { ...fichaPayload, criadoEm: new Date().toISOString() }); }
+        }
+      } catch(e) { console.warn('Erro ao salvar ficha técnica:', e); }
     }
 
-    // ── 3. Salvar produto no Firestore (await evita race condition) ───
+    // ── 4. Salvar produto no Firestore (await evita race condition) ───
     if (typeof salvarProdutoFirestore === 'function') {
       try { await salvarProdutoFirestore(dados); }
       catch(e) { console.warn('Erro ao sincronizar produto:', e); toast('Produto salvo localmente, mas erro ao sincronizar', 'warn'); }
     }
 
-    // ── 4. Atualizar listas e fechar modal do produto ─────────────────
+    // ── 5. Atualizar listas e fechar modal ────────────────────────────
     renderProdutosCfg();
     if (typeof renderFichaTecnicaCfg === 'function') renderFichaTecnicaCfg();
     if (typeof renderFichaTecnica === 'function') renderFichaTecnica();
     closeProdModal();
-
-    // ── 5. Se produto novo: abrir etapa 2 — cadastro de insumos ──────
-    if (eraNovoProduto) {
-      _abrirEtapa2Insumos(codNum, desc);
-    } else {
-      toast(`Produto "${desc}" atualizado com sucesso`, 'ok');
-    }
+    const insMsg = insumosDoModal.length > 0 ? ` · ${insumosDoModal.length} insumo(s) salvo(s)` : '';
+    toast(`Produto "${desc}" ${eraNovoProduto ? 'cadastrado' : 'atualizado'} com sucesso${insMsg}`, 'ok');
 
   } catch(e) {
     console.error('Erro ao salvar produto:', e);
@@ -7615,10 +7680,41 @@ function importProdutosExcel(input) {
           addedMaqs++;
         }
         
-        // Salvar cada produto
+        // Salvar cada produto com upsert inteligente
         for (const produto of info.produtos) {
-          await salvarProdutoFirestore(produto);
-          addedProds++;
+          // Buscar produto existente pelo cod
+          const codNum = parseInt(produto.cod);
+          const existente = getAllProdutos().find(p =>
+            parseInt(p.cod) === codNum && p.maquina === produto.maquina
+          );
+
+          if (existente) {
+            // Verificar se algum campo relevante mudou
+            const mudou =
+              existente.descricao   !== produto.descricao   ||
+              existente.unid        !== produto.unid         ||
+              existente.pc_min      !== produto.pc_min       ||
+              existente.categoria   !== (produto.categoria || '') ||
+              (existente.coberturaDias  || 0) !== (produto.coberturaDias || 0) ||
+              (existente.estoqueMinimo  || 0) !== (produto.estoqueMinimo || 0);
+
+            if (mudou) {
+              // Preservar campos que não vêm na importação
+              const produtoAtualizado = {
+                ...existente,
+                ...produto,
+                _id: existente._id, // manter o _id do Firestore
+                produtoAtivo: existente.produtoAtivo !== false // manter status ativo
+              };
+              await salvarProdutoFirestore(produtoAtualizado);
+              addedProds++; // conta como atualizado
+            }
+            // se igual, não faz nada
+          } else {
+            // Produto novo: criar
+            await salvarProdutoFirestore(produto);
+            addedProds++;
+          }
         }
       }
       
@@ -7628,8 +7724,8 @@ function importProdutosExcel(input) {
       renderProdutosCfg();
       renderCadastroMaquinas();
       
-      let msg = `✅ ${addedProds} produto(s), ${addedMaqs} máquina(s) criada(s), ${updatedMaqs} máquina(s) atualizada(s)`;
-      if (erros) msg += ` (${erros} linha(s) com erro ignoradas)`;
+      let msg = `✅ ${addedProds} produto(s) criado(s)/atualizado(s), ${addedMaqs} máquina(s) criada(s), ${updatedMaqs} máquina(s) atualizada(s)`;
+      if (erros) msg += ` · ${erros} linha(s) com erro ignoradas`;
       toast(msg, erros ? 'warn' : 'ok');
       
     } catch(err) { 
@@ -10904,6 +11000,7 @@ window.exportInsumosGeralXLSX = exportInsumosGeralXLSX;
 window.exportInsumosMaqPDF = exportInsumosMaqPDF;
 window.exportInsumosMaqXLSX = exportInsumosMaqXLSX;
 window.fteAddRow = fteAddRow;
+window.pmAddInsumoRow = pmAddInsumoRow;
 window.ganttToday = ganttToday;
 window.ganttWeek = ganttWeek;
 window.ganttGoDate = ganttGoDate;

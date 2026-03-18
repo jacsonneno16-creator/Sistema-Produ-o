@@ -1380,7 +1380,7 @@
 <div id="prod-modal" class="overlay" style="display:none;z-index:700" onclick="if(event.target===this)closeProdModal()">
   <div class="modal-box" style="max-width:520px">
     <div class="modal-hd">
-      <h2>Novo Produto</h2>
+      <h2 id="prod-modal-title">Novo Produto</h2>
       <button class="btn btn-ghost" onclick="closeProdModal()" style="padding:6px 10px">✕</button>
     </div>
     <div class="modal-bd" style="padding:20px 22px;display:grid;grid-template-columns:1fr 1fr;gap:14px">
@@ -1446,6 +1446,22 @@
           <option value="true">✅ Ativo — entra na programação</option>
           <option value="false">⛔ Desativado — ignorado na programação</option>
         </select>
+      </div>
+
+      <!-- ── Insumos da Ficha Técnica ─────────────────────────────── -->
+      <div style="grid-column:1/-1;margin-top:6px;padding-top:14px;border-top:1px solid var(--border)">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+          <span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--text3)">Insumos <span style="font-size:10px;color:var(--text3);font-weight:400;text-transform:none;letter-spacing:0">(quantidade por caixa — opcional)</span></span>
+          <button type="button" onclick="pmAddInsumoRow()" class="btn btn-ghost" style="padding:4px 10px;font-size:12px">+ Insumo</button>
+        </div>
+        <div style="display:grid;grid-template-columns:100px 1fr 32px;gap:6px;margin-bottom:6px;padding-bottom:6px;border-bottom:1px solid var(--border)">
+          <div style="font-size:9px;color:var(--text3);font-weight:700;text-transform:uppercase;letter-spacing:.8px">Quantidade</div>
+          <div style="font-size:9px;color:var(--text3);font-weight:700;text-transform:uppercase;letter-spacing:.8px">Nome do Insumo</div>
+          <div></div>
+        </div>
+        <div id="pm-insumos-list" style="max-height:200px;overflow-y:auto;padding-right:2px">
+          <!-- linhas de insumos adicionadas dinamicamente -->
+        </div>
       </div>
 
     </div>
