@@ -957,10 +957,7 @@
               <span style="font-size:11px;color:var(--text3)">(<span id="ft-cfg-count">0</span> produtos)</span>
             </div>
             <div style="display:flex;gap:6px;align-items:center">
-              <label style="background:var(--s2);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:11px;color:var(--text);cursor:pointer" title="Atualizar ficha técnica com novo arquivo Excel">
-                📥 Importar Excel
-                <input type="file" accept=".xlsx,.xls" style="display:none" onchange="importFichaTecnicaExcel(this)">
-              </label>
+              <span style="font-size:11px;color:var(--text3)">Gerada automaticamente ao importar produtos</span>
             </div>
           </div>
           <div style="padding:8px 12px;border-bottom:1px solid var(--border)">
@@ -980,12 +977,14 @@
               <span style="font-size:11px;color:var(--text3)">(<span id="prod-count">0</span>)</span>
             </div>
             <div style="display:flex;gap:6px;align-items:center">
-              <a href="#" onclick="downloadProdTemplate(event)" style="background:var(--s2);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:11px;color:var(--text);text-decoration:none">📄 Template</a>
-              <label style="background:var(--s2);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:11px;color:var(--text);cursor:pointer">
-                📥 Excel
-                <input type="file" accept=".xlsx,.xls" style="display:none" onchange="importProdutosExcel(this)">
+              <button onclick="exportarArquivoPadrao()" style="background:var(--s2);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:11px;color:var(--text);cursor:pointer" title="Exportar no mesmo formato do arquivo de importação">
+                📤 Exportar
+              </button>
+              <label style="background:var(--purple);color:#fff;border:none;border-radius:6px;padding:5px 12px;font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:11px;cursor:pointer" title="Importar arquivo com abas Base_Maquina_Tempo e Consumo_Insumos">
+                📥 Importar Excel
+                <input type="file" accept=".xlsx,.xls" style="display:none" onchange="importarArquivoPadrao(this)">
               </label>
-              <button onclick="openAddProduto()" style="background:var(--purple);color:#fff;border:none;border-radius:6px;padding:5px 12px;font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:11px;cursor:pointer">+ Adicionar</button>
+              <button onclick="openAddProduto()" style="background:var(--s2);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:11px;cursor:pointer;color:var(--text)">+ Adicionar</button>
             </div>
           </div>
           <div style="padding:8px 12px;border-bottom:1px solid var(--border)">
