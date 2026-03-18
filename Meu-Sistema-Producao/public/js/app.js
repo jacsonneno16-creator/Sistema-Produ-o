@@ -456,6 +456,8 @@ async function dbDel(id) {
 let PRODUTOS = [];
 // Ficha técnica: populada do Firestore ou importação Excel
 let FICHA_TECNICA = [];
+// Flag de cache independente para ficha técnica
+let _carregadoFichaTecnica = false;
 
 // MAQUINAS: populado exclusivamente via carregarMaquinasFirestore() no boot
 let MAQUINAS = [];
@@ -750,7 +752,7 @@ function trocarLoja(lojaId) {
     return;
   }
   // Limpa dados em memória
-  MAQUINAS = []; PRODUTOS = []; FICHA_TECNICA = []; SETUP_FIRESTORE = {}; _usuariosSistemaCache = null;
+  MAQUINAS = []; PRODUTOS = []; FICHA_TECNICA = []; SETUP_FIRESTORE = {}; _usuariosSistemaCache = null; _carregadoFichaTecnica = false;
   records = [];
   setLojaAtiva(lojaId); // reload automático
 }
@@ -876,6 +878,7 @@ async function appInit() {
   // Carregar coleções estáticas UMA VEZ — cache evita repetições
   await carregarMaquinasCached();
   await carregarProdutosCached();
+  await carregarFichaTecnicaCached();
   await carregarSetupCached();
   const sel = document.getElementById('s-maq');
   if(sel) {
@@ -2279,6 +2282,14 @@ function getWeekMonday(date){
   d.setDate(d.getDate()+diff);
   d.setHours(0,0,0,0);
   return d;
+}
+
+// Retorna o número ISO da semana (1-53) para uma data
+function getISOWeek(date) {
+  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+  d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay() || 7));
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  return Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
 }
 
 function ganttToday(){
@@ -5218,20 +5229,33 @@ async function _loadAponFSSemana(mondayDate) {
 }
 
 // Sincroniza apontamentos históricos (semanas anteriores) do Firestore → localStorage
-// Chamado uma vez na inicialização. Usa localStorage como cache permanente entre sessões.
+// Usa TTL de 24h no localStorage para não repetir a cada F5.
 let _aponHistoricoSincronizado = false;
 async function _sincronizarApontamentosHistoricos() {
   if (_aponHistoricoSincronizado) return;
+  // Verificar TTL: só sincroniza se passou mais de 24h desde a última vez
+  const TS_KEY = 'apon_hist_sync_ts';
+  const ultimaSync = parseInt(localStorage.getItem(TS_KEY) || '0');
+  const agora = Date.now();
+  const TTL_24H = 24 * 60 * 60 * 1000;
+  if (agora - ultimaSync < TTL_24H) {
+    _aponHistoricoSincronizado = true;
+    console.log('[aponFS] Histórico em cache (última sync < 24h). Pulando leitura do Firestore.');
+    return;
+  }
   _aponHistoricoSincronizado = true;
   try {
-    // Busca TODOS os apontamentos do Firestore (sem filtro de data)
-    const snap = await getDocs(lojaCol('apontamentos_producao'));
+    // Busca apontamentos mais recentes que a última sincronização (delta, não full scan)
+    const dataCorte = ultimaSync > 0
+      ? new Date(ultimaSync - TTL_24H).toISOString().slice(0, 10) // 1 dia de overlap por segurança
+      : '2000-01-01';
+    const q = query(lojaCol('apontamentos_producao'), where('data', '>=', dataCorte));
+    const snap = await getDocs(q);
     let count = 0;
     snap.forEach(function(d) {
       const ap = d.data();
       if (!ap.data || ap.recordId == null) return;
       const lsKey = 'apon_' + ap.data + '_' + ap.recordId;
-      // Só sobrescreve se ainda não tiver no localStorage (respeita edições locais)
       if (!localStorage.getItem(lsKey)) {
         let horasObj = {};
         if (ap.horas && typeof ap.horas === 'object') {
@@ -5242,26 +5266,76 @@ async function _sincronizarApontamentosHistoricos() {
         try { localStorage.setItem(lsKey, JSON.stringify(horasObj)); count++; } catch(e) {}
       }
     });
+    localStorage.setItem(TS_KEY, String(agora));
     if (count > 0) console.log('[aponFS] Sincronizados', count, 'apontamentos históricos → localStorage');
   } catch(e) {
     console.warn('[aponFS] Erro ao sincronizar histórico:', e.message);
   }
 }
 
-// Carrega todos os assignments do Firestore para o cache local (por semana)
+// Carrega os assignments do Firestore para a semana especificada.
+// Filtra por campo 'semana' (YYYY-WNN) para evitar ler docs de semanas anteriores.
+// Docs antigos (sem campo 'semana') são carregados uma única vez via _pdCarregarLegado.
+let _pdLegadoCarregado = false;
 async function pdLoadWeek(mondayDate) {
   const wKey = dateStr(mondayDate);
   if (_pdCacheWeek === wKey) return;
   _pdCache = {};
   _pdCacheWeek = wKey;
+
+  // Calcular identificador de semana (ex: "2025-W03")
+  const wNum = String(getISOWeek(mondayDate)).padStart(2, '0');
+  const wYear = mondayDate.getFullYear();
+  const semanaId = `${wYear}-W${wNum}`;
+
   try {
-    const snap = await getDocs(collection(firestoreDB, 'programacao_dias'));
+    // 1. Ler docs desta semana (filtrado)
+    const qSemana = query(
+      collection(firestoreDB, 'programacao_dias'),
+      where('semana', '==', semanaId)
+    );
+    const snap = await getDocs(qSemana);
     snap.forEach(function(d) {
       const data = d.data();
       _pdCache[String(d.id)] = { dia: data.dia || null, fin: data.finalizado === true };
     });
+
+    // 2. Na primeira carga da sessão, ler docs legados (sem campo 'semana') uma única vez
+    if (!_pdLegadoCarregado) {
+      _pdLegadoCarregado = true;
+      const qLegado = query(
+        collection(firestoreDB, 'programacao_dias'),
+        where('semana', '==', null)
+      );
+      const snapLegado = await getDocs(qLegado).catch(() => null);
+      if (snapLegado) {
+        snapLegado.forEach(function(d) {
+          const data = d.data();
+          if (!_pdCache[String(d.id)]) { // não sobrescrever se já veio da query filtrada
+            _pdCache[String(d.id)] = { dia: data.dia || null, fin: data.finalizado === true };
+          }
+          // Migrar doc legado: adicionar campo 'semana' para evitar esta leitura no futuro
+          if (data.dia) {
+            const dMon = getWeekMonday(new Date(data.dia + 'T12:00:00'));
+            const wN = String(getISOWeek(dMon)).padStart(2, '0');
+            const migSemana = `${dMon.getFullYear()}-W${wN}`;
+            setDoc(doc(firestoreDB, 'programacao_dias', d.id),
+              { semana: migSemana }, { merge: true }
+            ).catch(() => {});
+          }
+        });
+      }
+    }
   } catch(e) {
     console.error('Erro ao carregar programacao_dias:', e);
+    // Fallback: ler tudo se a query filtrada falhar (índice não criado ainda)
+    try {
+      const snapAll = await getDocs(collection(firestoreDB, 'programacao_dias'));
+      snapAll.forEach(function(d) {
+        const data = d.data();
+        _pdCache[String(d.id)] = { dia: data.dia || null, fin: data.finalizado === true };
+      });
+    } catch(e2) { console.error('Fallback pdLoadWeek também falhou:', e2); }
   }
   // Carrega apontamentos da semana do Firestore
   await _loadAponFSSemana(mondayDate);
@@ -5275,8 +5349,14 @@ function pdSetAssign(recId, ds) {
   const id = String(recId);
   if (!_pdCache[id]) _pdCache[id] = { dia: null, fin: false };
   _pdCache[id].dia = ds || null;
+  // Calcular semana para filtro eficiente no próximo carregamento
+  let semana = null;
+  if (ds && prodBaseMonday) {
+    const wN = String(getISOWeek(prodBaseMonday)).padStart(2, '0');
+    semana = `${prodBaseMonday.getFullYear()}-W${wN}`;
+  }
   setDoc(doc(firestoreDB, 'programacao_dias', id),
-    { dia: ds || null, finalizado: _pdCache[id].fin, ts: serverTimestamp() },
+    { dia: ds || null, finalizado: _pdCache[id].fin, semana, ts: serverTimestamp() },
     { merge: true }
   ).catch(function(e){ console.error('Erro ao salvar dia no Firestore:', e); });
 }
@@ -5287,8 +5367,13 @@ function pdSetFin(recId, v) {
   const id = String(recId);
   if (!_pdCache[id]) _pdCache[id] = { dia: null, fin: false };
   _pdCache[id].fin = !!v;
+  let semana = null;
+  if (prodBaseMonday) {
+    const wN = String(getISOWeek(prodBaseMonday)).padStart(2, '0');
+    semana = `${prodBaseMonday.getFullYear()}-W${wN}`;
+  }
   setDoc(doc(firestoreDB, 'programacao_dias', id),
-    { dia: _pdCache[id].dia || null, finalizado: !!v, ts: serverTimestamp() },
+    { dia: _pdCache[id].dia || null, finalizado: !!v, semana, ts: serverTimestamp() },
     { merge: true }
   ).catch(function(e){ console.error('Erro ao salvar finalizado no Firestore:', e); });
 }
@@ -7051,7 +7136,11 @@ async function carregarProdutosFirestore() {
   } catch(e) {
     console.warn('[PRODUTOS] Erro ao carregar do Firestore:', e.message);
   }
-  // Recarregar fichaTecnicaData a partir do Firestore — merge com memória local para não perder fichas recém-criadas
+}
+
+// Carrega fichas técnicas do Firestore — função separada para evitar dupla leitura
+// quando só produtos mudam (ou só fichas mudam).
+async function carregarFichaTecnicaFirestore() {
   try {
     const snap2 = await getDocs(lojaCol('fichaTecnica'));
     if (!snap2.empty) {
@@ -7062,10 +7151,20 @@ async function carregarProdutosFirestore() {
       const fichasApenasNaMemoria = fichaTecnicaData.filter(f => !ftArrCods.has(f.cod));
       fichaTecnicaData = [...JSON.parse(JSON.stringify(ftArr)), ...fichasApenasNaMemoria];
     }
-  } catch(e) { /* ficha técnica opcional */ }
+    _carregadoFichaTecnica = true;
+  } catch(e) { console.warn('[FICHA] Erro ao carregar ficha técnica:', e.message); }
 }
 
-// Salva produto no Firestore e mantém vínculo bidirecional com a máquina
+async function carregarFichaTecnicaCached(forceReload = false) {
+  if (!forceReload && _carregadoFichaTecnica && FICHA_TECNICA.length > 0) return;
+  await carregarFichaTecnicaFirestore();
+}
+
+// Salva produto no Firestore e mantém vínculo bidirecional com a máquina.
+// NÃO relê o Firestore após salvar — atualiza os arrays em memória diretamente
+// para evitar centenas de leituras desnecessárias em importações.
+// Chame invalidateCache('produtos') + carregarProdutosCached(true) manualmente
+// apenas UMA vez após o loop de importação/operação em lote.
 async function salvarProdutoFirestore(dados) {
   const payload = {
     cod: parseInt(dados.cod) || 0,
@@ -7081,7 +7180,6 @@ async function salvarProdutoFirestore(dados) {
     coberturaDias: parseInt(dados.coberturaDias) || 0,
     estoqueMinimo: parseFloat(dados.estoqueMinimo) || 0,
     ativo: dados.ativo !== false,
-    // ── Campos de cobertura e programação automática ──────────────
     metaCoberturaDias:  parseInt(dados.metaCoberturaDias)  || 0,
     producaoMinima:     parseFloat(dados.producaoMinima)   || 0,
     multiploProducao:   parseFloat(dados.multiploProducao) || 0,
@@ -7091,37 +7189,52 @@ async function salvarProdutoFirestore(dados) {
     atualizadoEm: new Date().toISOString()
   };
   try {
-    if (dados._id) {
-      await setDoc(lojaDoc('produtos', dados._id), { ...payload, criadoEm: dados.criadoEm || new Date().toISOString() });
+    let firestoreId = dados._id || null;
+    if (firestoreId) {
+      await setDoc(lojaDoc('produtos', firestoreId), { ...payload, criadoEm: dados.criadoEm || new Date().toISOString() });
     } else {
       payload.criadoEm = new Date().toISOString();
-      await addDoc(lojaCol('produtos'), payload);
+      const docRef = await addDoc(lojaCol('produtos'), payload);
+      firestoreId = docRef.id;
     }
-    // Vínculo bidirecional: se o produto tem máquina definida, adiciona nos produtosCompativeis da máquina
+
+    // ── Atualizar cache em memória sem reler o Firestore ──────────────
+    const prodNormalizado = normalizeProdutoFirestore({ ...payload, _id: firestoreId });
+    if (Array.isArray(window.PRODUTOS)) {
+      const idx = window.PRODUTOS.findIndex(p => p._id === firestoreId ||
+        (String(p.cod) === String(payload.cod) && p.maquina === payload.maquina));
+      if (idx >= 0) {
+        window.PRODUTOS[idx] = prodNormalizado;
+      } else {
+        window.PRODUTOS.push(prodNormalizado);
+      }
+    }
+
+    // Vínculo bidirecional com a máquina (só em memória + 1 write, sem reload)
     if (payload.maquina && payload.nome) {
       await _syncProdutoNaMaquina(payload.maquina, payload.nome, payload.velocidadePadrao);
     }
-    invalidateCache('produtos');
-    await carregarProdutosCached(true);
+    return firestoreId;
   } catch(e) {
     toast('Erro ao salvar produto: ' + e.message, 'err');
+    return null;
   }
 }
 
-// Garante que um produto está listado nos produtosCompativeis de uma máquina
+// Garante que um produto está listado nos produtosCompativeis de uma máquina.
+// Atualiza MAQUINAS_DATA em memória diretamente — sem reler o Firestore.
 async function _syncProdutoNaMaquina(nomeMaq, nomeProduto, velocidade) {
   try {
-    // Usar cache MAQUINAS_DATA em vez de consultar Firestore
     const maqCached = (window.MAQUINAS_DATA || {})[nomeMaq];
-    if (!maqCached || !maqCached._id) return; // máquina não cadastrada
-    const maqData = maqCached;
-    const prods = Array.isArray(maqData.produtosCompativeis) ? [...maqData.produtosCompativeis] : [];
-    const exists = prods.findIndex(p => p.produto === nomeProduto);
-    if (exists >= 0) return; // já está vinculado
+    if (!maqCached || !maqCached._id) return;
+    const prods = Array.isArray(maqCached.produtosCompativeis) ? [...maqCached.produtosCompativeis] : [];
+    if (prods.findIndex(p => p.produto === nomeProduto) >= 0) return; // já vinculado
     prods.push({ produto: nomeProduto, velocidade: velocidade || null });
-    await setDoc(lojaDoc('maquinas', maqCached._id), { ...maqData, produtosCompativeis: prods, atualizadoEm: new Date().toISOString() });
-    invalidateCache('maquinas');
-    await carregarMaquinasCached(true);
+    // Persistir no Firestore
+    await setDoc(lojaDoc('maquinas', maqCached._id), { ...maqCached, produtosCompativeis: prods, atualizadoEm: new Date().toISOString() });
+    // Atualizar cache em memória sem reler
+    window.MAQUINAS_DATA[nomeMaq] = { ...maqCached, produtosCompativeis: prods };
+    if (!MAQUINAS.includes(nomeMaq)) MAQUINAS.push(nomeMaq);
   } catch(e) {
     console.warn('[SYNC] Não foi possível sincronizar produto na máquina:', e.message);
   }
@@ -7426,24 +7539,7 @@ async function saveProdModal() {
   const eraNovoProduto = !_produtoEditando;
 
   try {
-    // ── 1. Persistir produto em memória ──────────────────────────────
-    if (_produtoEditando) {
-      const extraIdx = PRODUTOS_EXTRA.findIndex(p =>
-        String(p.cod) === String(_produtoEditando.cod) && p.maquina === _produtoEditando.maquina);
-      if (extraIdx >= 0) { PRODUTOS_EXTRA[extraIdx] = dados; localStorage.setItem('produtos_extra', JSON.stringify(PRODUTOS_EXTRA)); }
-      if (Array.isArray(window.PRODUTOS)) {
-        const gi = window.PRODUTOS.findIndex(p =>
-          String(p.cod) === String(_produtoEditando.cod) && p.maquina === _produtoEditando.maquina);
-        if (gi >= 0) window.PRODUTOS[gi] = dados;
-      }
-      registrarAuditoria('PRODUTO_EDITADO', { produtoAnterior: _produtoEditando, produtoNovo: dados });
-    } else {
-      PRODUTOS_EXTRA.push(dados);
-      localStorage.setItem('produtos_extra', JSON.stringify(PRODUTOS_EXTRA));
-      registrarAuditoria('PRODUTO_ADICIONADO', dados);
-    }
-
-    // ── 2. Coletar insumos inseridos no modal ────────────────────────
+    // ── 1. Coletar insumos inseridos no modal ────────────────────────
     const pmInsRows = document.getElementById('pm-insumos-list')?.querySelectorAll('.fte-ins-row') || [];
     const insumosDoModal = [];
     pmInsRows.forEach(row => {
@@ -7452,44 +7548,88 @@ async function saveProdModal() {
       if (name) insumosDoModal.push({ insumo: name, qty });
     });
 
-    // ── 3. Criar/atualizar ficha técnica base na memória + Firestore ──
+    // ── 2. Salvar produto no Firestore e atualizar cache em memória ──
+    // salvarProdutoFirestore agora retorna o firestoreId e atualiza PRODUTOS
+    // em memória sem reler o Firestore inteiro.
+    const dadosParaSalvar = _produtoEditando
+      ? { ..._produtoEditando, ...dados }  // preserva _id se estava editando
+      : dados;
+    const firestoreId = await salvarProdutoFirestore(dadosParaSalvar);
+    if (firestoreId && dadosParaSalvar._id !== firestoreId) {
+      dados._id = firestoreId; // armazenar para referência
+    }
+
+    // ── 3. Persistir produto em localStorage (PRODUTOS_EXTRA) ───────
+    if (_produtoEditando) {
+      const extraIdx = PRODUTOS_EXTRA.findIndex(p =>
+        String(p.cod) === String(_produtoEditando.cod) && p.maquina === _produtoEditando.maquina);
+      if (extraIdx >= 0) { PRODUTOS_EXTRA[extraIdx] = dados; localStorage.setItem('produtos_extra', JSON.stringify(PRODUTOS_EXTRA)); }
+      registrarAuditoria('PRODUTO_EDITADO', { produtoAnterior: _produtoEditando, produtoNovo: dados });
+    } else {
+      // Só adicionar no EXTRA se ainda não chegou no PRODUTOS via salvarProdutoFirestore
+      const jaEmProdutos = (window.PRODUTOS||[]).some(p => String(p.cod)===String(cod) && p.maquina===maq);
+      if (!jaEmProdutos) {
+        PRODUTOS_EXTRA.push(dados);
+        localStorage.setItem('produtos_extra', JSON.stringify(PRODUTOS_EXTRA));
+      }
+      registrarAuditoria('PRODUTO_ADICIONADO', dados);
+    }
+
+    // ── 4. Criar/atualizar ficha técnica em memória + Firestore ─────
+    // IMPORTANTE: fazer isso DEPOIS de salvarProdutoFirestore (que não
+    // mais sobrescreve fichaTecnicaData, então não há race condition).
     const codNum = parseInt(cod);
     let fichaObj = fichaTecnicaData.find(f => f.cod === codNum);
     if (!fichaObj) {
-      fichaObj = { cod: codNum, desc, unid: unid||1, pc_min: pcmin||0, maquina: maq, insumos: insumosDoModal, criadoEm: new Date().toISOString() };
+      // Ficha nova: criar em memória IMEDIATAMENTE (garante que aparece na aba)
+      fichaObj = {
+        cod: codNum, desc, unid: unid||1, pc_min: pcmin||0,
+        maquina: maq, insumos: insumosDoModal, criadoEm: new Date().toISOString()
+      };
       fichaTecnicaData.push(fichaObj);
       FICHA_TECNICA.push({ ...fichaObj });
+      // Persistir no Firestore em background
       try {
         const docRef = await addDoc(lojaCol('fichaTecnica'), { ...fichaObj, atualizadoEm: new Date().toISOString() });
         fichaObj._firestoreId = docRef.id;
+        // Atualizar _firestoreId também no FICHA_TECNICA
         const ftMem = FICHA_TECNICA.find(f => f.cod === codNum);
         if (ftMem) ftMem._firestoreId = docRef.id;
-      } catch(e) { console.warn('Erro ao criar ficha técnica:', e); }
+        _carregadoFichaTecnica = true; // marcar cache como válido
+      } catch(e) { console.warn('Erro ao criar ficha técnica no Firestore:', e); }
     } else {
-      // Atualizar insumos apenas se foram preenchidos no modal
-      if (insumosDoModal.length > 0) fichaObj.insumos = insumosDoModal;
+      // Ficha existente: atualizar campos
+      fichaObj.desc   = desc;
       fichaObj.unid   = unid   || fichaObj.unid;
       fichaObj.pc_min = pcmin  || fichaObj.pc_min;
-      // Persistir ficha atualizada no Firestore
+      if (insumosDoModal.length > 0) fichaObj.insumos = insumosDoModal;
+      // Sincronizar com FICHA_TECNICA (array separado)
+      const ftIdx = FICHA_TECNICA.findIndex(f => f.cod === codNum);
+      if (ftIdx >= 0) { FICHA_TECNICA[ftIdx] = { ...fichaObj }; }
+      // Persistir no Firestore
       try {
-        const fichaPayload = { cod: codNum, desc: fichaObj.desc, unid: fichaObj.unid, pc_min: fichaObj.pc_min, maquina: fichaObj.maquina, insumos: fichaObj.insumos, atualizadoEm: new Date().toISOString() };
+        const fichaPayload = {
+          cod: codNum, desc: fichaObj.desc, unid: fichaObj.unid,
+          pc_min: fichaObj.pc_min, maquina: fichaObj.maquina,
+          insumos: fichaObj.insumos, atualizadoEm: new Date().toISOString()
+        };
         if (fichaObj._firestoreId) {
           await setDoc(lojaDoc('fichaTecnica', fichaObj._firestoreId), fichaPayload);
         } else {
+          // Fallback: busca pelo cod (raro — só se _firestoreId não foi populado no boot)
           const snap = await getDocs(query(lojaCol('fichaTecnica'), where('cod', '==', codNum)));
-          if (!snap.empty) { await setDoc(lojaDoc('fichaTecnica', snap.docs[0].id), fichaPayload); }
-          else { await addDoc(lojaCol('fichaTecnica'), { ...fichaPayload, criadoEm: new Date().toISOString() }); }
+          if (!snap.empty) {
+            fichaObj._firestoreId = snap.docs[0].id;
+            await setDoc(lojaDoc('fichaTecnica', snap.docs[0].id), fichaPayload);
+          } else {
+            const newRef = await addDoc(lojaCol('fichaTecnica'), { ...fichaPayload, criadoEm: new Date().toISOString() });
+            fichaObj._firestoreId = newRef.id;
+          }
         }
-      } catch(e) { console.warn('Erro ao salvar ficha técnica:', e); }
+      } catch(e) { console.warn('Erro ao atualizar ficha técnica no Firestore:', e); }
     }
 
-    // ── 4. Salvar produto no Firestore (await evita race condition) ───
-    if (typeof salvarProdutoFirestore === 'function') {
-      try { await salvarProdutoFirestore(dados); }
-      catch(e) { console.warn('Erro ao sincronizar produto:', e); toast('Produto salvo localmente, mas erro ao sincronizar', 'warn'); }
-    }
-
-    // ── 5. Atualizar listas e fechar modal ────────────────────────────
+    // ── 5. Renderizar e fechar modal ──────────────────────────────────
     renderProdutosCfg();
     if (typeof renderFichaTecnicaCfg === 'function') renderFichaTecnicaCfg();
     if (typeof renderFichaTecnica === 'function') renderFichaTecnica();
@@ -11110,6 +11250,8 @@ window.getSetupMin = getSetupMin;
 window.calcCapacidadeMaquina = calcCapacidadeMaquina;
 window.getPcMinMaquinaProduto = getPcMinMaquinaProduto;
 window.carregarProdutosFirestore = carregarProdutosFirestore;
+window.carregarFichaTecnicaFirestore = carregarFichaTecnicaFirestore;
+window.carregarFichaTecnicaCached = carregarFichaTecnicaCached;
 window.salvarProdutoFirestore = salvarProdutoFirestore;
 window.getAllProdutos = getAllProdutos;
 
