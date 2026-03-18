@@ -20,6 +20,19 @@ import {
   query, orderBy, addDoc, serverTimestamp
 } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
+// FIX: cache de usuarios — evita getDocs repetido na mesma sessão (TTL 5 min)
+let _usuariosCache = null, _usuariosCacheTs = 0;
+const _USUARIOS_TTL = 5 * 60 * 1000;
+async function _getUsuariosCache() {
+  const t = Date.now();
+  if (_usuariosCache && t - _usuariosCacheTs < _USUARIOS_TTL) return _usuariosCache;
+  const snap = await getDocs(collection(db, "usuarios"));
+  _usuariosCache = snap.docs;
+  _usuariosCacheTs = t;
+  return _usuariosCache;
+}
+function _invalidarUsuariosCache() { _usuariosCache = null; _usuariosCacheTs = 0; }
+
 // ─────────────────────────────────────────────────────────────────────────────
 // MÓDULOS DO SISTEMA
 // ─────────────────────────────────────────────────────────────────────────────
@@ -120,7 +133,8 @@ export async function confirmarNovaSenha(oobCode, novaSenha) {
   const email = await verifyPasswordResetCode(auth, oobCode);
   await confirmPasswordReset(auth, oobCode, novaSenha);
   // Atualiza metadados no Firestore — APENAS datas, sem senha
-  const snap = await getDocs(collection(db, "usuarios"));
+  // FIX: usa cache em vez de getDocs direto
+  const snap = { docs: await _getUsuariosCache() };
   const userDoc = snap.docs.find(d => (d.data().email || "").toLowerCase() === email.toLowerCase());
   if (userDoc) {
     await updateDoc(doc(db, "usuarios", userDoc.id), {
@@ -155,7 +169,8 @@ export async function criarUsuarioSistema({ email, senha, nome, tipo, cargo, per
       ultimaAlteracaoSenhaEm: null,
       ultimoResetEnviadoEm: null,
     };
-    await setDoc(doc(db, "usuarios", uid), dados);
+    _invalidarUsuariosCache();
+  await setDoc(doc(db, "usuarios", uid), dados);
     return { uid, ...dados };
   } catch(e) {
     throw e;
@@ -166,7 +181,8 @@ export async function criarUsuarioSistema({ email, senha, nome, tipo, cargo, per
 }
 
 export async function listarUsuariosSistema() {
-  const snap = await getDocs(collection(db, "usuarios"));
+  // FIX: usa cache (5 min) em vez de getDocs direto
+  const snap = { docs: await _getUsuariosCache() };
   // Retorna dados — nunca haverá campo senha, mas filtramos por garantia
   return snap.docs.map(d => {
     const data = d.data();
@@ -184,6 +200,7 @@ export async function atualizarUsuarioSistema(uid, dados) {
   delete seguro.senha;
   delete seguro.password;
   delete seguro.pass;
+  _invalidarUsuariosCache();
   await updateDoc(doc(db, "usuarios", uid), seguro);
 }
 
@@ -194,6 +211,7 @@ export async function atualizarUsuarioSistema(uid, dados) {
  * pois o sistema não encontrará seu registro no Firestore.
  */
 export async function excluirUsuarioSistema(uid) {
+  _invalidarUsuariosCache();
   await deleteDoc(doc(db, "usuarios", uid));
 }
 
@@ -203,7 +221,8 @@ export async function excluirUsuarioSistema(uid) {
  */
 export async function adminForcaReset(email) {
   await sendPasswordResetEmail(auth, email);
-  const snap = await getDocs(collection(db, "usuarios"));
+  // FIX: usa cache em vez de getDocs direto
+  const snap = { docs: await _getUsuariosCache() };
   const userDoc = snap.docs.find(d => (d.data().email || "").toLowerCase() === email.toLowerCase());
   if (userDoc) {
     await updateDoc(doc(db, "usuarios", userDoc.id), {

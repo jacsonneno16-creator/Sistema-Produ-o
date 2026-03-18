@@ -323,10 +323,31 @@ export async function saveJornada(dias) {
 //  BUILD APON TOTALS — soma apontamentos por registro
 // ================================================================
 export async function buildAponTotals(ids) {
+  // FIX: 1 query em batch em vez de N queries individuais
+  // Firestore 'in' aceita no máximo 30 valores — dividimos em chunks
   const totals = {};
-  await Promise.all(ids.map(async id => {
-    totals[id] = await getTotalApontado(id);
-  }));
+  if (!ids || !ids.length) return totals;
+  ids.forEach(id => { totals[String(id)] = 0; });
+  const HORAS = [7,8,9,10,11,12,13,14,15,16,17];
+  const batchSize = 30;
+  for (let i = 0; i < ids.length; i += batchSize) {
+    const chunk = ids.slice(i, i + batchSize);
+    try {
+      const snap = await getDocs(query(
+        lojaCol("apontamentos"),
+        where("registroId", "in", chunk)
+      ));
+      snap.docs.forEach(d => {
+        const a = d.data();
+        const id = String(a.registroId);
+        if (id == null) return;
+        const hTotal = HORAS.reduce((s, h) => s + (parseInt(a.horas?.[h]) || 0), 0);
+        totals[id] = (totals[id] || 0) + hTotal;
+      });
+    } catch(e) {
+      console.warn('[buildAponTotals] batch erro:', e.message);
+    }
+  }
   return totals;
 }
 

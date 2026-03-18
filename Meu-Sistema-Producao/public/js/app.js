@@ -750,7 +750,7 @@ function trocarLoja(lojaId) {
     return;
   }
   // Limpa dados em memória
-  MAQUINAS = []; PRODUTOS = []; FICHA_TECNICA = []; SETUP_FIRESTORE = {};
+  MAQUINAS = []; PRODUTOS = []; FICHA_TECNICA = []; SETUP_FIRESTORE = {}; _usuariosSistemaCache = null;
   records = [];
   setLojaAtiva(lojaId); // reload automático
 }
@@ -7855,13 +7855,21 @@ function deleteFuncionario(){ }
 // USUÁRIOS DO SISTEMA (com login Firebase Auth)
 // ══════════════════════════════════════════════════════════════════════════════
 let _usuariosSistema = [];
+let _usuariosSistemaCache = null; // { dados: [], ts: number }
 
 async function renderUsuariosSistema(){
   if(!can('usuarios','visualizar')){ return; }
   const el=document.getElementById('usuarios-list');
   if(!el) return;
-  el.innerHTML='<div style="padding:16px;color:var(--text3);font-size:12px">Carregando...</div>';
-  _usuariosSistema = await listarUsuariosSistema();
+  // FIX: cache de 5 min — evita getDocs toda vez que a tela de usuários abre
+  const agora = Date.now();
+  if (_usuariosSistemaCache && (agora - _usuariosSistemaCache.ts) < 5 * 60 * 1000) {
+    _usuariosSistema = _usuariosSistemaCache.dados;
+  } else {
+    el.innerHTML='<div style="padding:16px;color:var(--text3);font-size:12px">Carregando...</div>';
+    _usuariosSistema = await listarUsuariosSistema();
+    _usuariosSistemaCache = { dados: _usuariosSistema, ts: agora };
+  }
   if(!_usuariosSistema.length){
     el.innerHTML='<div style="padding:20px 22px;color:var(--text3);font-size:13px">Nenhum usuário cadastrado.</div>';
     return;
@@ -8340,7 +8348,8 @@ async function saveUsuarioModal(){
       const senha=document.getElementById('us-senha')?.value||'';
       if(!email){alert('Informe o e-mail.');return;}
       if(senha.length<6){alert('Senha deve ter ao menos 6 caracteres.');return;}
-      await criarUsuarioSistema({email,senha,nome,tipo,cargo,permissoes,lojasPermitidas});
+      _usuariosSistemaCache = null; // invalida cache
+  await criarUsuarioSistema({email,senha,nome,tipo,cargo,permissoes,lojasPermitidas});
       toast('Usuário '+nome+' criado com sucesso.','ok');
     } else {
       const ativo=document.getElementById('us-ativo')?.value!=='false';
@@ -8367,6 +8376,7 @@ async function adminEnviarResetUI(email, nome){
 }
 
 async function toggleUsuarioAtivo(uid,ativo){
+  _usuariosSistemaCache = null; // invalida cache
   await atualizarUsuarioSistema(uid,{ativo});
   await renderUsuariosSistema();
   toast(ativo?'Usuário ativado.':'Usuário desativado.', ativo?'ok':'warn');
@@ -8379,7 +8389,8 @@ async function confirmarExcluirUsuario(uid, nome){
   if(cu && cu.uid === uid){ toast('Você não pode excluir sua própria conta.','err'); return; }
   if(!confirm(`⚠️ Excluir o usuário "${nome}"?\n\nEsta ação remove o perfil e permissões permanentemente.\nO acesso ao sistema será bloqueado imediatamente.\n\nEsta ação não pode ser desfeita.`)) return;
   try{
-    await excluirUsuarioSistema(uid);
+    _usuariosSistemaCache = null; // invalida cache
+  await excluirUsuarioSistema(uid);
     toast(`Usuário "${nome}" excluído com sucesso.`,'ok');
     await renderUsuariosSistema();
   }catch(e){
