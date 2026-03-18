@@ -616,7 +616,7 @@
     <!-- Parâmetros -->
     <div class="sbox" style="margin-bottom:16px">
       <div class="sbox-title">⚙️ Parâmetros da Programação Automática</div>
-      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px">
+      <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:12px">
         <div class="frow">
           <label class="flbl">Cobertura mínima desejada (dias)</label>
           <input type="number" class="finp" id="pa-cobertura-min" value="5" min="1" max="30" style="font-size:12px">
@@ -632,6 +632,13 @@
         <div class="frow">
           <label class="flbl">% máx. da máquina por produto</label>
           <input type="number" class="finp" id="pa-max-pct-maq" value="60" min="10" max="100" style="font-size:12px">
+        </div>
+        <div class="frow">
+          <label class="flbl">Fechamento da última semana</label>
+          <select id="pa-fechamento-mes" class="finp" style="font-size:12px" title="Define como tratar semanas que cruzam a virada do mês">
+            <option value="mes-seguinte">↪ Pode cruzar para o mês seguinte</option>
+            <option value="este-mes">🔒 Só dias deste mês (corta na virada)</option>
+          </select>
         </div>
       </div>
     </div>
