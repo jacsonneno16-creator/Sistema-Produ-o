@@ -2856,7 +2856,7 @@ function renderGanttSemanal(){
     }
 
     html+=`<div class="g-maq-sep" style="grid-column:1/-1;display:flex;align-items:center;justify-content:space-between">
-      <span>⚙ ${maq}${turnosSumario} · ${entries.length} produto(s)</span>
+      <span>⚙ ${maq}${turnosSumario} · ${new Set(entries.map(e=>(e.rec.produto||'').trim().toLowerCase())).size} produto(s)</span>
       <span style="font-family:'JetBrains Mono',monospace;font-size:10px;display:flex;align-items:center;gap:10px">
         <span style="color:var(--text3)">${fmtHrs(maqTotH)} prog. / ${maqCapH}h disp.</span>
         <span style="color:${maqOccColor};font-weight:700">${maqOccPct}% ocupação</span>
@@ -2868,29 +2868,51 @@ function renderGanttSemanal(){
 
     let firstRowOfMaq=true;
 
-    for(const {rec,segments,setupMin} of entries){
-      const color=colorMap[rec.id];
-      const pRow=getProdInfo(rec);
-      let prodHrs=0;
-      const totalUnidRow=rec.qntUnid||(rec.qntCaixas*pRow.unid);
-      if(totalUnidRow&&pRow.pc_min) prodHrs=totalUnidRow/pRow.pc_min/60;
-      const prodHrsStr=fmtHrs(prodHrs);
+    // ── CONSOLIDAR por produto: agrupar todos os entries do mesmo produto
+    // em uma única entrada antes de renderizar — 1 linha por produto por máquina.
+    const prodMap = {};
+    for(const entry of entries){
+      const pk = (entry.rec.produto || '').trim().toLowerCase();
+      if(!prodMap[pk]){
+        prodMap[pk] = {
+          produto:    entry.rec.produto,
+          maquina:    entry.rec.maquina,
+          color:      colorMap[entry.rec.id],
+          qntCaixas:  0,
+          setupMin:   0,
+          segments:   [],       // todos os segmentos de todos os registros
+          recs:       []
+        };
+      }
+      prodMap[pk].qntCaixas += (entry.rec.qntCaixas || 0);
+      prodMap[pk].setupMin  += (entry.setupMin || 0);   // somar setup total
+      prodMap[pk].segments  = prodMap[pk].segments.concat(entry.segments || []);
+      prodMap[pk].recs.push(entry.rec);
+    }
+    const prodEntries = Object.values(prodMap);
+
+    for(const prodEntry of prodEntries){
+      const { produto, maquina: recMaq, color, qntCaixas, setupMin, segments, recs } = prodEntry;
+
+      // Calcular horas de produção totais (soma de todos os segmentos)
+      const prodHrs = segments.reduce((a, sg) => a + (sg.hrsNoDia || 0), 0);
+      const prodHrsStr = fmtHrs(prodHrs);
 
       html+=`<div class="gantt-row" style="grid-template-columns:${gridCols}">`;
 
       // Máquina col
-      html+=`<div class="g-col-maq"><span class="g-col-maq-txt">${rec.maquina}</span></div>`;
+      html+=`<div class="g-col-maq"><span class="g-col-maq-txt">${recMaq}</span></div>`;
 
       // Produto label col
-      html+=`<div class="g-label"><strong title="${rec.produto}">${rec.produto}</strong></div>`;
+      html+=`<div class="g-label"><strong title="${produto}">${produto}</strong></div>`;
 
-      // Qtd cx col
-      html+=`<div class="g-col-qty"><div class="g-col-qty-txt">${rec.qntCaixas}<br><span style="font-size:9px;color:var(--text3);font-weight:400">cx</span></div></div>`;
+      // Qtd cx col — soma de todos os registros
+      html+=`<div class="g-col-qty"><div class="g-col-qty-txt">${qntCaixas}<br><span style="font-size:9px;color:var(--text3);font-weight:400">cx</span></div></div>`;
 
       // Tempo col
       html+=`<div style="display:flex;align-items:center;justify-content:center;border-left:1px solid var(--border);background:var(--s1);font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:600;color:var(--warn);padding:4px 2px;text-align:center">${prodHrsStr}</div>`;
 
-      // Set Up col
+      // Set Up col — setup total (apenas o primeiro registro tem setup real)
       const setupHrs=setupMin/60;
       const setupStr=setupMin>0?fmtHrs(setupHrs):'—';
       const setupColor=setupMin>0?'var(--orange)':'var(--text3)';
@@ -2936,22 +2958,20 @@ function renderGanttSemanal(){
             const hrsLabel=fmtHrs(seg.hrsNoDia);
             const turnoTip=seg.turnoLabel?` · ${seg.turnoLabel}`:'';
             html+=`<div class="g-bar" style="left:${leftPct}%;width:${widthPct}%;background:${color};opacity:0.9;position:absolute;top:15%;height:70%"
-              title="${rec.produto}${turnoTip} · ${cx} cx · ${hrsLabel}">
-              <div class="g-bar-tip">${rec.produto.substring(0,40)}<br>${cx} cx · ${hrsLabel}${seg.turnoLabel?' · '+seg.turnoLabel:''}</div>
+              title="${produto}${turnoTip} · ${cx} cx · ${hrsLabel}">
+              <div class="g-bar-tip">${produto.substring(0,40)}<br>${cx} cx · ${hrsLabel}${seg.turnoLabel?' · '+seg.turnoLabel:''}</div>
             </div>`;
           });
           html+=`</div>`;
         } else if(daySeg.length && dayCapMin===0){
-          // Machine has no availability but somehow segment exists — show plain bar
           html+=`<div class="g-bar-wrap"><div class="g-bar" style="left:0%;width:100%;background:${color};opacity:0.5"></div></div>`;
         }
         html+=`</div>`;
       }
 
-      // Per-day qty columns
+      // Per-day qty columns — soma dos segmentos consolidados
       days.forEach((day,di)=>{
         const isWknd=hoursOnDay(day)===0;
-        // Sum caixas across all segments on this day
         const cxDia=segments.filter(s=>s.dayIdx===di).reduce((a,s)=>a+s.caixasNoDia,0);
         html+=`<div style="display:flex;align-items:center;justify-content:center;border-left:1px solid rgba(31,45,61,.4);background:var(--s1);font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:600;color:${cxDia>0?(isWknd?'var(--text2)':'var(--cyan)'):'var(--text4)'};">${cxDia>0?cxDia:'—'}</div>`;
       });
