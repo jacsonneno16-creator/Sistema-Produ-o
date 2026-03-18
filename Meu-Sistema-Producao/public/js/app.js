@@ -3025,11 +3025,18 @@ function renderGanttMensal(){
     });
   }
 
-  // Montar matriz: maquina → produto → { semanas: [cx,...], hrsTotal, recs }
-  const matrizMes = {};  // { [maq]: { [prodKey]: { label, semanas:[cx,..], hrsTotal, cor, rec } } }
+  // ── FIX 1: Montar matriz agrupando por (máquina × produto)
+  // Chave = produto nome normalizado → uma única linha por produto por máquina,
+  // independente de quantos registros (semanas, splits) foram criados.
+  const matrizMes = {};
   const colorMap  = {};
   let   ci        = 0;
-  records.forEach(r => { colorMap[r.id] = BAR_COLORS[ci++ % BAR_COLORS.length]; });
+  const prodColorMap = {};
+  records.forEach(r => {
+    const pk = (r.produto || '').trim().toLowerCase();
+    if(!prodColorMap[pk]) prodColorMap[pk] = BAR_COLORS[ci++ % BAR_COLORS.length];
+    colorMap[r.id] = prodColorMap[pk];
+  });
 
   for(const maq of MAQUINAS){
     matrizMes[maq] = {};
@@ -3038,36 +3045,32 @@ function renderGanttMensal(){
       const wSun = dateStr(s.sunday);
       const { schedule } = buildSchedule(s.monday);
       const entries = schedule[maq] || [];
-      entries.forEach(({ rec, segments, setupMin }) => {
-        // OVERFLOW FIX: only count segments within THIS week's date range.
-        // For overflow records, also use cxRestante (remaining production) not
-        // the full qntCaixas — prevents the same volume appearing in every week.
+      entries.forEach(({ rec, segments, setupMin, isOverflow }) => {
         const segsThisWeek = segments.filter(seg => seg.date >= wMon && seg.date <= wSun);
         if(!segsThisWeek.length) return;
-        const key = rec.id;
-        if(!matrizMes[maq][key]){
-          matrizMes[maq][key] = {
-            label:      rec.produto,
-            cod:        rec.prodCod || '—',
-            semanas:    Array(semanas.length).fill(0),
-            hrs:        Array(semanas.length).fill(0),
-            hrsTotal:   0,
-            cor:        colorMap[rec.id] || BAR_COLORS[0],
-            isOverflow: !!isOverflow,
-            rec
+
+        // FIX 1: agrupar pelo nome do produto, não pelo id do registro
+        const prodKey = (rec.produto || '').trim().toLowerCase();
+        if(!matrizMes[maq][prodKey]){
+          matrizMes[maq][prodKey] = {
+            label:   rec.produto,
+            cod:     rec.prodCod || '—',
+            semanas: Array(semanas.length).fill(0),
+            hrs:     Array(semanas.length).fill(0),
+            hrsTotal: 0,
+            cor:     colorMap[rec.id] || BAR_COLORS[0],
+            isOverflow: !!isOverflow
           };
         }
         const cxSem = segsThisWeek.reduce((a, sg) => a + (sg.caixasNoDia || 0), 0);
-        // Setup time only on the first week where this record starts producing
-        // (overflow records have setupMin=0 already, so this is consistent)
         const isFirstWeek = segments.length > 0 &&
           segments[0].date >= wMon && segments[0].date <= wSun;
         const hrsSem = segsThisWeek.reduce((a, sg) => a + (sg.hrsNoDia || 0), 0)
-                     + (isFirstWeek ? setupMin / 60 : 0);
-        matrizMes[maq][key].semanas[si] += cxSem;
-        matrizMes[maq][key].hrs[si]     += hrsSem;
-        matrizMes[maq][key].hrsTotal    += hrsSem;
-        maqHrsProg[maq]                 += hrsSem;
+                     + (isFirstWeek && !isOverflow ? setupMin / 60 : 0);
+        matrizMes[maq][prodKey].semanas[si] += cxSem;
+        matrizMes[maq][prodKey].hrs[si]     += hrsSem;
+        matrizMes[maq][prodKey].hrsTotal    += hrsSem;
+        maqHrsProg[maq]                     += hrsSem;
       });
     });
   }
@@ -10785,11 +10788,17 @@ function gerarProgAutomarica(){
         const cobSimAtual = c.demandaDiaria > 0 ? c.estoqueSim / c.demandaDiaria : 999;
         if(cobSimAtual >= cobTeto) continue;
 
-        // Quantidade: suficiente para fechar esta semana em cobTeto
+        // FIX 2 — absorver carryover da semana anterior: se houve excedente não
+        // alocado por falta de capacidade, somar aqui para que seja redistribuído
+        // nas semanas seguintes. Zera o carryover após absorver.
         const estoqueFinSem = Math.max(0, c.estoqueSim - c.demandaSemanal);
         let cxNecessario = Math.max(0, Math.ceil(
           c.demandaDiaria * cobTeto - estoqueFinSem
         ));
+        if(c._carryover > 0){
+          cxNecessario += c._carryover;
+          c._carryover  = 0;
+        }
         if(cxNecessario <= 0) continue;
 
         // Respeitar mínimo e múltiplo
@@ -10836,7 +10845,6 @@ function gerarProgAutomarica(){
         }
 
         // 3d-SCORE: escolher máquinas por pontuação ponderada
-        // Passa cxNecessario para que scoreMaquina calcule fatorConcentracao corretamente
         const maqsOrdenadas = [...c.maquinasCompativeis]
           .map(mc => ({ ...mc, score: scoreMaquina(mc, sem, c.demandaDiaria, c.prod, cxNecessario) }))
           .filter(mc => mc.score >= 0)
@@ -10846,9 +10854,10 @@ function gerarProgAutomarica(){
 
         let cxRestante = cxNecessario;
 
-        // 3d-SPLIT: tentar alocar NA MÁQUINA PRINCIPAL primeiro.
-        // Só envolve segunda máquina se a principal não conseguir absorver tudo.
-        // Isso evita splits desnecessários que aumentam setup total.
+        // FIX 2 — validar capacidade real antes de confirmar alocação.
+        // Tentar alocar na máquina principal primeiro. Se não couber tudo,
+        // só divide em uma segunda máquina. O que ainda sobrar (excedente)
+        // é marcado em c._carryover para ser considerado na próxima semana.
         const maqPrinc = maqsOrdenadas[0];
         const hrsNecPrinc = (cxRestante * c.unid) / (maqPrinc.pc_min * 60);
         const maxHrsPrinc = (maqCapPorSemana[sem][maqPrinc.maquina] || maqCapacidades[maqPrinc.maquina] || 0) * maxPctMaq;
@@ -10860,9 +10869,9 @@ function gerarProgAutomarica(){
         const cxAlocarPrinc    = Math.floor(hrsAlocarPrinc * 60 * maqPrinc.pc_min / c.unid);
         const principalAbsorve = cxAlocarPrinc >= cxRestante;
 
-        // Limitar iterações: 1 máquina se a principal absorve tudo, 2 se não
         const maxMaquinas = principalAbsorve ? 1 : Math.min(2, maqsOrdenadas.length);
 
+        let cxEfetivamenteAlocado = 0;
         for(let mi = 0; mi < maxMaquinas && cxRestante > 0; mi++){
           const mc        = maqsOrdenadas[mi];
           const hrsNec    = (cxRestante * c.unid) / (mc.pc_min * 60);
@@ -10878,9 +10887,17 @@ function gerarProgAutomarica(){
           if(cxAlocar <= 0) continue;
 
           registrarAlocacao(c.prod, sem, mc.maquina, cxAlocar, hrsAlocar, mc.pc_min, c.unid);
-          c.estoqueSim += cxAlocar;
-          cxRestante   -= cxAlocar;
-          algumAlocado  = true;
+          c.estoqueSim       += cxAlocar;
+          cxRestante         -= cxAlocar;
+          cxEfetivamenteAlocado += cxAlocar;
+          algumAlocado        = true;
+        }
+
+        // FIX 2 — carryover: se ainda sobrou quantidade não alocada por falta
+        // de capacidade, guardar para que a próxima semana absorva o deficit.
+        // Isso evita "blocos fantasma" — o Gantt só mostrará o que realmente cabe.
+        if(cxRestante > 0 && sem < 3){
+          c._carryover = (c._carryover || 0) + cxRestante;
         }
       }
 
@@ -11295,57 +11312,104 @@ function gerarProgAutomarica(){
       : '';
     const motivoFinal = c.motivo + (semInfo ? ` | ${semInfo}${maqInfo}` : '') + naoPontInfo + jaProgInfo + saldoInfo;
 
-    // ── Validação de insumos ──────────────────────────────────────
+    // ── Fix 3: Validação de insumos + limite por estoque disponível ──
     const fichaTec = FICHA_TECNICA.find(f => String(f.cod)===String(c.cod) || f.desc===c.prod)
                   || (typeof fichaTecnicaData!=='undefined'
                       ? fichaTecnicaData.find(f => String(f.cod)===String(c.cod) || f.desc===c.prod)
                       : null);
     const temFichasTecnica = !!(fichaTec && fichaTec.insumos && fichaTec.insumos.length);
+
+    // Calcular o máximo de caixas que os insumos disponíveis permitem produzir
+    // cxMaxPorInsumos = min( floor(estoqueInsumo / qty) ) para cada insumo
+    let cxMaxPorInsumos = Infinity;
     let insumosStatus = [], insumosOk = true, insumosFaltando = [];
+
     if(temFichasTecnica && insumosEstoqueData.length > 0){
       insumosStatus = fichaTec.insumos.map(ins => {
-        const consumo     = (ins.qty||0) * alloc.cxTotal;
-        const estoqueAtual= getEstoqueInsumo(ins.insumo);
-        const saldo       = estoqueAtual != null ? estoqueAtual - consumo : null;
-        const falta       = saldo != null && saldo < 0;
+        const consumo      = (ins.qty||0) * alloc.cxTotal;
+        const estoqueAtual = getEstoqueInsumo(ins.insumo);
+        const saldo        = estoqueAtual != null ? estoqueAtual - consumo : null;
+        const falta        = saldo != null && saldo < 0;
+
+        // Calcular quantas caixas este insumo permite (para Opção B)
+        if(ins.qty > 0 && estoqueAtual != null){
+          const maxCxEsteInsumo = Math.floor(estoqueAtual / ins.qty);
+          if(maxCxEsteInsumo < cxMaxPorInsumos) cxMaxPorInsumos = maxCxEsteInsumo;
+        }
+
         if(falta){ insumosOk = false; insumosFaltando.push({ nome: ins.insumo, consumo, estoqueAtual, saldo, deficit: Math.abs(saldo) }); }
         return { nome: ins.insumo, consumo, estoqueAtual, saldo, falta };
       }).filter(i => i.consumo > 0);
     }
+    if(cxMaxPorInsumos === Infinity) cxMaxPorInsumos = null; // sem ficha técnica = sem limite
+
+    // Opção B: limitar a produção pelo estoque de insumos
+    const modoInsumo = document.querySelector('input[name="pa-modo-insumo"]:checked')?.value || 'total';
+    let cxAlocadasFinal  = alloc.cxTotal;
+    let semanasFinal     = alloc.semanas;
+    let detalhesFinal    = alloc.detalhes;
+    let hrsAlocTotalFinal = alloc.hrsTotal;
+
+    if(modoInsumo === 'limitado' && cxMaxPorInsumos != null && cxMaxPorInsumos < alloc.cxTotal){
+      // Recalcular semanas proporcionalmente ao limite de insumos
+      const ratio = cxMaxPorInsumos / Math.max(1, alloc.cxTotal);
+      semanasFinal  = alloc.semanas.map(cx  => Math.round(cx * ratio));
+      detalhesFinal = alloc.detalhes.map(detSem =>
+        detSem.map(det => ({ ...det, cx: Math.round(det.cx * ratio) }))
+      );
+      cxAlocadasFinal   = semanasFinal.reduce((a,v) => a+v, 0);
+      hrsAlocTotalFinal = detalhesFinal.flat().reduce((a,d) => a + d.hrs * (d.cx / Math.max(1, d.cx / ratio)), 0);
+      // Recalcular insumosStatus com a quantidade ajustada
+      if(temFichasTecnica && insumosEstoqueData.length > 0){
+        insumosStatus = fichaTec.insumos.map(ins => {
+          const consumo      = (ins.qty||0) * cxAlocadasFinal;
+          const estoqueAtual = getEstoqueInsumo(ins.insumo);
+          const saldo        = estoqueAtual != null ? estoqueAtual - consumo : null;
+          const falta        = saldo != null && saldo < 0;
+          return { nome: ins.insumo, consumo, estoqueAtual, saldo, falta };
+        }).filter(i => i.consumo > 0);
+        insumosOk = insumosStatus.every(i => !i.falta);
+        insumosFaltando = insumosStatus.filter(i => i.falta).map(i => ({
+          ...i, deficit: Math.abs(i.saldo)
+        }));
+      }
+    }
 
     paResultados.push({
-      prod:             c.prod,
-      cod:              c.cod,
-      maquina:          maqPrincipal,
-      maquinasUsadas:   Object.keys(alloc.maquinas),
-      pc_min:           pcMinPrincipal,
-      unid:             c.unid,
-      estoque:          c.estoque,
-      cobAtual:         c.cobAtual,
-      cobComProg:       c.cobComProg,
-      jaProgTotal:      c.jaProgTotal || 0,
-      jaProgPorSemana:  c.jaProgPorSemana || [0,0,0,0],
-      saldoVirada:      c.saldoVirada || 0,
-      necessidadeProxMes: c.necessidadeProxMes || 0,
-      demandaDiaria:    c.demandaDiaria,
-      demandaSemanal:   c.demandaSemanal,
-      qntCaixasSugerida:alloc.cxTotal,
-      hrsAlocadas:      parseFloat(hrsSemana1.toFixed(2)),
-      hrsAlocadasTotal: parseFloat(alloc.hrsTotal.toFixed(2)),
-      cxAlocadas:       cxSemana1,
-      cxAlocadasTotal:  alloc.cxTotal,
-      semanas:          alloc.semanas,       // [cx_s1, cx_s2, cx_s3, cx_s4]
-      detalhes:         alloc.detalhes,      // [[{maq,cx,hrs,pcMin},...], ...] por semana — usado no apply
-      pctMaquina:       pctMaquina,
+      prod:              c.prod,
+      cod:               c.cod,
+      maquina:           maqPrincipal,
+      maquinasUsadas:    Object.keys(alloc.maquinas),
+      pc_min:            pcMinPrincipal,
+      unid:              c.unid,
+      estoque:           c.estoque,
+      cobAtual:          c.cobAtual,
+      cobComProg:        c.cobComProg,
+      jaProgTotal:       c.jaProgTotal || 0,
+      jaProgPorSemana:   c.jaProgPorSemana || [0,0,0,0],
+      saldoVirada:       c.saldoVirada || 0,
+      necessidadeProxMes:c.necessidadeProxMes || 0,
+      demandaDiaria:     c.demandaDiaria,
+      demandaSemanal:    c.demandaSemanal,
+      qntCaixasSugerida: alloc.cxTotal,       // necessidade total calculada
+      cxMaxPorInsumos:   cxMaxPorInsumos,      // máximo que os insumos permitem (Fix 3)
+      modoInsumo:        modoInsumo,
+      hrsAlocadas:       parseFloat(hrsSemana1.toFixed(2)),
+      hrsAlocadasTotal:  parseFloat(hrsAlocTotalFinal.toFixed(2)),
+      cxAlocadas:        semanasFinal[0] || 0, // semana 1 (já ajustada pelo modo)
+      cxAlocadasTotal:   cxAlocadasFinal,      // total 4 semanas (já ajustado)
+      semanas:           semanasFinal,          // [cx_s1..s4] ajustados
+      detalhes:          detalhesFinal,         // por semana × máquina ajustados
+      pctMaquina:        pctMaquina,
       cobProjetada,
       diasDist,
-      risco:            c.risco,
-      motivo:           motivoFinal,
+      risco:             c.risco,
+      motivo:            motivoFinal,
       insumosStatus,
       insumosOk,
       insumosFaltando,
       temFichasTecnica,
-      velocidadeOrigem: 'equilibrado'
+      velocidadeOrigem:  'equilibrado'
     });
   }
 
@@ -11529,17 +11593,25 @@ function renderProgAutomaticaResultado(){
               ? `<div style="font-size:9px;color:var(--text3);margin-top:2px">+ ${maqExtra.join(', ')}</div>`
               : '';
 
-            // Badge de insumos
+            // Badge de insumos — Fix 3: mostrar cxMaxPorInsumos quando em modo B
+            const modoInsumoAtivo = document.querySelector('input[name="pa-modo-insumo"]:checked')?.value || 'total';
             let insBadge = '';
             if(!p.temFichasTecnica){
               insBadge = `<span style="background:rgba(255,179,0,.12);color:var(--warn);padding:2px 6px;border-radius:4px;font-size:10px">Sem ficha</span>`;
             } else if(!insumosEstoqueData.length){
               insBadge = `<span style="background:rgba(255,255,255,.06);color:var(--text3);padding:2px 6px;border-radius:4px;font-size:10px">Sem estoque MP</span>`;
             } else if(!p.insumosOk){
-              insBadge = `<span style="cursor:pointer;background:rgba(255,71,87,.2);color:var(--red);padding:2px 7px;border-radius:4px;font-size:10px;font-weight:700" onclick="paToggleInsumos('pa-ins-${maq}-${pi}')">⚠️ Falta ▾</span>`;
+              const maxTag = p.cxMaxPorInsumos != null
+                ? `<div style="font-size:9px;color:var(--text3);margin-top:1px">máx ${p.cxMaxPorInsumos}cx com insumos</div>` : '';
+              insBadge = `<div><span style="cursor:pointer;background:rgba(255,71,87,.2);color:var(--red);padding:2px 7px;border-radius:4px;font-size:10px;font-weight:700" onclick="paToggleInsumos('pa-ins-${maq}-${pi}')">⚠️ Falta ▾</span>${maxTag}</div>`;
             } else {
               insBadge = `<span style="cursor:pointer;background:rgba(46,201,122,.1);color:var(--green);padding:2px 7px;border-radius:4px;font-size:10px" onclick="paToggleInsumos('pa-ins-${maq}-${pi}')">✅ OK ▾</span>`;
             }
+
+            // Fix 3: indicador de limitação por insumos (Opção B)
+            const limitadoBadge = (modoInsumoAtivo === 'limitado' && p.cxMaxPorInsumos != null && p.cxMaxPorInsumos < (p.qntCaixasSugerida||p.cxAlocadasTotal))
+              ? `<div style="font-size:9px;color:var(--warn);margin-top:2px">⚡ Limitado: ${p.cxMaxPorInsumos}cx → ${p.cxAlocadasTotal}cx</div>`
+              : '';
 
             // Detalhes de insumos (colapsável)
             let insDetail = '';
@@ -11583,14 +11655,19 @@ function renderProgAutomaticaResultado(){
                 <div style="font-weight:600;font-size:12px">${p.prod}</div>
                 <div style="font-size:10px;color:var(--text3);font-family:'JetBrains Mono',monospace">Cód: ${p.cod||'—'}</div>
                 ${maqExtraTag}
+                ${limitadoBadge}
               </td>
               <td style="max-width:180px;white-space:normal;line-height:1.5;font-size:11px">${p.motivo}</td>
               <td style="font-family:'JetBrains Mono',monospace;font-size:11px">${p.estoque != null ? p.estoque.toLocaleString('pt-BR') : '—'}</td>
               <td style="color:${cobColor};font-weight:700">${p.cobAtual}d</td>
               <td style="font-family:'JetBrains Mono',monospace;font-size:11px">${p.demandaSemanal}</td>
               <td style="color:var(--cyan);font-weight:700;font-size:13px">${p.cxAlocadas} cx</td>
-              <td style="color:var(--purple);font-weight:600;font-size:12px">${p.cxAlocadasTotal||p.cxAlocadas} cx</td>
-              <td style="font-family:'JetBrains Mono',monospace;font-size:11px">${fmtHrs(p.hrsAlocadas)}</td>
+              <td style="color:var(--purple);font-weight:600;font-size:12px">
+                ${p.cxAlocadasTotal||p.cxAlocadas} cx
+                ${(p.qntCaixasSugerida && p.qntCaixasSugerida !== p.cxAlocadasTotal)
+                  ? `<div style="font-size:9px;color:var(--text3)">necessário: ${p.qntCaixasSugerida}cx</div>` : ''}
+              </td>
+              <td style="font-family:'JetBrains Mono',monospace;font-size:11px">${fmtHrs(p.hrsAlocadasTotal||p.hrsAlocadas)}</td>
               <td>
                 <span style="color:${p.pctMaquina>50?'var(--warn)':'var(--text2)'}">${p.pctMaquina}%</span>
                 <div class="cov-bar-track" style="margin-top:3px"><div class="cov-bar-fill" style="width:${Math.min(100,p.pctMaquina)}%;background:${p.pctMaquina>50?'var(--warn)':'var(--cyan)'}"></div></div>
