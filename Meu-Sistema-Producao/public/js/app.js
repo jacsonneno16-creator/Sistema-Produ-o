@@ -9396,9 +9396,16 @@ function impSaveInsumosEstoque(){ localStorage.setItem('imp_insumos_estoque', JS
 function getEstoqueInsumo(nomeInsumo){
   const norm = s => (s||'').toUpperCase().trim().replace(/\s+/g,' ');
   const ni = norm(nomeInsumo);
-  const found = insumosEstoqueData.find(x => norm(x.insumo) === ni)
-             || insumosEstoqueData.find(x => norm(x.insumo).includes(ni.substring(0,20)) || ni.includes(norm(x.insumo).substring(0,20)));
-  return found ? (found.quantidade||0) : null; // null = não encontrado
+  // 1. Match exato (prioridade máxima)
+  const exact = insumosEstoqueData.find(x => norm(x.insumo) === ni);
+  if(exact) return exact.quantidade || 0;
+  // 2. Match parcial conservador: um nome deve estar INTEIRAMENTE contido no outro
+  //    (evita falsos positivos por prefixo de 20 chars)
+  const partial = insumosEstoqueData.find(x => {
+    const xn = norm(x.insumo);
+    return xn.length >= 10 && ni.length >= 10 && (xn.includes(ni) || ni.includes(xn));
+  });
+  return partial ? (partial.quantidade || 0) : null; // null = não encontrado
 }
 
 function impAddHistorico(tipo, qtd, nome){
@@ -9724,14 +9731,16 @@ function renderSaldoInsumos(){
   // Monta tabela
   const rows = insumosEstoqueData.map(ins => {
     const consumo = consumoMap[ins.insumo]?.total || 0;
-    // Busca consumo por match parcial também
+    // Busca consumo por match parcial se não encontrou exato
     let consumoFinal = consumo;
     if(!consumo){
       const norm = s => (s||'').toUpperCase().trim();
       const ni = norm(ins.insumo);
+      // Usar apenas o PRIMEIRO match para evitar soma duplicada
       for(const [k,v] of Object.entries(consumoMap)){
         if(norm(k).includes(ni.substring(0,20)) || ni.includes(norm(k).substring(0,20))){
           consumoFinal += v.total;
+          break; // parar no primeiro match — somar mais de um causaria duplicidade
         }
       }
     }
