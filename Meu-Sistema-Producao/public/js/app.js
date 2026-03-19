@@ -2134,7 +2134,13 @@ async function saveForm(){
     obs:document.getElementById('f-obs').value.trim(),
     updatedAt:new Date().toISOString()
   };
-  if(eid) obj.id=eid;
+  if(eid){
+    obj.id=eid;
+  } else {
+    // Novo registro: sortOrder baseado no timestamp garante que ele fique
+    // no final da fila da máquina, respeitando a ordem de inserção.
+    obj.sortOrder = Date.now();
+  }
 
   try {
     await dbPut(obj);
@@ -2868,14 +2874,18 @@ function renderGanttSemanal(){
 
     let firstRowOfMaq=true;
 
-    // ── CONSOLIDAR por produto: agrupar todos os entries do mesmo produto
-    // em uma única entrada antes de renderizar — 1 linha por produto por máquina.
+    // ── CONSOLIDAR por produto: agrupar entries do mesmo produto+obs em uma linha.
+    // Registros com obs diferente (ex: Nacional vs Exportação) ficam em linhas separadas.
     const prodMap = {};
     for(const entry of entries){
-      const pk = (entry.rec.produto || '').trim().toLowerCase();
+      const obs = (entry.rec.obs || '').trim();
+      const prodNorm = (entry.rec.produto || '').trim().toLowerCase();
+      // Chave inclui obs para separar linhas com mesmo produto mas destinos distintos
+      const pk = prodNorm + '||' + obs.toLowerCase();
       if(!prodMap[pk]){
         prodMap[pk] = {
           produto:    entry.rec.produto,
+          obs:        obs,
           maquina:    entry.rec.maquina,
           color:      colorMap[entry.rec.id],
           qntCaixas:  0,
@@ -2892,7 +2902,7 @@ function renderGanttSemanal(){
     const prodEntries = Object.values(prodMap);
 
     for(const prodEntry of prodEntries){
-      const { produto, maquina: recMaq, color, qntCaixas, setupMin, segments, recs } = prodEntry;
+      const { produto, obs, maquina: recMaq, color, qntCaixas, setupMin, segments, recs } = prodEntry;
 
       // Calcular horas de produção totais (soma de todos os segmentos)
       const prodHrs = segments.reduce((a, sg) => a + (sg.hrsNoDia || 0), 0);
@@ -2903,8 +2913,9 @@ function renderGanttSemanal(){
       // Máquina col
       html+=`<div class="g-col-maq"><span class="g-col-maq-txt">${recMaq}</span></div>`;
 
-      // Produto label col
-      html+=`<div class="g-label"><strong title="${produto}">${produto}</strong></div>`;
+      // Produto label col — mostra obs abaixo do nome se preenchida (ex: Nacional / Exportação)
+      const obsHtml = obs ? `<div style="font-size:9px;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px" title="${obs}">${obs}</div>` : '';
+      html+=`<div class="g-label"><strong title="${produto}${obs?' — '+obs:''}">${produto}</strong>${obsHtml}</div>`;
 
       // Qtd cx col — soma de todos os registros
       html+=`<div class="g-col-qty"><div class="g-col-qty-txt">${qntCaixas}<br><span style="font-size:9px;color:var(--text3);font-weight:400">cx</span></div></div>`;
@@ -2957,9 +2968,10 @@ function renderGanttSemanal(){
             const cx=seg.caixasNoDia;
             const hrsLabel=fmtHrs(seg.hrsNoDia);
             const turnoTip=seg.turnoLabel?` · ${seg.turnoLabel}`:'';
+            const obsTip=obs?` — ${obs}`:'';
             html+=`<div class="g-bar" style="left:${leftPct}%;width:${widthPct}%;background:${color};opacity:0.9;position:absolute;top:15%;height:70%"
-              title="${produto}${turnoTip} · ${cx} cx · ${hrsLabel}">
-              <div class="g-bar-tip">${produto.substring(0,40)}<br>${cx} cx · ${hrsLabel}${seg.turnoLabel?' · '+seg.turnoLabel:''}</div>
+              title="${produto}${obsTip}${turnoTip} · ${cx} cx · ${hrsLabel}">
+              <div class="g-bar-tip">${produto.substring(0,40)}${obs?'<br><span style=\"font-size:9px;opacity:.8\">'+obs+'</span>':''}<br>${cx} cx · ${hrsLabel}${seg.turnoLabel?' · '+seg.turnoLabel:''}</div>
             </div>`;
           });
           html+=`</div>`;
