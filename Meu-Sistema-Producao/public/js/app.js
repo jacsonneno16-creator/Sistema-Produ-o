@@ -2786,9 +2786,10 @@ function renderGanttSemanal(){
       <span style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block">${r.produto.substring(0,30)}</span>
     </div>`).join('');
 
-  // COL WIDTHS
-  const MAQ_W=72, LABEL_W=320, QTY_W=48, TEMPO_W=52, SETUP_W=52, TOTMAQ_W=68, DQTY_W=36;
-  const gridCols=`${MAQ_W}px ${LABEL_W}px ${QTY_W}px ${TEMPO_W}px ${SETUP_W}px ${TOTMAQ_W}px repeat(7,1fr) repeat(7,${DQTY_W}px)`;
+  // COL WIDTHS — LABEL_W é ajustável pelo usuário (salvo no localStorage)
+  const MAQ_W=72, QTY_W=48, TEMPO_W=52, SETUP_W=52, TOTMAQ_W=68, OBS_W=140, DQTY_W=36;
+  const LABEL_W = parseInt(localStorage.getItem('gantt-label-width') || '280');
+  const gridCols=`${MAQ_W}px ${LABEL_W}px ${QTY_W}px ${TEMPO_W}px ${SETUP_W}px ${TOTMAQ_W}px ${OBS_W}px repeat(7,1fr) repeat(7,${DQTY_W}px)`;
 
   // Pre-calculate total SCHEDULED hours per machine for THIS WEEK only
   // Uses the segments from buildSchedule which already distribute by shift block
@@ -2818,11 +2819,16 @@ function renderGanttSemanal(){
   // ── Header row ──
   html+=`<div class="gantt-head-row" style="grid-template-columns:${gridCols}">
     <div class="g-head-label" style="font-size:9px">Máquina</div>
-    <div class="g-head-label">Produto</div>
+    <div class="g-head-label" style="position:relative" id="gantt-col-produto">Produto
+      <div id="gantt-label-resizer" style="position:absolute;right:0;top:0;width:6px;height:100%;cursor:col-resize;display:flex;align-items:center;justify-content:center;z-index:10" title="Arraste para redimensionar">
+        <div style="width:2px;height:60%;background:var(--border);border-radius:2px"></div>
+      </div>
+    </div>
     <div class="g-head-label" style="font-size:9px">Qtd<br>cx</div>
     <div class="g-head-label" style="font-size:9px">Tempo<br>h</div>
     <div class="g-head-label" style="font-size:9px">Set Up<br>h</div>
-    <div class="g-head-label" style="font-size:9px">H.<br>Prog.</div>`;
+    <div class="g-head-label" style="font-size:9px">H.<br>Prog.</div>
+    <div class="g-head-label" style="font-size:9px">Destino /<br>Ref.</div>`;
   days.forEach(d=>{
     const isToday=dateStr(d)===today;
     const isWknd=hoursOnDay(d)===0;
@@ -2913,9 +2919,8 @@ function renderGanttSemanal(){
       // Máquina col
       html+=`<div class="g-col-maq"><span class="g-col-maq-txt">${recMaq}</span></div>`;
 
-      // Produto label col — mostra obs abaixo do nome se preenchida (ex: Nacional / Exportação)
-      const obsHtml = obs ? `<div style="font-size:9px;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px" title="${obs}">${obs}</div>` : '';
-      html+=`<div class="g-label"><strong title="${produto}${obs?' — '+obs:''}">${produto}</strong>${obsHtml}</div>`;
+      // Produto label col
+      html+=`<div class="g-label"><strong title="${produto}${obs?' — '+obs:''}">${produto}</strong></div>`;
 
       // Qtd cx col — soma de todos os registros
       html+=`<div class="g-col-qty"><div class="g-col-qty-txt">${qntCaixas}<br><span style="font-size:9px;color:var(--text3);font-weight:400">cx</span></div></div>`;
@@ -2935,6 +2940,11 @@ function renderGanttSemanal(){
       const weekProgTitle=firstRowOfMaq?`Programado: ${fmtHrs(maqTotH)} / Disponível: ${maqCapH}h`:'';
       html+=`<div style="display:flex;align-items:center;justify-content:center;border-left:2px solid var(--border2);background:var(--s1);font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:700;color:${firstRowOfMaq?weekCapColor:'var(--text4)'};padding:4px 2px;text-align:center" title="${weekProgTitle}">${weekProgStr}</div>`;
       firstRowOfMaq=false;
+
+      // Obs / Destino col
+      html+=`<div style="display:flex;align-items:center;border-left:1px solid var(--border);background:var(--s1);padding:4px 6px;overflow:hidden">
+        ${obs ? `<span style="font-size:10px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;width:100%;display:block" title="${obs}">${obs}</span>` : ''}
+      </div>`;
 
       // ── Day bar cells: render per-shift bars ──
       for(let di=0;di<7;di++){
@@ -3002,6 +3012,35 @@ function renderGanttSemanal(){
 
   document.getElementById('gantt-table').innerHTML=html;
   document.getElementById('gantt-summary').innerHTML='';
+
+  // ── Resize da coluna Produto do Gantt ──
+  (function initGanttLabelResizer(){
+    const resizer = document.getElementById('gantt-label-resizer');
+    if(!resizer) return;
+    resizer.addEventListener('mousedown', function(e){
+      e.preventDefault();
+      const startX = e.clientX;
+      const startW = parseInt(localStorage.getItem('gantt-label-width') || '280');
+      resizer.querySelector('div').style.background = 'var(--cyan)';
+      function onMove(ev){
+        const delta = ev.clientX - startX;
+        const newW = Math.max(120, Math.min(520, startW + delta));
+        localStorage.setItem('gantt-label-width', newW);
+        const MAQ_W=72, QTY_W=48, TEMPO_W=52, SETUP_W=52, TOTMAQ_W=68, OBS_W=140, DQTY_W=36;
+        const newGrid=`${MAQ_W}px ${newW}px ${QTY_W}px ${TEMPO_W}px ${SETUP_W}px ${TOTMAQ_W}px ${OBS_W}px repeat(7,1fr) repeat(7,${DQTY_W}px)`;
+        document.querySelectorAll('.gantt-row, .gantt-head-row').forEach(el=>{
+          el.style.gridTemplateColumns = newGrid;
+        });
+      }
+      function onUp(){
+        resizer.querySelector('div').style.background = 'var(--border)';
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+      }
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+  })();
 }
 
 // ================================================================
