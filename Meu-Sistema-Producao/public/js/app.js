@@ -10383,10 +10383,23 @@ function gerarProgAutomarica(){
     });
 
     // Item 2 — produção programada por semana (entra no estoque na semana certa)
-    // si=0: já contabilizado em naoPontadaAtual
-    // si>0: entra na simulação quando o loop chegar naquela semana
+    // ─────────────────────────────────────────────────────────────────────────
+    // REGRA FUNDAMENTAL: tudo já programado (records não-Concluído) é estoque
+    // futuro garantido. O sistema NUNCA ignora o que já foi programado.
+    //
+    //  si=0 (semana atual):
+    //    → Registros não-Concluídos já entram via naoPontadaAtual (restante a produzir).
+    //    → Registros Concluídos já estão no estoqueAtual — não somar.
+    //    → jaProgPorSemana[0] = 0 (evitar dupla contagem).
+    //
+    //  si>0 (semanas futuras):
+    //    → Todos os registros não-Concluídos programados para aquela semana
+    //      são estoque futuro GARANTIDO. Subtrair o que já foi apontado
+    //      (registro pode ter produção parcial já feita nesta semana).
+    //    → Nunca recalcular ignorando esse valor.
+    // ─────────────────────────────────────────────────────────────────────────
     const jaProgPorSemana = [0, 0, 0, 0];
-    for(let si = 0; si < 4; si++){
+    for(let si = 1; si < 4; si++){   // si=0 fica zero (já em naoPontadaAtual)
       const sp      = semanasPA[si];
       const wMonStr = dateStr(sp.monday);
       const wSunStr = dateStr(sp.sunday);
@@ -10397,12 +10410,11 @@ function gerarProgAutomarica(){
         if(!mesmoProd) return;
         const dt = r.dtDesejada || r.dtSolicitacao || '';
         if(dt < wMonStr || dt > wSunStr) return;
-        if(si === 0){
-          // Semana atual já está em naoPontadaAtual; aqui não soma de novo
-          // (para não duplicar)
-        } else {
-          jaProgPorSemana[si] += (r.qntCaixas || 0);
-        }
+        // Somar apenas o saldo restante (qntCaixas - já apontado), nunca o total bruto,
+        // para evitar inflacionar o estoque quando houve produção parcial antecipada.
+        const jaApontado = (typeof calcularTotalProduzido === 'function')
+          ? calcularTotalProduzido(r.id) : 0;
+        jaProgPorSemana[si] += Math.max(0, (r.qntCaixas || 0) - jaApontado);
       });
     }
     const jaProgTotal = jaProgPorSemana.reduce((a, v) => a + v, 0) + naoPontadaAtual;
@@ -10418,12 +10430,25 @@ function gerarProgAutomarica(){
     const demandaProxMes      = demandaDiaria * 30;
     const necessidadeProxMes  = Math.max(0, demandaProxMes - saldoVirada);
 
-    // Cobertura considerando tudo previsto (para filtrar candidatos)
+    // ── REGRA DE SEGURANÇA: teto máximo de estoque ───────────────────
+    // Se o estoque projetado (atual + tudo já programado) já cobre além
+    // do teto configurado → NÃO programar mais produção para este produto.
+    // Isso evita o efeito "estoque explode" quando se recalcula sem respeitar
+    // o que já foi programado nas semanas anteriores.
+    //
+    // cobComProg = (estoque_atual + naoPontada_atual + todo_prog_futuro) / demandaDiaria
+    //           = cobertura REAL considerando TUDO que já existe/está planejado
+    const estoqueProjetadoTotal = estoque + jaProgTotal; // estoque + naoPontada + semanas futuras
     const cobComProg = demandaDiaria > 0
-      ? (estoque + jaProgTotal) / demandaDiaria
+      ? estoqueProjetadoTotal / demandaDiaria
       : 999;
     const cobTetoProd = (metaCoberturaDias > 0) ? metaCoberturaDias : cobAlvo;
+
+    // VALIDAÇÃO OBRIGATÓRIA: nunca programar se já está acima do teto
+    // Limite máximo defensivo: 2× o teto (ex: 30 dias → bloqueia acima de 60 dias)
+    const limiteMaxSeguranca = cobTetoProd * 2;
     if(cobComProg >= cobTetoProd && cobComProg < 900) return;
+    if(cobComProg >= limiteMaxSeguranca) return; // dupla proteção anti-excesso
 
     // estoqueSim inicia com estoque atual + não-apontado da semana corrente.
     // Produção de semanas futuras (jaProgPorSemana[1..3]) será adicionada
@@ -10769,10 +10794,23 @@ function gerarProgAutomarica(){
 
     // ITEM 2 FIX — injetar produção já programada desta semana no estoque simulado
     // jaProgPorSemana[0] já está em estoqueSimInicial; semanas 1-3 entram aqui.
+    // IMPORTANTE: após injetar, verificar se produto já atingiu o teto máximo.
+    // Se estoqueSim já >= cobTeto × demandaDiaria → marcar _semanaEntry = -1
+    // para que o loop principal não aloque mais produção desnecessária.
     if(sem > 0){
       candidates.forEach(c => {
         const cxProg = (c.jaProgPorSemana && c.jaProgPorSemana[sem]) || 0;
         if(cxProg > 0) c.estoqueSim += cxProg;
+
+        // REGRA DE SEGURANÇA: após injetar prod. programada, verificar teto
+        if(c.demandaDiaria > 0){
+          const cobTeto = (c.metaCoberturaDias > 0) ? c.metaCoberturaDias : cobAlvo;
+          const cobAtualSim = c.estoqueSim / c.demandaDiaria;
+          // Se já passou do teto, não programar mais nesta e nas próximas semanas
+          if(cobAtualSim >= cobTeto){
+            c._semanaEntry = -1; // bloquear alocação futura
+          }
+        }
       });
     }
 
