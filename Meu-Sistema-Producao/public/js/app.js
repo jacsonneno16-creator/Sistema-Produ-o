@@ -2439,407 +2439,379 @@ function weekHoursMaq(monday, maq){
 //   turnoBlkIdx  = index in activeBlocks[] for that day
 //   usedInBlkMin = minutes already consumed in the current block
 function buildSchedule(monday){
-  const days=getWeekDays(monday);
-  const mondayStr=dateStr(days[0]);
-  const sundayStr=dateStr(days[6]);
+  const days      = getWeekDays(monday);
+  const mondayStr = dateStr(days[0]);
+  const sundayStr = dateStr(days[6]);
 
-  // ITEM 4 FIX — overflow real no Gantt.
-  //
-  // Um registro de semana anterior só entra como overflow quando há produção
-  // genuinamente não concluída: o tempo restante de produção (qntCaixas -
-  // totalProduzido) exige mais horas do que havia disponível até o fim da
-  // semana original.
-  //
-  // Regra:
-  //  • dtDesejada dentro desta semana → sempre inclui
-  //  • dtDesejada ANTES desta semana:
-  //      - status Concluído → nunca inclui
-  //      - totalProduzido >= qntCaixas → concluído na prática → não inclui
-  //      - remainingCx > 0 → overflow real → inclui (com caixas ajustadas)
-  //
-  // Isso elimina a repetição de itens que foram planejados mas não têm
-  // produção restante, ou que seriam reschedulados numa nova semana própria.
-
-  const ativos=records.filter(r=>{
-    if(r.status==='Concluído') return false;
-    const startDate=r.dtDesejada||r.dtSolicitacao;
-    if(!startDate) return false;
-    if(startDate>=mondayStr && startDate<=sundayStr) return true;
-    if(startDate<mondayStr){
-      // Verificar se ainda há produção restante (overflow real)
-      const totalProd = (typeof calcularTotalProduzido==='function')
+  // ── FILTRO DE REGISTROS ATIVOS ────────────────────────────────────────────
+  // • dtDesejada nesta semana → sempre inclui
+  // • dtDesejada antes desta semana → inclui só se remainingCx > 0 (overflow real)
+  // • status Concluído → nunca inclui
+  const ativos = records.filter(r => {
+    if (r.status === 'Concluído') return false;
+    const startDate = r.dtDesejada || r.dtSolicitacao;
+    if (!startDate) return false;
+    if (startDate >= mondayStr && startDate <= sundayStr) return true;
+    if (startDate < mondayStr) {
+      const totalProd = (typeof calcularTotalProduzido === 'function')
         ? calcularTotalProduzido(r.id) : 0;
-      const remaining = (r.qntCaixas||0) - totalProd;
-      return remaining > 0; // só overflow real
+      return (r.qntCaixas || 0) - totalProd > 0;
     }
     return false;
   });
 
-  // Group by machine, respect sortOrder field
-  const byMaq={};
-  MAQUINAS.forEach(m=>byMaq[m]=[]);
-  ativos.forEach(r=>{
-    if(!byMaq[r.maquina]) byMaq[r.maquina]=[];
+  // ── HELPERS ───────────────────────────────────────────────────────────────
+
+  function getBlocks(dayDate, maq) {
+    if (typeof getActiveShiftBlocks === 'function')
+      return getActiveShiftBlocks(dayDate, maq);
+    const hrs = hoursOnDayMaq(dayDate, maq);
+    if (hrs <= 0) return [];
+    return [{ turnoIdx: 0, label: 'T1', inicioMin: 0, fimMin: hrs * 60 }];
+  }
+
+  // Minutos totais disponíveis de uma máquina em toda a semana
+  function capSemanaMaq(maq) {
+    return days.reduce((sum, d) => {
+      return sum + getBlocks(d, maq).reduce((s, blk) => s + blk.fimMin - blk.inicioMin, 0);
+    }, 0);
+  }
+
+  // ── FASE 1 — PRÉ-ALOCAÇÃO GLOBAL ─────────────────────────────────────────
+  //
+  // Objetivos desta fase:
+  //   A. Agrupar registros do MESMO PRODUTO na MESMA MÁQUINA em um único bloco
+  //      contínuo → evitar fragmentação e trocas de produto desnecessárias.
+  //   B. Ordenar os blocos por prioridade (urgência → sortOrder) e não por
+  //      ordem de chegada — produtos críticos ficam primeiro.
+  //   C. Calcular a capacidade total usada por máquina e GARANTIR que nunca
+  //      ultrapasse 100% → cortar excedente antes de gerar segmentos visuais.
+  //   D. Usar balanceamento de carga entre dias para escolher dia de início
+  //      em vez de sempre começar na segunda-feira.
+
+  // Agrupa registros por (maquina, produto) para produção contínua
+  const byMaq = {};
+  MAQUINAS.forEach(m => byMaq[m] = []);
+
+  ativos.forEach(r => {
+    if (!byMaq[r.maquina]) byMaq[r.maquina] = [];
     byMaq[r.maquina].push(r);
   });
-  for(const m of MAQUINAS){
-    byMaq[m].sort((a,b)=>{
-      const sa=a.sortOrder!=null?a.sortOrder:a.id;
-      const sb=b.sortOrder!=null?b.sortOrder:b.id;
-      return sa-sb;
-    });
-  }
 
-  // Helper: get active shift blocks for a machine on a given day
-  function getBlocks(dayDate, maq){
-    if(typeof getActiveShiftBlocks==='function'){
-      return getActiveShiftBlocks(dayDate, maq);
+  // Para cada máquina: consolidar registros do mesmo produto em bloco contínuo
+  // e calcular cxRestante (respeitando o que já foi produzido)
+  const blocosPorMaq = {}; // { maq: [ { recs:[], produto, cxTotal, pcMin, unid, tempoMin, dtDesejada, sortOrder, isOverflow } ] }
+
+  for (const maq of MAQUINAS) {
+    const recs = byMaq[maq];
+    if (!recs.length) { blocosPorMaq[maq] = []; continue; }
+
+    // Calcular cxRestante por registro
+    const recsComRestante = recs.map(r => {
+      const isOvf = !!(r.dtDesejada && r.dtDesejada < mondayStr);
+      const totalProd = (isOvf && typeof calcularTotalProduzido === 'function')
+        ? calcularTotalProduzido(r.id) : 0;
+      const cxRestante = isOvf ? Math.max(0, (r.qntCaixas || 0) - totalProd) : (r.qntCaixas || 0);
+      return { r, isOvf, cxRestante };
+    }).filter(x => x.cxRestante > 0);
+
+    // Consolidar por produto: somar cxRestante, manter dtDesejada do primeiro
+    // registro (mais antigo / mais prioritário), menor sortOrder
+    const prodMap = new Map(); // chave: produto normalizado
+    for (const { r, isOvf, cxRestante } of recsComRestante) {
+      const key = (r.produto || '').trim().toLowerCase();
+      if (!prodMap.has(key)) {
+        const p = getProdInfo(r);
+        prodMap.set(key, {
+          recs:       [],
+          produto:    r.produto,
+          prodCod:    r.prodCod,
+          pcMin:      p.pc_min || 0,
+          unid:       p.unid   || 1,
+          cxTotal:    0,
+          dtDesejada: r.dtDesejada || null,
+          sortOrder:  r.sortOrder != null ? r.sortOrder : r.id,
+          isOverflow: isOvf
+        });
+      }
+      const bloco = prodMap.get(key);
+      bloco.recs.push(r);
+      bloco.cxTotal += cxRestante;
+      // Menor sortOrder prevalece (mais prioritário)
+      const so = r.sortOrder != null ? r.sortOrder : r.id;
+      if (so < bloco.sortOrder) bloco.sortOrder = so;
+      // dtDesejada mais antiga prevalece (registro original)
+      if (r.dtDesejada && (!bloco.dtDesejada || r.dtDesejada < bloco.dtDesejada))
+        bloco.dtDesejada = r.dtDesejada;
     }
-    // Fallback: treat whole jornada as single block
-    const hrs=hoursOnDayMaq(dayDate, maq);
-    if(hrs<=0) return [];
-    return [{turnoIdx:0, label:'T1', inicioMin:0, fimMin:hrs*60}];
+
+    // Calcular tempoMin por bloco
+    const blocos = [];
+    for (const bloco of prodMap.values()) {
+      if (!bloco.pcMin || bloco.cxTotal <= 0) continue;
+      const unidTotal = bloco.cxTotal * bloco.unid;
+      bloco.tempoMin  = unidTotal / bloco.pcMin;
+      bloco.cxPerMin  = bloco.cxTotal / bloco.tempoMin;
+      blocos.push(bloco);
+    }
+
+    // ── ORDENAR BLOCOS POR PRIORIDADE ─────────────────────────────────────
+    // Critérios:
+    //   1. Overflow (semanas anteriores) → vai primeiro (já atrasado)
+    //   2. Produtos com dtDesejada fixa nesta semana → respeitam o dia
+    //   3. sortOrder crescente (planejamento definiu prioridade)
+    blocos.sort((a, b) => {
+      if (a.isOverflow !== b.isOverflow) return a.isOverflow ? -1 : 1;
+      return a.sortOrder - b.sortOrder;
+    });
+
+    // ── GARANTIR CAPACIDADE ≤ 100% ────────────────────────────────────────
+    // Somar tempo total dos blocos. Se ultrapassar capSemana: truncar do
+    // final da fila (produtos de menor prioridade perdem tempo primeiro).
+    const capSem   = capSemanaMaq(maq);
+    let   usadoMin = 0;
+
+    for (const bloco of blocos) {
+      // Incluir setup entre blocos adjacentes (troca de produto)
+      let setupExtra = 0;
+      const idxBloco = blocos.indexOf(bloco);
+      if (idxBloco > 0) {
+        const prev = blocos[idxBloco - 1];
+        setupExtra = (typeof getSetupMin === 'function')
+          ? getSetupMin(maq, prev.produto, bloco.produto) : 0;
+      }
+
+      const tempoBlocoTotal = bloco.tempoMin + setupExtra;
+      const disponivel       = Math.max(0, capSem - usadoMin);
+
+      if (disponivel <= 0.001) {
+        bloco.tempoMin = 0; // sem espaço — overflow para próxima semana
+        bloco.cxTotal  = 0;
+        continue;
+      }
+
+      if (usadoMin + tempoBlocoTotal > capSem + 0.001) {
+        // Truncar: só cabe a diferença (descontar setup do disponível)
+        const dispProd     = Math.max(0, disponivel - setupExtra);
+        bloco.tempoMin     = dispProd;
+        bloco.setupExtra   = setupExtra;
+        bloco.cxTotal      = Math.floor(dispProd * bloco.cxPerMin);
+        usadoMin          += dispProd + setupExtra;
+      } else {
+        bloco.setupExtra   = setupExtra;
+        usadoMin          += tempoBlocoTotal;
+      }
+    }
+
+    blocosPorMaq[maq] = blocos.filter(b => b.tempoMin > 0.001 && b.cxTotal > 0);
   }
 
-  // Advance cursor to next valid block (skipping days/blocks with no availability)
-  function advanceCursor(cursor, days, maq){
-    while(cursor.dayIdx<7){
-      const blocks=getBlocks(days[cursor.dayIdx], maq);
-      if(cursor.blkIdx<blocks.length) return blocks; // valid
+  // ── FASE 2 — BALANCEAMENTO DE CARGA ENTRE DIAS ───────────────────────────
+  //
+  // Calcula carga total por dia em TODAS as máquinas (visão global da fábrica).
+  // Usado para distribuir os blocos de forma que a carga diária fique uniforme.
+  //
+  // cargaGlobal[dayIdx] = minutos totais de produção naquele dia (todas as maquinas)
+  // cargaMaq[maq][dayIdx] = minutos usados nesta máquina neste dia
+  const cargaGlobal = Array(7).fill(0);
+  const cargaMaqDia = {}; // { maq: Float32Array(7) }
+  MAQUINAS.forEach(m => { cargaMaqDia[m] = new Float32Array(7); });
+
+  // Escolhe o melhor dia de início para um bloco de uma máquina.
+  //
+  // Lógica:
+  //   • Considera apenas dias com capacidade > 0 para esta máquina
+  //   • Prefere dias onde o bloco cabe inteiro (menos fragmentação)
+  //   • Entre os dias candidatos: menor carga GLOBAL da fábrica naquele dia
+  //     (balanceamento entre máquinas diferentes)
+  //   • Empate: prefere dia mais adiantado na semana (sex > qui > qua > ter > seg)
+  //   • minDayIdx: não pode começar antes deste índice (respeita dtDesejada)
+  function escolherDiaInicioBal(maq, tempoMin, minDayIdx) {
+    const candidatos = [];
+    for (let d = minDayIdx; d < 7; d++) {
+      const capDia = getBlocks(days[d], maq).reduce((s, b) => s + b.fimMin - b.inicioMin, 0);
+      if (capDia <= 0) continue;
+      const usadoMaq = cargaMaqDia[maq][d];
+      const livreMaq = Math.max(0, capDia - usadoMaq);
+      if (livreMaq <= 0.001) continue;
+      candidatos.push({
+        d,
+        livreMaq,
+        cargaGlobal: cargaGlobal[d],
+        dow: days[d].getDay(),
+        cabeTudo: livreMaq >= tempoMin
+      });
+    }
+    if (!candidatos.length) return minDayIdx;
+
+    // Separar os que cabem inteiro dos que não cabem
+    const cabem = candidatos.filter(c => c.cabeTudo);
+    const pool  = cabem.length > 0 ? cabem : candidatos;
+
+    // Ordenar: menor carga global (equilíbrio da fábrica); empate → mais adiantado
+    pool.sort((a, b) => {
+      const delta = a.cargaGlobal - b.cargaGlobal;
+      if (Math.abs(delta) > 1) return delta; // menor carga global primeiro
+      return b.dow - a.dow; // mais adiantado na semana
+    });
+
+    return pool[0].d;
+  }
+
+  // ── FASE 3 — GERAÇÃO DE SEGMENTOS VISUAIS ────────────────────────────────
+  //
+  // Agora que sabemos QUAIS blocos existem, em qual ordem, e qual a capacidade
+  // real disponível, geramos os segmentos visuais para o Gantt.
+  //
+  // Para cada bloco (produto consolidado por máquina):
+  //   1. Escolher dia de início por balanceamento (não sequencial)
+  //   2. Consumir setup e produção bloco a bloco, atualizando cargaMaqDia e cargaGlobal
+  //   3. Registrar segmentos com startPct/endPct para renderização
+
+  function advanceCursor(cursor, maq) {
+    while (cursor.dayIdx < 7) {
+      const blocks = getBlocks(days[cursor.dayIdx], maq);
+      if (cursor.blkIdx < blocks.length) return blocks;
       cursor.dayIdx++;
-      cursor.blkIdx=0;
-      cursor.usedMin=0;
+      cursor.blkIdx  = 0;
+      cursor.usedMin = 0;
     }
     return null;
   }
 
-  const result={};
-
-  for(const maq of MAQUINAS){
-    const recs=byMaq[maq];
-    if(!recs.length){result[maq]=[];continue;}
-
-    // ── BALANCEAMENTO REAL POR DIA ────────────────────────────────────────────
-    //
-    // O modelo anterior usava um cursor global sequencial (seg → sex) que nunca
-    // voltava atrás, forçando todos os produtos a começar na segunda-feira.
-    //
-    // Novo modelo:
-    //   • cargaDia[d] = minutos já alocados (seg…dom) — atualizado a cada produto
-    //   • cada produto começa no dia com MENOR CARGA (não no primeiro livre)
-    //   • sem restrição de "não pode ser antes do cursor" — cada produto escolhe
-    //     o melhor dia independente, respeitando apenas dtDesejada fixa
-    //   • produtos com dtDesejada: respeitam o dia escolhido pelo planejamento
-    //   • overflow de semanas anteriores: aloca no dia mais livre disponível
-    //
-    // O cursor global ainda existe mas agora só serve para APPEND sequencial
-    // dentro do mesmo produto (quando o produto transborda para o dia seguinte).
-    // Entre produtos diferentes, o cursor é RESETADO para o melhor dia.
-
-    // cargaDia[dayIdx]: minutos comprometidos por dia para esta máquina.
-    // Cresce conforme produtos são alocados no loop abaixo.
-    const cargaDia = Array(7).fill(0);
-
-    // Recalcula cargaDia a partir do array scheduled (fonte de verdade)
-    function recalcCargaDia() {
-      cargaDia.fill(0);
-      for (const entry of scheduled) {
-        for (const seg of (entry.segments || []))
-          cargaDia[seg.dayIdx] += seg.useMin;
-        for (const seg of (entry.setupSegments || []))
-          cargaDia[seg.dayIdx] += seg.setupMin;
-      }
+  // Posiciona cursor no fim da carga já existente num dia
+  function posicionarCursorNoDia(cursor, maq, dayIdx) {
+    cursor.dayIdx  = dayIdx;
+    cursor.blkIdx  = 0;
+    cursor.usedMin = 0;
+    const jaUsado = cargaMaqDia[maq][dayIdx];
+    if (jaUsado <= 0.001) return;
+    let rest  = jaUsado;
+    const blks = getBlocks(days[dayIdx], maq);
+    for (let b = 0; b < blks.length && rest > 0.001; b++) {
+      const sz = blks[b].fimMin - blks[b].inicioMin;
+      if (rest >= sz - 0.001) { rest -= sz; cursor.blkIdx = b + 1; cursor.usedMin = 0; }
+      else                    { cursor.blkIdx = b; cursor.usedMin = rest; rest = 0; }
     }
+  }
 
-    // Escolhe o dayIdx com MENOR CARGA para iniciar um produto.
-    //
-    // minDayIdx: não considerar dias antes desse índice (respeitar dtDesejada
-    //            ou não retroceder dentro de um overflow já posicionado).
-    // tempoMin:  tempo total necessário (setup + prod) — usado para escolher
-    //            dias que caibam o produto inteiro quando possível.
-    //
-    // Critérios em ordem:
-    //   1. Dias onde o produto cabe inteiro (livre >= tempo): menor carga entre eles
-    //   2. Se não cabe em nenhum dia inteiro: dia com maior capacidade livre
-    //   3. Em empate de capacidade livre: prefere dia mais adiantado (sex > qui > qua > ter > seg)
-    //      — isso evita concentrar na segunda e distribui pela semana
-    function escolherDiaInicio(minDayIdx, tempoMin) {
-      recalcCargaDia();
+  const result = {};
 
-      // Calcular capacidade livre por dia
-      const livres = [];
-      for (let d = minDayIdx; d < 7; d++) {
-        const capMin = hoursOnDayMaq(days[d], maq) * 60;
-        if (capMin <= 0) continue;
-        const livre = Math.max(0, capMin - cargaDia[d]);
-        if (livre <= 0) continue;
-        livres.push({ d, capMin, livre, dow: days[d].getDay() });
+  for (const maq of MAQUINAS) {
+    const blocos = blocosPorMaq[maq] || [];
+    if (!blocos.length) { result[maq] = []; continue; }
+
+    const scheduled = [];
+
+    for (let bi = 0; bi < blocos.length; bi++) {
+      const bloco = blocos[bi];
+
+      // Determinar dia de início
+      let startDayIdx;
+      if (bloco.dtDesejada) {
+        const idx = days.findIndex(d => dateStr(d) === bloco.dtDesejada);
+        startDayIdx = idx >= 0 ? idx : escolherDiaInicioBal(maq, bloco.tempoMin + (bloco.setupExtra || 0), 0);
+      } else {
+        startDayIdx = escolherDiaInicioBal(maq, bloco.tempoMin + (bloco.setupExtra || 0), 0);
       }
 
-      if (!livres.length) return minDayIdx; // fallback: semana cheia
+      const cursor = { dayIdx: startDayIdx, blkIdx: 0, usedMin: 0 };
+      posicionarCursorNoDia(cursor, maq, startDayIdx);
 
-      // Caso 1: dias onde o produto cabe inteiro
-      const cabeTudo = livres.filter(x => x.livre >= tempoMin);
-      if (cabeTudo.length > 0) {
-        // Entre eles: menor carga (= mais livre); empate → mais adiantado na semana
-        cabeTudo.sort((a, b) => {
-          if (Math.abs(b.livre - a.livre) > 1) return b.livre - a.livre; // mais livre
-          return b.dow - a.dow; // mais adiantado (sex=5 > qui=4 > ... > seg=1)
+      // Pular dias sem jornada
+      while (cursor.dayIdx < 7 && hoursOnDayMaq(days[cursor.dayIdx], maq) === 0) {
+        cursor.dayIdx++; cursor.blkIdx = 0; cursor.usedMin = 0;
+      }
+
+      const segments      = [];
+      const setupSegments = [];
+      let remainSetupMin  = bloco.setupExtra || 0;
+      let remainProdMin   = bloco.tempoMin;
+      const cxPerMin      = bloco.cxPerMin;
+
+      const snap = { dayIdx: cursor.dayIdx, blkIdx: cursor.blkIdx, usedMin: cursor.usedMin };
+
+      // ── Consumir setup ───────────────────────────────────────────────────
+      while (remainSetupMin > 0.001 && snap.dayIdx < 7) {
+        const blocks = advanceCursor(snap, maq);
+        if (!blocks) break;
+        const blk        = blocks[snap.blkIdx];
+        const blkTotal   = blk.fimMin - blk.inicioMin;
+        const blkAvail   = blkTotal - snap.usedMin;
+        if (blkAvail <= 0.001) { snap.blkIdx++; snap.usedMin = 0; continue; }
+        const useMin     = Math.min(remainSetupMin, blkAvail);
+        setupSegments.push({
+          date: dateStr(days[snap.dayIdx]), dayIdx: snap.dayIdx,
+          turnoIdx: blk.turnoIdx, turnoLabel: blk.label, setupMin: useMin
         });
-        return cabeTudo[0].d;
+        cargaMaqDia[maq][snap.dayIdx] += useMin;
+        cargaGlobal[snap.dayIdx]      += useMin;
+        remainSetupMin -= useMin;
+        snap.usedMin   += useMin;
+        if (snap.usedMin >= blkTotal - 0.001) { snap.blkIdx++; snap.usedMin = 0; }
       }
 
-      // Caso 2: nenhum dia cabe tudo — maior capacidade livre (minimiza fragmentação)
-      livres.sort((a, b) => {
-        if (Math.abs(b.livre - a.livre) > 1) return b.livre - a.livre;
-        return b.dow - a.dow;
-      });
-      return livres[0].d;
-    }
+      // ── Consumir produção ────────────────────────────────────────────────
+      while (remainProdMin > 0.001 && snap.dayIdx < 7) {
+        const blocks = advanceCursor(snap, maq);
+        if (!blocks) break;
+        const blk        = blocks[snap.blkIdx];
+        const blkTotal   = blk.fimMin - blk.inicioMin;
+        const blkAvail   = blkTotal - snap.usedMin;
+        if (blkAvail <= 0.001) { snap.blkIdx++; snap.usedMin = 0; continue; }
 
-    // Cursor global: usado apenas para CONTINUAÇÃO dentro do mesmo produto
-    // (quando a produção transborda para o dia seguinte).
-    // É RESETADO antes de cada novo produto para o dia escolhido por escolherDiaInicio().
-    const cursor={dayIdx:0, blkIdx:0, usedMin:0};
-    const scheduled=[];
+        const useMin     = Math.min(remainProdMin, blkAvail);
+        const dayAvailHrs = hoursOnDayMaq(days[snap.dayIdx], maq);
+        const dayCapMin  = dayAvailHrs * 60;
+        const allBlks    = getBlocks(days[snap.dayIdx], maq);
+        let blkOffsetMin = 0;
+        for (let bi2 = 0; bi2 < snap.blkIdx; bi2++)
+          blkOffsetMin += allBlks[bi2].fimMin - allBlks[bi2].inicioMin;
+        const absStartMin = blkOffsetMin + snap.usedMin;
+        const startPct   = dayCapMin > 0 ? (absStartMin / dayCapMin) * 100 : 0;
+        const endPct     = dayCapMin > 0 ? ((absStartMin + useMin) / dayCapMin) * 100 : 0;
 
-    for(let ri=0;ri<recs.length;ri++){
-      const rec=recs[ri];
-      const p=getProdInfo(rec);
-      const pcMin=p.pc_min;
-      const unidPorCx=p.unid;
-      if(!pcMin){scheduled.push({rec,segments:[],setupMin:0,setupSegments:[]});continue;}
-
-      let setupMin=0;
-      if(ri>0) setupMin=getSetupMin(maq, recs[ri-1].produto, rec.produto);
-
-      const totalUnid=rec.qntUnid||(rec.qntCaixas*unidPorCx);
-
-      // OVERFLOW FIX: for records started before this week, ALWAYS compute
-      // remaining production using calcularTotalProduzido.
-      // Even if totalProduzido === 0 (record is Pendente but from a past week),
-      // we must schedule it from where it left off — i.e., from the beginning
-      // since nothing was produced yet, but we still use cxRestanteRec so that
-      // future weeks don't re-inflate the quantity.
-      const isOverflowRecord = !!(rec.dtDesejada && rec.dtDesejada < mondayStr);
-      const totalProduzidoRec = (isOverflowRecord && typeof calcularTotalProduzido==='function')
-        ? calcularTotalProduzido(rec.id) : 0;
-      // cxRestanteRec: how many boxes are still left to produce
-      const cxRestanteRec = isOverflowRecord
-        ? Math.max(0, (rec.qntCaixas||0) - totalProduzidoRec)
-        : (rec.qntCaixas||0);
-      // unidRestante: production time in units
-      const unidRestante = cxRestanteRec * unidPorCx;
-      if(unidRestante <= 0){
-        // Nothing left to produce — push an empty entry so the cursor doesn't advance
-        scheduled.push({rec, segments:[], setupMin:0, setupSegments:[], isOverflow:isOverflowRecord, cxRestante:0});
-        continue;
-      }
-      let remainProdMin = unidRestante / pcMin;
-      // For overflow records: no setup is charged again (it was already paid in the original week)
-      let remainSetupMin = isOverflowRecord ? 0 : setupMin;
-      const cxPerMin = cxRestanteRec / remainProdMin;
-
-      // ── LIMITAR ao que cabe na semana (capacidade real) ───────────────────
-      // Calcula minutos disponíveis na máquina da posição do cursor até domingo.
-      // Se remainProdMin > capacidade restante da semana: trunca.
-      // Isso garante que o Gantt NUNCA exibe quantidade que não cabe fisicamente.
-      // O excedente fica como "overflow" — aparecerá na próxima semana pelo
-      // mecanismo de overflow já existente (remainingCx > 0 em semanas futuras).
-      {
-        let capRestanteSemana = 0;
-        for (let d = cursor.dayIdx; d < 7; d++) {
-          const allBlks = getBlocks(days[d], maq);
-          for (let b = 0; b < allBlks.length; b++) {
-            const blk = allBlks[b];
-            const blkTotal = blk.fimMin - blk.inicioMin;
-            // Para o dia/bloco atual do cursor, descontar o já usado
-            const jaUsado = (d === cursor.dayIdx && b === cursor.blkIdx)
-              ? cursor.usedMin : (d === cursor.dayIdx && b < cursor.blkIdx ? blkTotal : 0);
-            capRestanteSemana += Math.max(0, blkTotal - jaUsado);
-          }
-        }
-        // Subtrair setup do cap disponível (setup consome antes da produção)
-        const capProdDisp = Math.max(0, capRestanteSemana - remainSetupMin);
-        if (remainProdMin > capProdDisp + 0.001) {
-          // Truncar: só produzir o que cabe
-          remainProdMin = capProdDisp;
-          // Não alterar cxRestanteRec nem cxPerMin — o overflow aparecerá
-          // na próxima semana com a quantidade restante calculada por calcularTotalProduzido
-        }
-      }
-
-      const segments=[];
-      const setupSegments=[];
-
-      // ── RESETAR cursor para o melhor dia de início deste produto ───────────
-      //
-      // Aqui está a mudança fundamental em relação ao modelo sequencial:
-      // o cursor NÃO herda a posição do produto anterior.
-      // Cada produto começa no dia com MENOR CARGA da máquina.
-      //
-      // Exceção: registros com dtDesejada dentro desta semana → respeitamos
-      // o dia escolhido pelo planejamento (usuário ou automação).
-      //
-      // Overflow de semanas anteriores: começa no dia mais livre (sem fixar dia).
-      //
-      {
-        const tempoTotal = remainProdMin + remainSetupMin;
-
-        if (rec.dtDesejada) {
-          const desejadaIdx = days.findIndex(d => dateStr(d) === rec.dtDesejada);
-
-          if (desejadaIdx >= 0) {
-            // dtDesejada DENTRO desta semana — respeitar o dia fixado
-            // Cursor aponta para esse dia; se esse dia já está parcialmente
-            // ocupado (outro produto terminou ali), continua de onde parou.
-            // Nunca retrocede abaixo de desejadaIdx.
-            cursor.dayIdx = desejadaIdx;
-            cursor.blkIdx = 0;
-            cursor.usedMin = 0;
-            // Se já há carga nesse dia, posicionar no fim da fila desse dia:
-            // avançar blkIdx/usedMin para refletir os minutos já usados.
-            if (cargaDia[desejadaIdx] > 0) {
-              let restCarga = cargaDia[desejadaIdx];
-              const blksD = getBlocks(days[desejadaIdx], maq);
-              for (let b = 0; b < blksD.length && restCarga > 0; b++) {
-                const blkSize = blksD[b].fimMin - blksD[b].inicioMin;
-                if (restCarga >= blkSize) {
-                  restCarga -= blkSize;
-                  cursor.blkIdx = b + 1;
-                  cursor.usedMin = 0;
-                } else {
-                  cursor.blkIdx = b;
-                  cursor.usedMin = restCarga;
-                  restCarga = 0;
-                }
-              }
-            }
-
-          } else {
-            // dtDesejada FORA desta semana (overflow de semana anterior)
-            // Alocar no dia mais livre — sem fixar dia
-            const melhor = escolherDiaInicio(0, tempoTotal);
-            cursor.dayIdx  = melhor;
-            cursor.blkIdx  = 0;
-            cursor.usedMin = 0;
-            // Posicionar após carga já existente nesse dia
-            if (cargaDia[melhor] > 0) {
-              let restCarga = cargaDia[melhor];
-              const blksD = getBlocks(days[melhor], maq);
-              for (let b = 0; b < blksD.length && restCarga > 0; b++) {
-                const blkSize = blksD[b].fimMin - blksD[b].inicioMin;
-                if (restCarga >= blkSize) { restCarga -= blkSize; cursor.blkIdx = b + 1; cursor.usedMin = 0; }
-                else { cursor.blkIdx = b; cursor.usedMin = restCarga; restCarga = 0; }
-              }
-            }
-          }
-
-        } else {
-          // Sem dtDesejada: balanceamento real — dia com menor carga
-          const melhor = escolherDiaInicio(0, tempoTotal);
-          cursor.dayIdx  = melhor;
-          cursor.blkIdx  = 0;
-          cursor.usedMin = 0;
-          // Posicionar após carga já existente nesse dia
-          if (cargaDia[melhor] > 0) {
-            let restCarga = cargaDia[melhor];
-            const blksD = getBlocks(days[melhor], maq);
-            for (let b = 0; b < blksD.length && restCarga > 0; b++) {
-              const blkSize = blksD[b].fimMin - blksD[b].inicioMin;
-              if (restCarga >= blkSize) { restCarga -= blkSize; cursor.blkIdx = b + 1; cursor.usedMin = 0; }
-              else { cursor.blkIdx = b; cursor.usedMin = restCarga; restCarga = 0; }
-            }
-          }
-        }
-      }
-
-      // Skip to first day with availability
-      while(cursor.dayIdx<7 && hoursOnDayMaq(days[cursor.dayIdx],maq)===0){
-        cursor.dayIdx++;cursor.blkIdx=0;cursor.usedMin=0;
-      }
-
-      // Save cursor snapshot for this record (so we fill from here)
-      const snap={dayIdx:cursor.dayIdx, blkIdx:cursor.blkIdx, usedMin:cursor.usedMin};
-
-      // ── Consume setup time ──
-      while(remainSetupMin>0.001 && snap.dayIdx<7){
-        const blocks=advanceCursor(snap, days, maq);
-        if(!blocks) break;
-        const blk=blocks[snap.blkIdx];
-        const blkTotalMin=blk.fimMin-blk.inicioMin;
-        const blkAvailMin=blkTotalMin-snap.usedMin;
-        if(blkAvailMin<=0.001){snap.blkIdx++;snap.usedMin=0;continue;}
-        const useMin=Math.min(remainSetupMin,blkAvailMin);
-        setupSegments.push({date:dateStr(days[snap.dayIdx]),dayIdx:snap.dayIdx,
-          turnoIdx:blk.turnoIdx,turnoLabel:blk.label,setupMin:useMin});
-        remainSetupMin-=useMin;
-        snap.usedMin+=useMin;
-        if(snap.usedMin>=blkTotalMin-0.001){snap.blkIdx++;snap.usedMin=0;}
-      }
-
-      // ── Consume production time ──
-      while(remainProdMin>0.001 && snap.dayIdx<7){
-        const blocks=advanceCursor(snap, days, maq);
-        if(!blocks) break;
-        const blk=blocks[snap.blkIdx];
-        const blkTotalMin=blk.fimMin-blk.inicioMin;
-        const blkAvailMin=blkTotalMin-snap.usedMin;
-        if(blkAvailMin<=0.001){snap.blkIdx++;snap.usedMin=0;continue;}
-
-        const useMin=Math.min(remainProdMin,blkAvailMin);
-        const dayAvailHrs=hoursOnDayMaq(days[snap.dayIdx],maq);
-
-        // startPct / endPct: fraction within the day's total available hours
-        // We map the block's start within the day using turnoStartMin relative to day capacity
-        const dayCapMin=dayAvailHrs*60;
-        // position of block start within day capacity (blocks are ordered T1<T2<T3)
-        const allBlocks=getBlocks(days[snap.dayIdx],maq);
-        let blkOffsetMin=0;
-        for(let bi=0;bi<snap.blkIdx;bi++) blkOffsetMin+=(allBlocks[bi].fimMin-allBlocks[bi].inicioMin);
-        const absStartMin=blkOffsetMin+snap.usedMin;
-        const startPct=dayCapMin>0?(absStartMin/dayCapMin)*100:0;
-        const endPct=dayCapMin>0?((absStartMin+useMin)/dayCapMin)*100:0;
-
-        const caixasHoje=Math.round(cxPerMin*useMin);
         segments.push({
-          date:dateStr(days[snap.dayIdx]),
-          dayIdx:snap.dayIdx,
-          turnoIdx:blk.turnoIdx,
-          turnoLabel:blk.label,
-          caixasNoDia:caixasHoje,
-          hrsNoDia:useMin/60,
+          date:           dateStr(days[snap.dayIdx]),
+          dayIdx:         snap.dayIdx,
+          turnoIdx:       blk.turnoIdx,
+          turnoLabel:     blk.label,
+          caixasNoDia:    Math.round(cxPerMin * useMin),
+          hrsNoDia:       useMin / 60,
           startPct,
           endPct,
           dayAvailHrs,
-          turnoInicioMin:blk.inicioMin,
-          turnoFimMin:blk.fimMin,
-          usedInTurnoMin:snap.usedMin,
-          useMin,
+          turnoInicioMin: blk.inicioMin,
+          turnoFimMin:    blk.fimMin,
+          usedInTurnoMin: snap.usedMin,
+          useMin
         });
 
-        remainProdMin-=useMin;
-        snap.usedMin+=useMin;
-        if(snap.usedMin>=blkTotalMin-0.001){snap.blkIdx++;snap.usedMin=0;}
+        cargaMaqDia[maq][snap.dayIdx] += useMin;
+        cargaGlobal[snap.dayIdx]      += useMin;
+        remainProdMin -= useMin;
+        snap.usedMin  += useMin;
+        if (snap.usedMin >= blkTotal - 0.001) { snap.blkIdx++; snap.usedMin = 0; }
       }
 
-      // Advance global cursor to where this record ended
-      cursor.dayIdx=snap.dayIdx;
-      cursor.blkIdx=snap.blkIdx;
-      cursor.usedMin=snap.usedMin;
-      // Skip fully-used days
-      if(cursor.dayIdx<7){
-        const curBlks=getBlocks(days[cursor.dayIdx],maq);
-        if(cursor.blkIdx>=curBlks.length){cursor.dayIdx++;cursor.blkIdx=0;cursor.usedMin=0;}
-      }
-
-      scheduled.push({rec, segments, setupMin: isOverflowRecord ? 0 : setupMin, setupSegments, isOverflow: isOverflowRecord, cxRestante: cxRestanteRec});
+      // Um entry por bloco (que pode representar N registros consolidados do mesmo produto)
+      // Usar o primeiro registro como rec representativo (para ID, status, etc.)
+      const recRep = bloco.recs[0];
+      scheduled.push({
+        rec:         recRep,
+        recs:        bloco.recs,           // todos os registros consolidados
+        segments,
+        setupMin:    bloco.setupExtra || 0,
+        setupSegments,
+        isOverflow:  bloco.isOverflow,
+        cxRestante:  bloco.cxTotal
+      });
     }
 
-    result[maq]=scheduled;
+    result[maq] = scheduled;
   }
 
-  return {schedule:result,days};
+  return { schedule: result, days };
 }
 
 function renderGantt(){
