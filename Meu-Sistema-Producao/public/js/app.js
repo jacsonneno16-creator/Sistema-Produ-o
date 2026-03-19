@@ -9451,6 +9451,39 @@ function limparHistoricoImportacao(){
   renderImportacao();
 }
 
+function limparDadosEstoque(){
+  if(!confirm('Limpar todos os dados de Estoque importados?')) return;
+  estoqueData = [];
+  impSaveEstoque();
+  const prev = document.getElementById('imp-estoque-preview');
+  if(prev) prev.innerHTML = '';
+  renderImportacao();
+  toast('Estoque limpo com sucesso', 'ok');
+}
+
+function limparDadosProjecao(){
+  if(!confirm('Limpar todos os dados de Projeção de Vendas importados?')) return;
+  projecaoData = [];
+  impSaveProjecao();
+  const prev = document.getElementById('imp-proj-preview');
+  if(prev) prev.innerHTML = '';
+  renderImportacao();
+  toast('Projeção limpa com sucesso', 'ok');
+}
+
+function limparDadosInsumos(){
+  if(!confirm('Limpar todos os dados de Insumos importados?')) return;
+  insumosEstoqueData = [];
+  impSaveInsumosEstoque();
+  const prev = document.getElementById('imp-insumos-preview');
+  if(prev) prev.innerHTML = '';
+  const stat = document.getElementById('imp-insumos-stat');
+  if(stat){ stat.textContent = ''; stat.style.color = ''; }
+  renderImportacao();
+  renderSaldoInsumos();
+  toast('Insumos limpos com sucesso', 'ok');
+}
+
 function importEstoque(input){
   const file = input.files[0];
   if(!file) return;
@@ -9460,22 +9493,34 @@ function importEstoque(input){
       const wb = XLSX.read(e.target.result, {type:'array'});
       const ws = wb.Sheets[wb.SheetNames[0]];
       const rows = XLSX.utils.sheet_to_json(ws, {header:1, defval:''}).slice(1);
-      estoqueData = rows.filter(r => r[0]||r[1]).map(r => ({
+      const novos = rows.filter(r => r[0]||r[1]).map(r => ({
         cod: String(r[0]).trim(),
         produto: String(r[1]||'').trim(),
         estoque: parseFloat(r[2])||0
       })).filter(x => x.produto || x.cod);
+
+      // Upsert: substitui o registro do produto se já existir, senão adiciona
+      const norm = s => String(s||'').trim().toLowerCase();
+      novos.forEach(novo => {
+        const idx = estoqueData.findIndex(x =>
+          (novo.cod && x.cod && norm(x.cod) === norm(novo.cod)) ||
+          (novo.produto && x.produto && norm(x.produto) === norm(novo.produto))
+        );
+        if(idx >= 0) estoqueData[idx] = novo;
+        else estoqueData.push(novo);
+      });
+
       impSaveEstoque();
       impAddHistorico('estoque', estoqueData.length, file.name);
       const prev = document.getElementById('imp-estoque-preview');
-      prev.innerHTML = `<div style="margin-bottom:6px;font-size:11px;color:var(--green)">✅ ${estoqueData.length} registros importados</div>`
+      prev.innerHTML = `<div style="margin-bottom:6px;font-size:11px;color:var(--green)">✅ ${novos.length} registros importados · ${estoqueData.length} total no sistema</div>`
         + `<table style="width:100%;border-collapse:collapse;font-size:11px">`
         + `<thead><tr><th style="text-align:left;padding:3px 6px;color:var(--text3)">Código</th><th style="text-align:left;padding:3px 6px;color:var(--text3)">Produto</th><th style="text-align:right;padding:3px 6px;color:var(--text3)">Estoque</th></tr></thead>`
         + `<tbody>${estoqueData.slice(0,8).map(r=>`<tr><td style="padding:3px 6px;color:var(--text2)">${r.cod}</td><td style="padding:3px 6px;color:var(--text)">${r.produto.substring(0,35)}</td><td style="padding:3px 6px;text-align:right;color:var(--cyan)">${r.estoque}</td></tr>`).join('')}</tbody>`
         + (estoqueData.length>8?`<tfoot><tr><td colspan="3" style="padding:3px 6px;color:var(--text3);font-style:italic">... e mais ${estoqueData.length-8} itens</td></tr></tfoot>`:'')
         + `</table>`;
       renderImportacao();
-      toast(`Estoque importado: ${estoqueData.length} produtos`, 'ok');
+      toast(`Estoque importado: ${novos.length} produtos (total: ${estoqueData.length})`, 'ok');
     }catch(err){ toast('Erro ao importar estoque: '+err.message,'err'); }
   };
   reader.readAsArrayBuffer(file);
@@ -9491,24 +9536,36 @@ function importProjecao(input){
       const wb = XLSX.read(e.target.result, {type:'array'});
       const ws = wb.Sheets[wb.SheetNames[0]];
       const rows = XLSX.utils.sheet_to_json(ws, {header:1, defval:''}).slice(1);
-      projecaoData = rows.filter(r => r[0]||r[1]).map(r => ({
+      const novos = rows.filter(r => r[0]||r[1]).map(r => ({
         cod: String(r[0]).trim(),
         produto: String(r[1]||'').trim(),
         venda_m1: parseFloat(r[2])||0,
         venda_m2: parseFloat(r[3])||0,
         venda_m3: parseFloat(r[4])||0
       })).filter(x => x.produto || x.cod);
+
+      // Upsert: substitui o registro do produto se já existir, senão adiciona
+      const norm = s => String(s||'').trim().toLowerCase();
+      novos.forEach(novo => {
+        const idx = projecaoData.findIndex(x =>
+          (novo.cod && x.cod && norm(x.cod) === norm(novo.cod)) ||
+          (novo.produto && x.produto && norm(x.produto) === norm(novo.produto))
+        );
+        if(idx >= 0) projecaoData[idx] = novo;
+        else projecaoData.push(novo);
+      });
+
       impSaveProjecao();
       impAddHistorico('projecao', projecaoData.length, file.name);
       const prev = document.getElementById('imp-proj-preview');
-      prev.innerHTML = `<div style="margin-bottom:6px;font-size:11px;color:var(--green)">✅ ${projecaoData.length} registros importados</div>`
+      prev.innerHTML = `<div style="margin-bottom:6px;font-size:11px;color:var(--green)">✅ ${novos.length} registros importados · ${projecaoData.length} total no sistema</div>`
         + `<table style="width:100%;border-collapse:collapse;font-size:11px">`
         + `<thead><tr><th style="text-align:left;padding:3px 6px;color:var(--text3)">Produto</th><th style="text-align:right;padding:3px 6px;color:var(--text3)">M1</th><th style="text-align:right;padding:3px 6px;color:var(--text3)">M2</th><th style="text-align:right;padding:3px 6px;color:var(--text3)">M3</th></tr></thead>`
         + `<tbody>${projecaoData.slice(0,6).map(r=>`<tr><td style="padding:3px 6px;color:var(--text)">${r.produto.substring(0,30)}</td><td style="padding:3px 6px;text-align:right;color:var(--text2)">${r.venda_m1}</td><td style="padding:3px 6px;text-align:right;color:var(--text2)">${r.venda_m2}</td><td style="padding:3px 6px;text-align:right;color:var(--text2)">${r.venda_m3}</td></tr>`).join('')}</tbody>`
         + (projecaoData.length>6?`<tfoot><tr><td colspan="4" style="padding:3px 6px;color:var(--text3);font-style:italic">... e mais ${projecaoData.length-6} itens</td></tr></tfoot>`:'')
         + `</table>`;
       renderImportacao();
-      toast(`Projeção importada: ${projecaoData.length} produtos`, 'ok');
+      toast(`Projeção importada: ${novos.length} produtos (total: ${projecaoData.length})`, 'ok');
     }catch(err){ toast('Erro ao importar projeção: '+err.message,'err'); }
   };
   reader.readAsArrayBuffer(file);
@@ -14128,6 +14185,9 @@ window.importEstoqueInsumos = importEstoqueInsumos;
 window.renderSaldoInsumos = renderSaldoInsumos;
 window.exportSaldoInsumosXLSX = exportSaldoInsumosXLSX;
 window.limparHistoricoImportacao = limparHistoricoImportacao;
+window.limparDadosEstoque = limparDadosEstoque;
+window.limparDadosProjecao = limparDadosProjecao;
+window.limparDadosInsumos = limparDadosInsumos;
 
 
 window.renderApiSync = renderApiSync;
@@ -14136,6 +14196,9 @@ window.apiSincronizar = apiSincronizar;
 window.importEstoque = importEstoque;
 window.importProjecao = importProjecao;
 window.limparHistoricoImportacao = limparHistoricoImportacao;
+window.limparDadosEstoque = limparDadosEstoque;
+window.limparDadosProjecao = limparDadosProjecao;
+window.limparDadosInsumos = limparDadosInsumos;
 
 window.renderProjecao = renderProjecao;
 window.calcularProjecao = calcularProjecao;

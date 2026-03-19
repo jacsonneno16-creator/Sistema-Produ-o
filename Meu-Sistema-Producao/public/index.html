@@ -448,7 +448,10 @@
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
       <!-- Bloco: Importar Estoque -->
       <div class="sbox">
-        <div class="sbox-title">📦 Importação de Estoque (Produtos Acabados)</div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+          <div class="sbox-title" style="margin:0">📦 Importação de Estoque (Produtos Acabados)</div>
+          <button class="btn btn-ghost" onclick="limparDadosEstoque()" style="font-size:11px;padding:4px 10px;color:var(--red);border-color:rgba(255,71,87,.3)" title="Limpar estoque importado">🗑 Limpar</button>
+        </div>
         <div style="font-size:12px;color:var(--text2);margin-bottom:14px">Importe um arquivo Excel com colunas: <span style="color:var(--cyan);font-family:'JetBrains Mono',monospace">Código | Produto | Estoque</span></div>
         <label class="btn btn-primary" style="cursor:pointer;width:100%;justify-content:center;margin-bottom:8px">
           📥 Selecionar arquivo de Estoque (.xlsx)
@@ -459,7 +462,10 @@
 
       <!-- Bloco: Importar Estoque de Insumos (MRP) -->
       <div class="sbox" style="border-color:rgba(46,201,122,.25)">
-        <div class="sbox-title" style="color:var(--green)">🧪 Importação de Estoque de Insumos (MRP)</div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+          <div class="sbox-title" style="margin:0;color:var(--green)">🧪 Importação de Estoque de Insumos (MRP)</div>
+          <button class="btn btn-ghost" onclick="limparDadosInsumos()" style="font-size:11px;padding:4px 10px;color:var(--red);border-color:rgba(255,71,87,.3)" title="Limpar insumos importados">🗑 Limpar</button>
+        </div>
         <div style="font-size:12px;color:var(--text2);margin-bottom:14px">Importe um arquivo Excel com colunas: <span style="color:var(--green);font-family:'JetBrains Mono',monospace">Insumo | Quantidade | Unidade</span><br><span style="font-size:11px;color:var(--text3)">Se o mesmo insumo for reimportado, o estoque é atualizado automaticamente.</span></div>
         <label class="btn btn-primary" style="cursor:pointer;width:100%;justify-content:center;margin-bottom:8px;background:rgba(46,201,122,.15);color:var(--green);border:1px solid rgba(46,201,122,.4)">
           📥 Selecionar arquivo de Insumos (.xlsx)
@@ -471,7 +477,10 @@
 
       <!-- Bloco: Importar Projeção de Vendas -->
       <div class="sbox">
-        <div class="sbox-title">📈 Importação de Projeção de Vendas</div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+          <div class="sbox-title" style="margin:0">📈 Importação de Projeção de Vendas</div>
+          <button class="btn btn-ghost" onclick="limparDadosProjecao()" style="font-size:11px;padding:4px 10px;color:var(--red);border-color:rgba(255,71,87,.3)" title="Limpar projeção importada">🗑 Limpar</button>
+        </div>
         <div style="font-size:12px;color:var(--text2);margin-bottom:14px">Importe um Excel com colunas: <span style="color:var(--cyan);font-family:'JetBrains Mono',monospace">Código | Produto | Venda_M1 | Venda_M2 | Venda_M3</span></div>
         <label class="btn btn-primary" style="cursor:pointer;width:100%;justify-content:center;margin-bottom:8px">
           📥 Selecionar arquivo de Projeção (.xlsx)
