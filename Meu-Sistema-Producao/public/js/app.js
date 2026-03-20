@@ -7589,7 +7589,7 @@ async function excluirProduto(cod, maquina, descricao) {
     const extraAntes = PRODUTOS_EXTRA.length;
     const novosExtra = PRODUTOS_EXTRA.filter(p => String(p.cod) !== codStr);
     if (novosExtra.length < extraAntes) {
-      PRODUTOS_EXTRA.length = 0;
+      PRODUTOS_EXTRA.splice(0, PRODUTOS_EXTRA.length);
       novosExtra.forEach(p => PRODUTOS_EXTRA.push(p));
       localStorage.setItem('produtos_extra', JSON.stringify(PRODUTOS_EXTRA));
       removidoSucesso = true;
@@ -7600,7 +7600,7 @@ async function excluirProduto(cod, maquina, descricao) {
       const antes = window.PRODUTOS.length;
       const novos = window.PRODUTOS.filter(p => String(p.cod) !== codStr);
       if (novos.length < antes) {
-        window.PRODUTOS.length = 0;
+        window.PRODUTOS.splice(0, window.PRODUTOS.length);
         novos.forEach(p => window.PRODUTOS.push(p));
         removidoSucesso = true;
       }
@@ -8226,7 +8226,7 @@ async function importarArquivoPadrao(input) {
           const snapMaq = await getDocs(lojaCol('maquinas'));
           await Promise.all(snapMaq.docs.map(d => deleteDoc(lojaDoc('maquinas', d.id))));
           if (typeof window.MAQUINAS_DATA !== 'undefined') window.MAQUINAS_DATA = {};
-          if (typeof MAQUINAS !== 'undefined' && Array.isArray(MAQUINAS)) MAQUINAS.length = 0;
+          if (typeof MAQUINAS !== 'undefined' && Array.isArray(MAQUINAS)) MAQUINAS.splice(0, MAQUINAS.length);
 
           for (const r of rowsMaq.slice(3)) {
             const nomeMaq = String(r[0] || '').trim();
@@ -8296,9 +8296,9 @@ async function importarArquivoPadrao(input) {
       // Produtos
       const snapProd = await getDocs(lojaCol('produtos'));
       await Promise.all(snapProd.docs.map(d => deleteDoc(lojaDoc('produtos', d.id))));
-      if (typeof window.PRODUTOS !== 'undefined') window.PRODUTOS.length = 0;
+      if (typeof window.PRODUTOS !== 'undefined') window.PRODUTOS.splice(0, window.PRODUTOS.length);
       if (typeof PRODUTOS_EXTRA !== 'undefined') {
-        PRODUTOS_EXTRA.length = 0;
+        PRODUTOS_EXTRA.splice(0, PRODUTOS_EXTRA.length);
         localStorage.removeItem('produtos_extra');
       }
 
@@ -8307,7 +8307,6 @@ async function importarArquivoPadrao(input) {
       await Promise.all(snapFicha.docs.map(d => deleteDoc(lojaDoc('fichaTecnica', d.id))));
       if (typeof fichaTecnicaData !== 'undefined') fichaTecnicaData.splice(0, fichaTecnicaData.length);
       if (typeof FICHA_TECNICA !== 'undefined') FICHA_TECNICA.splice(0, FICHA_TECNICA.length);
-      total += snapFicha.docs.length;
 
       // Setup — só limpa se veio aba Setup no arquivo
       if (temAbaSetup) {
@@ -14246,66 +14245,70 @@ async function confirmarExclusaoEmMassa() {
   const delSetup    = document.getElementById('chk-del-setup')?.checked;
 
   if (!delProdutos && !delMaquinas && !delFichas && !delSetup) {
-    toast('Selecione pelo menos uma opção.', 'warn'); return;
+    toast('Selecione pelo menos uma opcao.', 'warn'); return;
   }
 
   const itens = [
     delProdutos && 'Produtos',
-    delMaquinas && 'Máquinas',
-    delFichas   && 'Fichas técnicas',
+    delMaquinas && 'Maquinas',
+    delFichas   && 'Fichas tecnicas',
     delSetup    && 'Setup',
   ].filter(Boolean).join(', ');
 
-  if (!confirm(`⚠️ ATENÇÃO\n\nVocê está prestes a apagar PERMANENTEMENTE:\n• ${itens}\n\nEsta ação não pode ser desfeita.\n\nDeseja continuar?`)) return;
+  if (!confirm('ATENCAO: Apagar permanentemente: ' + itens + '\n\nEsta acao nao pode ser desfeita. Deseja continuar?')) return;
 
   const statusEl = document.getElementById('excl-status');
   const setStatus = msg => { if (statusEl) statusEl.textContent = msg; };
 
+  async function limparColecao(nomeCol) {
+    try {
+      const snap = await getDocs(lojaCol(nomeCol));
+      if (snap.empty) return 0;
+      const lote = 50;
+      for (let i = 0; i < snap.docs.length; i += lote) {
+        await Promise.all(snap.docs.slice(i, i + lote).map(d => deleteDoc(lojaDoc(nomeCol, d.id))));
+      }
+      return snap.docs.length;
+    } catch(e) {
+      console.error('Erro ao limpar ' + nomeCol + ':', e);
+      toast('Erro ao excluir ' + nomeCol + ': ' + e.message, 'err');
+      return 0;
+    }
+  }
+
   try {
     let total = 0;
 
-    // ── Produtos ─────────────────────────────────────────────────
     if (delProdutos) {
       setStatus('Excluindo produtos...');
-      const snap = await getDocs(lojaCol('produtos'));
-      await Promise.all(snap.docs.map(d => deleteDoc(lojaDoc('produtos', d.id))));
-      if (typeof window.PRODUTOS !== 'undefined') window.PRODUTOS.length = 0;
-      if (typeof PRODUTOS_EXTRA !== 'undefined') {
-        PRODUTOS_EXTRA.length = 0;
+      total += await limparColecao('produtos');
+      if (Array.isArray(window.PRODUTOS)) window.PRODUTOS.splice(0, window.PRODUTOS.length);
+      if (typeof PRODUTOS_EXTRA !== 'undefined' && Array.isArray(PRODUTOS_EXTRA)) {
+        PRODUTOS_EXTRA.splice(0, PRODUTOS_EXTRA.length);
         localStorage.removeItem('produtos_extra');
       }
-      total += snap.docs.length;
     }
 
-    // ── Máquinas ─────────────────────────────────────────────────
     if (delMaquinas) {
-      setStatus('Excluindo máquinas...');
-      const snap = await getDocs(lojaCol('maquinas'));
-      await Promise.all(snap.docs.map(d => deleteDoc(lojaDoc('maquinas', d.id))));
-      if (typeof window.MAQUINAS_DATA !== 'undefined') window.MAQUINAS_DATA = {};
-      if (typeof MAQUINAS !== 'undefined' && Array.isArray(MAQUINAS)) MAQUINAS.length = 0;
-      total += snap.docs.length;
+      setStatus('Excluindo maquinas...');
+      total += await limparColecao('maquinas');
+      window.MAQUINAS_DATA = {};
+      if (typeof MAQUINAS !== 'undefined' && Array.isArray(MAQUINAS)) MAQUINAS.splice(0, MAQUINAS.length);
     }
 
-    // ── Fichas técnicas ───────────────────────────────────────────
     if (delFichas) {
-      setStatus('Excluindo fichas técnicas...');
-      const snap = await getDocs(lojaCol('fichaTecnica'));
-      await Promise.all(snap.docs.map(d => deleteDoc(lojaDoc('fichaTecnica', d.id))));
-      if (typeof fichaTecnicaData !== 'undefined') fichaTecnicaData.length = 0;
-      if (typeof FICHA_TECNICA !== 'undefined') FICHA_TECNICA.length = 0;
-      total += snap.docs.length;
+      setStatus('Excluindo fichas tecnicas...');
+      total += await limparColecao('fichaTecnica');
+      if (typeof fichaTecnicaData !== 'undefined' && Array.isArray(fichaTecnicaData)) fichaTecnicaData.splice(0, fichaTecnicaData.length);
+      if (typeof FICHA_TECNICA !== 'undefined' && Array.isArray(FICHA_TECNICA)) FICHA_TECNICA.splice(0, FICHA_TECNICA.length);
     }
 
-    // ── Setup ─────────────────────────────────────────────────────
     if (delSetup) {
       setStatus('Excluindo setup...');
-      const snap = await getDocs(lojaCol('setup_maquinas'));
-      await Promise.all(snap.docs.map(d => deleteDoc(lojaDoc('setup_maquinas', d.id))));
-      total += snap.docs.length;
+      total += await limparColecao('setup_maquinas');
     }
 
-    // ── Recarregar UI ─────────────────────────────────────────────
+    setStatus('Atualizando tela...');
     invalidateCache('produtos', 'maquinas');
     if (typeof renderProdutosCfg === 'function') renderProdutosCfg();
     if (typeof renderCadastroMaquinas === 'function') renderCadastroMaquinas();
@@ -14314,7 +14317,7 @@ async function confirmarExclusaoEmMassa() {
     if (typeof renderSetupMaquinas === 'function') renderSetupMaquinas();
 
     document.getElementById('modal-exclusao-massa')?.remove();
-    toast(`✅ ${total} registros excluídos com sucesso`, 'ok');
+    toast('Excluidos: ' + total + ' registros (' + itens + ')', 'ok');
     registrarAuditoria('EXCLUSAO_EM_MASSA', { itens, total });
 
   } catch(err) {
@@ -14322,7 +14325,6 @@ async function confirmarExclusaoEmMassa() {
     console.error('[exclusaoEmMassa]', err);
   }
 }
-
 window.openExclusaoEmMassa = openExclusaoEmMassa;
 window.confirmarExclusaoEmMassa = confirmarExclusaoEmMassa;
 window._fecharEtapa2Pos = _fecharEtapa2Pos;
