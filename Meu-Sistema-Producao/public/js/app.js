@@ -2470,16 +2470,13 @@ function buildSchedule(monday){
     if(startDate>=mondayStr && startDate<=sundayStr) return true;
     // Semana FUTURA: NÃO entra como overflow — só aparece na semana certa
     if(startDate>sundayStr) return false;
-    // Semana PASSADA: só entra se há produção genuinamente não concluída
-    // E apenas para a semana IMEDIATAMENTE seguinte (evita replicação em todas)
+    // Semana PASSADA: só entra como overflow se produção foi INICIADA mas incompleta
+    // (totalProd > 0 e ainda restam caixas). Item meramente pendente não vaza.
     const totalProd = (typeof calcularTotalProduzido==='function')
       ? calcularTotalProduzido(r.id) : 0;
+    if (totalProd <= 0) return false; // pendente sem apontamento → não vaza
     const remaining = (r.qntCaixas||0) - totalProd;
-    if (remaining <= 0) return false;
-    // Não replicar além da semana imediatamente seguinte à dtDesejada
-    const desejadaMon = getWeekMonday(new Date(startDate + 'T12:00:00'));
-    const nextMon = new Date(desejadaMon); nextMon.setDate(nextMon.getDate() + 7);
-    return mondayStr <= dateStr(nextMon);
+    return remaining > 0;
   });
 
   // Group by machine, respect sortOrder field
