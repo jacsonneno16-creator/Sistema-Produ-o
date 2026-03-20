@@ -14250,6 +14250,151 @@ window.closeProdModal = closeProdModal;
 window.saveProdModal = saveProdModal;
 window._abrirEtapa2Insumos = _abrirEtapa2Insumos;
 window._fecharEtapa2 = _fecharEtapa2;
+
+// ═══════════════════════════════════════════════════════════════
+// EXCLUSÃO EM MASSA
+// ═══════════════════════════════════════════════════════════════
+
+function openExclusaoEmMassa() {
+  // Remove modal existente se houver
+  const old = document.getElementById('modal-exclusao-massa');
+  if (old) old.remove();
+
+  const modal = document.createElement('div');
+  modal.id = 'modal-exclusao-massa';
+  modal.style.cssText = 'position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.55)';
+
+  modal.innerHTML = `
+    <div style="background:var(--s1);border:1px solid var(--border);border-radius:12px;width:420px;max-width:92vw;overflow:hidden;box-shadow:0 8px 40px rgba(0,0,0,.4)">
+      <div style="padding:16px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between">
+        <div style="display:flex;align-items:center;gap:8px">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#ff4757" stroke-width="2" stroke-linecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+          <span style="font-size:14px;font-weight:700;color:var(--text)">Limpar dados</span>
+        </div>
+        <button onclick="document.getElementById('modal-exclusao-massa').remove()" style="background:none;border:none;color:var(--text3);font-size:18px;cursor:pointer;line-height:1">×</button>
+      </div>
+
+      <div style="padding:18px 20px">
+        <p style="font-size:12px;color:var(--text3);margin:0 0 16px 0;line-height:1.6">
+          Selecione o que deseja apagar. <strong style="color:#ff4757">Esta ação não pode ser desfeita.</strong>
+        </p>
+
+        <div style="display:flex;flex-direction:column;gap:10px">
+          ${[
+            ['chk-del-produtos',   '📦 Produtos',       'Todos os produtos do cadastro (PRODUTOS e PRODUTOS_EXTRA)'],
+            ['chk-del-maquinas',   '🏭 Máquinas',       'Todas as máquinas cadastradas'],
+            ['chk-del-fichas',     '📋 Ficha técnica',  'Fichas técnicas e insumos vinculados aos produtos'],
+            ['chk-del-setup',      '⏱️ Setup',          'Todos os tempos de setup entre produtos'],
+          ].map(([id, label, desc]) => `
+            <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;padding:10px 12px;border:1px solid var(--border);border-radius:8px;transition:border-color .15s" onmouseover="this.style.borderColor='#ff4757'" onmouseout="this.style.borderColor='var(--border)'">
+              <input type="checkbox" id="${id}" style="margin-top:2px;accent-color:#ff4757;width:15px;height:15px;flex-shrink:0">
+              <div>
+                <div style="font-size:13px;font-weight:600;color:var(--text)">${label}</div>
+                <div style="font-size:11px;color:var(--text3);margin-top:2px">${desc}</div>
+              </div>
+            </label>
+          `).join('')}
+        </div>
+
+        <div id="excl-status" style="min-height:18px;margin-top:12px;font-size:11px;color:var(--text3)"></div>
+      </div>
+
+      <div style="padding:14px 20px;border-top:1px solid var(--border);display:flex;gap:8px;justify-content:flex-end">
+        <button onclick="document.getElementById('modal-exclusao-massa').remove()" style="background:var(--s2);border:1px solid var(--border);border-radius:7px;padding:7px 16px;font-size:12px;color:var(--text);cursor:pointer">Cancelar</button>
+        <button onclick="confirmarExclusaoEmMassa()" style="background:#ff4757;border:none;border-radius:7px;padding:7px 18px;font-size:12px;font-weight:700;color:#fff;cursor:pointer">🗑️ Excluir selecionados</button>
+      </div>
+    </div>`;
+
+  document.body.appendChild(modal);
+  modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
+}
+
+async function confirmarExclusaoEmMassa() {
+  const delProdutos = document.getElementById('chk-del-produtos')?.checked;
+  const delMaquinas = document.getElementById('chk-del-maquinas')?.checked;
+  const delFichas   = document.getElementById('chk-del-fichas')?.checked;
+  const delSetup    = document.getElementById('chk-del-setup')?.checked;
+
+  if (!delProdutos && !delMaquinas && !delFichas && !delSetup) {
+    toast('Selecione pelo menos uma opção.', 'warn'); return;
+  }
+
+  const itens = [
+    delProdutos && 'Produtos',
+    delMaquinas && 'Máquinas',
+    delFichas   && 'Fichas técnicas',
+    delSetup    && 'Setup',
+  ].filter(Boolean).join(', ');
+
+  if (!confirm(`⚠️ ATENÇÃO\n\nVocê está prestes a apagar PERMANENTEMENTE:\n• ${itens}\n\nEsta ação não pode ser desfeita.\n\nDeseja continuar?`)) return;
+
+  const statusEl = document.getElementById('excl-status');
+  const setStatus = msg => { if (statusEl) statusEl.textContent = msg; };
+
+  try {
+    let total = 0;
+
+    // ── Produtos ─────────────────────────────────────────────────
+    if (delProdutos) {
+      setStatus('Excluindo produtos...');
+      const snap = await getDocs(lojaCol('produtos'));
+      await Promise.all(snap.docs.map(d => deleteDoc(lojaDoc('produtos', d.id))));
+      if (typeof window.PRODUTOS !== 'undefined') window.PRODUTOS.length = 0;
+      if (typeof PRODUTOS_EXTRA !== 'undefined') {
+        PRODUTOS_EXTRA.length = 0;
+        localStorage.removeItem('produtos_extra');
+      }
+      total += snap.docs.length;
+    }
+
+    // ── Máquinas ─────────────────────────────────────────────────
+    if (delMaquinas) {
+      setStatus('Excluindo máquinas...');
+      const snap = await getDocs(lojaCol('maquinas'));
+      await Promise.all(snap.docs.map(d => deleteDoc(lojaDoc('maquinas', d.id))));
+      if (typeof window.MAQUINAS_DATA !== 'undefined') window.MAQUINAS_DATA = {};
+      if (typeof MAQUINAS !== 'undefined' && Array.isArray(MAQUINAS)) MAQUINAS.length = 0;
+      total += snap.docs.length;
+    }
+
+    // ── Fichas técnicas ───────────────────────────────────────────
+    if (delFichas) {
+      setStatus('Excluindo fichas técnicas...');
+      const snap = await getDocs(lojaCol('fichaTecnica'));
+      await Promise.all(snap.docs.map(d => deleteDoc(lojaDoc('fichaTecnica', d.id))));
+      if (typeof fichaTecnicaData !== 'undefined') fichaTecnicaData.length = 0;
+      if (typeof FICHA_TECNICA !== 'undefined') FICHA_TECNICA.length = 0;
+      total += snap.docs.length;
+    }
+
+    // ── Setup ─────────────────────────────────────────────────────
+    if (delSetup) {
+      setStatus('Excluindo setup...');
+      const snap = await getDocs(lojaCol('setup_maquinas'));
+      await Promise.all(snap.docs.map(d => deleteDoc(lojaDoc('setup_maquinas', d.id))));
+      total += snap.docs.length;
+    }
+
+    // ── Recarregar UI ─────────────────────────────────────────────
+    invalidateCache('produtos', 'maquinas');
+    if (typeof renderProdutosCfg === 'function') renderProdutosCfg();
+    if (typeof renderCadastroMaquinas === 'function') renderCadastroMaquinas();
+    if (typeof renderFichaTecnicaCfg === 'function') renderFichaTecnicaCfg();
+    if (typeof renderFichaTecnica === 'function') renderFichaTecnica();
+    if (typeof renderSetupMaquinas === 'function') renderSetupMaquinas();
+
+    document.getElementById('modal-exclusao-massa')?.remove();
+    toast(`✅ ${total} registros excluídos com sucesso`, 'ok');
+    registrarAuditoria('EXCLUSAO_EM_MASSA', { itens, total });
+
+  } catch(err) {
+    toast('Erro ao excluir: ' + err.message, 'err');
+    console.error('[exclusaoEmMassa]', err);
+  }
+}
+
+window.openExclusaoEmMassa = openExclusaoEmMassa;
+window.confirmarExclusaoEmMassa = confirmarExclusaoEmMassa;
 window._fecharEtapa2Pos = _fecharEtapa2Pos;
 window.deleteExtraProduto = deleteExtraProduto;
 window.importProdutosExcel = importProdutosExcel;
