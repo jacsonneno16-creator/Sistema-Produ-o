@@ -577,15 +577,16 @@ async function salvarSetupFirestore(maquina, prodOrigem, prodDestino, tempoMinut
 // Normaliza nome de produto para chave de lookup
 function normProd(s){
   return (s||'').toUpperCase().trim()
+    .replace(/^\d{5}\s+/,'')           // Remove código inicial como "00019 "
+    .replace(/\s*[-–]\s*(CX|FD|FD\.?)\s*\d+.*$/i,'') // Remove sufixo " - CX 12" ou " FD 5"
+    .replace(/\s+(CX|FD)\s*\d+\s*$/i,'')              // Remove " CX12" sem traço
     .replace(/\s+/g,' ')
     .replace(/[_\-]+/g,' ')
     .replace(/\bDA\s+TERRINHA\b/g,'TERRINHA')
     .replace(/\bDE\s+TERRINHA\b/g,'TERRINHA')
     .replace(/\bDATERRINHA\b/g,'TERRINHA')
     .replace(/\bDO\s+RANCHO\b/g,'RANCHO')
-    .replace(/\bCOOP\b/g,'COOP')
-    .replace(/\bMERCADAO\b/g,'MERCADAO')
-    .replace(/\bOBA\b/g,'OBA');
+    .trim();
 }
 
 // Matriz de setup: agora vem exclusivamente do Firestore (coleção setup_maquinas).
@@ -2465,15 +2466,16 @@ function buildSchedule(monday){
     if(r.status==='Concluído') return false;
     const startDate=r.dtDesejada||r.dtSolicitacao;
     if(!startDate) return false;
+    // Semana atual: sempre entra
     if(startDate>=mondayStr && startDate<=sundayStr) return true;
-    if(startDate<mondayStr){
-      // Verificar se ainda há produção restante (overflow real)
-      const totalProd = (typeof calcularTotalProduzido==='function')
-        ? calcularTotalProduzido(r.id) : 0;
-      const remaining = (r.qntCaixas||0) - totalProd;
-      return remaining > 0; // só overflow real
-    }
-    return false;
+    // Semana FUTURA: NÃO entra como overflow — só aparece na semana certa
+    if(startDate>sundayStr) return false;
+    // Semana PASSADA: só entra se há produção genuinamente não concluída
+    // E apenas para a semana IMEDIATAMENTE seguinte (evita replicação em todas)
+    const totalProd = (typeof calcularTotalProduzido==='function')
+      ? calcularTotalProduzido(r.id) : 0;
+    const remaining = (r.qntCaixas||0) - totalProd;
+    return remaining > 0;
   });
 
   // Group by machine, respect sortOrder field
@@ -2532,7 +2534,20 @@ function buildSchedule(monday){
       if(!pcMin){scheduled.push({rec,segments:[],setupMin:0,setupSegments:[]});continue;}
 
       let setupMin=0;
-      if(ri>0) setupMin=getSetupMin(maq, recs[ri-1].produto, rec.produto);
+      if(ri>0){
+        setupMin=getSetupMin(maq, recs[ri-1].produto, rec.produto);
+      } else {
+        // Primeiro item da semana: verificar se há histórico de produção
+        // recente nesta máquina para calcular setup de troca real
+        const ultimoRecAnterior = [...records]
+          .filter(r => r.maquina===maq && r.status!=='Concluído'
+            && (r.dtDesejada||r.dtSolicitacao||'')<mondayStr
+            && r.id !== rec.id)
+          .sort((a,b)=>(b.dtDesejada||b.dtSolicitacao||'').localeCompare(a.dtDesejada||a.dtSolicitacao||''))[0];
+        if(ultimoRecAnterior && ultimoRecAnterior.produto !== rec.produto){
+          setupMin=getSetupMin(maq, ultimoRecAnterior.produto, rec.produto);
+        }
+      }
 
       const totalUnid=rec.qntUnid||(rec.qntCaixas*unidPorCx);
 
@@ -2595,8 +2610,17 @@ function buildSchedule(monday){
         const blkAvailMin=blkTotalMin-snap.usedMin;
         if(blkAvailMin<=0.001){snap.blkIdx++;snap.usedMin=0;continue;}
         const useMin=Math.min(remainSetupMin,blkAvailMin);
+        // Calcular posição visual (startPct/endPct) igual aos segments de produção
+        const dayCapMinSetup=(hoursOnDayMaq(days[snap.dayIdx],maq))*60;
+        const allBlocksSetup=getBlocks(days[snap.dayIdx],maq);
+        let blkOffMinSetup=0;
+        for(let bi=0;bi<snap.blkIdx;bi++) blkOffMinSetup+=(allBlocksSetup[bi].fimMin-allBlocksSetup[bi].inicioMin);
+        const absStartSetup=blkOffMinSetup+snap.usedMin;
+        const sStartPct=dayCapMinSetup>0?(absStartSetup/dayCapMinSetup)*100:0;
+        const sEndPct=dayCapMinSetup>0?((absStartSetup+useMin)/dayCapMinSetup)*100:0;
         setupSegments.push({date:dateStr(days[snap.dayIdx]),dayIdx:snap.dayIdx,
-          turnoIdx:blk.turnoIdx,turnoLabel:blk.label,setupMin:useMin});
+          turnoIdx:blk.turnoIdx,turnoLabel:blk.label,setupMin:useMin,
+          startPct:sStartPct,endPct:sEndPct});
         remainSetupMin-=useMin;
         snap.usedMin+=useMin;
         if(snap.usedMin>=blkTotalMin-0.001){snap.blkIdx++;snap.usedMin=0;}
@@ -2972,6 +2996,16 @@ function renderGanttSemanal(){
             html+=`<div style="position:absolute;left:${blkLeft.toFixed(1)}%;width:${blkW.toFixed(1)}%;top:0;bottom:0;background:${blkColors[blk.turnoIdx]||''};border-left:1px dashed rgba(255,255,255,.06)"></div>`;
           });
 
+          // Barras de setup (laranja) antes das barras de produção
+          const daySetupSegs=(setupSegments||[]).filter(s=>s.dayIdx===di&&s.startPct!=null);
+          daySetupSegs.forEach(sseg=>{
+            const sLeft=sseg.startPct.toFixed(1);
+            const sW=Math.max(0.5,(sseg.endPct-sseg.startPct)).toFixed(1);
+            html+=`<div style="left:${sLeft}%;width:${sW}%;background:rgba(255,153,0,0.8);position:absolute;top:10%;height:80%;border-radius:2px;z-index:2"
+              title="⚙ Setup: ${sseg.setupMin.toFixed(0)} min${sseg.turnoLabel?' · '+sseg.turnoLabel:''}">
+              <div style="font-size:8px;color:#000;font-weight:700;padding:1px 2px;overflow:hidden;white-space:nowrap">⚙${sseg.setupMin>=60?Math.round(sseg.setupMin/60)+'h':sseg.setupMin.toFixed(0)+'m'}</div>
+            </div>`;
+          });
           daySeg.forEach(seg=>{
             const leftPct=seg.startPct.toFixed(1);
             const widthPct=(seg.endPct-seg.startPct).toFixed(1);
@@ -11179,8 +11213,10 @@ function gerarProgAutomarica(){
         const hrsAlocarPrinc   = Math.min(hrsNecPrinc, maqHrsRestantes[sem][maqPrinc.maquina], hrsPermitPrinc);
         const cxAlocarPrinc    = Math.floor(hrsAlocarPrinc * 60 * maqPrinc.pc_min / c.unid);
         const principalAbsorve = cxAlocarPrinc >= cxRestante;
-
-        const maxMaquinas = principalAbsorve ? 1 : Math.min(2, maqsOrdenadas.length);
+        // Política: 1 máquina padrão. 2ª só se principal absorve < 60%
+        // do necessário (ruptura real), e apenas 1 máquina extra máximo.
+        const pctAbsorcaoPrinc = cxRestante > 0 ? cxAlocarPrinc / cxRestante : 1;
+        const maxMaquinas = (principalAbsorve || pctAbsorcaoPrinc >= 0.6) ? 1 : Math.min(2, maqsOrdenadas.length);
 
         let cxEfetivamenteAlocado = 0;
         for(let mi = 0; mi < maxMaquinas && cxRestante > 0; mi++){
