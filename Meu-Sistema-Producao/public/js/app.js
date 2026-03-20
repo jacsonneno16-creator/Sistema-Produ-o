@@ -8031,16 +8031,113 @@ function downloadProdTemplate(e) {
   XLSX.writeFile(wb, 'template_produtos_e_maquinas.xlsx');
 }
 
-function downloadMaqTemplate(e) {
+async function downloadMaqTemplate(e) {
   e.preventDefault();
-  const ws = XLSX.utils.aoa_to_sheet([
-    ['nome','codigo','tipo','setor','status','undMin','eficiencia','hTurno','nTurnos','setup','produtos'],
-    ['SELGRON 01','SEL01','Empacotadeira','Embalagem','ativa',46.75,100,8,1,0,'POLVILHO 500G, COCO 100G'],
-    ['ALFATECK 14','ALF14','Empacotadeira','Embalagem','ativa',28.05,100,8,1,0,'FARINHA 1KG, BICARBONATO 250G']
-  ]);
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'Maquinas');
-  XLSX.writeFile(wb, 'template_maquinas_simples.xlsx');
+  await _baixarTemplateCompleto();
+}
+
+async function _baixarTemplateCompleto() {
+  try {
+    toast('Gerando template com dados do sistema...', 'ok');
+
+    function cabecalho(titulo, aviso, headers) {
+      return [[titulo], [aviso], headers];
+    }
+
+    // ── Aba Maquinas ──────────────────────────────────────────────
+    const maqData = window.MAQUINAS_DATA || {};
+    const rowsMaq = Object.values(maqData).sort((a,b) => (a.nome||'').localeCompare(b.nome||'')).map(m => [
+      m.nome || '',
+      m.codigo || '',
+      m.tipo || 'Empacotadeira',
+      m.setor || 'Embalagem',
+      m.status || 'ativa',
+      m.pcMin || 0,
+      m.eficiencia || 100,
+      m.hTurno || 8,
+      m.nTurnos || 1,
+      m.tempoSetupPadrao || 0,
+      Array.isArray(m.produtosCompativeis) ? m.produtosCompativeis.map(p => p.produto).join(', ') : ''
+    ]);
+    // fallback: se MAQUINAS_DATA vazio, usa MAQUINAS array
+    if (!rowsMaq.length && Array.isArray(window.MAQUINAS)) {
+      window.MAQUINAS.forEach(nome => rowsMaq.push([nome,'',  'Empacotadeira','Embalagem','ativa',0,100,8,1,0,'']));
+    }
+    const hdrMaq = ['nome','codigo','tipo','setor','status','undMin','eficiencia','hTurno','nTurnos','setup','produtos'];
+    const wsMaq = XLSX.utils.aoa_to_sheet([
+      ...cabecalho('CADASTRO DE MÁQUINAS',
+        'Uma linha por máquina. A coluna "produtos" lista os produtos compatíveis separados por vírgula.',
+        hdrMaq),
+      ...rowsMaq
+    ]);
+    wsMaq['!cols'] = [{wch:26},{wch:12},{wch:16},{wch:14},{wch:10},{wch:10},{wch:12},{wch:10},{wch:10},{wch:10},{wch:80}];
+
+    // ── Aba Produtos ──────────────────────────────────────────────
+    const produtos = getAllProdutos ? getAllProdutos() : (window.PRODUTOS || []);
+    const hdrProd = ['cod','descricao','unid','pc_min','maquina','status'];
+    const rowsProd = produtos.map(p => [
+      p.cod, p.descricao, p.unid, p.pc_min, p.maquina,
+      p.produtoAtivo !== false ? 'ATIVO' : 'DESATIVADO'
+    ]);
+    const wsProd = XLSX.utils.aoa_to_sheet([
+      ...cabecalho('PRODUTOS — Base Máquina x Tempo',
+        'Preencha cod, descricao, unid, pc_min e maquina. Status: ATIVO ou DESATIVADO.',
+        hdrProd),
+      ...rowsProd
+    ]);
+    wsProd['!cols'] = [{wch:10},{wch:62},{wch:10},{wch:12},{wch:26},{wch:12}];
+
+    // ── Aba Insumos ───────────────────────────────────────────────
+    const fichas = (typeof fichaTecnicaData !== 'undefined' ? fichaTecnicaData : null) || (typeof FICHA_TECNICA !== 'undefined' ? FICHA_TECNICA : []);
+    const hdrIns = ['cod_produto','desc_produto','insumo','qty','status'];
+    const rowsIns = [];
+    fichas.forEach(ficha => {
+      const prod = produtos.find(p => parseInt(p.cod) === parseInt(ficha.cod));
+      const status = prod && prod.produtoAtivo === false ? 'DESATIVADO' : 'ATIVO';
+      (ficha.insumos || []).forEach(ins => {
+        rowsIns.push([ficha.cod, ficha.desc, ins.insumo, ins.qty, status]);
+      });
+    });
+    const wsIns = XLSX.utils.aoa_to_sheet([
+      ...cabecalho('INSUMOS — Consumo por Produto',
+        'Uma linha por insumo por produto. qty = quantidade consumida por caixa. Status: ATIVO ou DESATIVADO.',
+        hdrIns),
+      ...rowsIns
+    ]);
+    wsIns['!cols'] = [{wch:14},{wch:62},{wch:56},{wch:14},{wch:12}];
+
+    // ── Aba Setup ─────────────────────────────────────────────────
+    const hdrSetup = ['maquina','de','para','minutos'];
+    let rowsSetup = [];
+    try {
+      const snapSetup = await getDocs(lojaCol('setup_maquinas'));
+      rowsSetup = snapSetup.docs.map(d => {
+        const s = d.data();
+        return [s.maquina || '', s.produto_origem || '', s.produto_destino || '', s.tempo_setup || 0];
+      });
+    } catch(e) { console.warn('Erro ao ler setup:', e); }
+    const wsSetup = XLSX.utils.aoa_to_sheet([
+      ...cabecalho('SETUP — Tempo de troca entre produtos por máquina',
+        'Cada linha: tempo (min) para trocar do Produto DE para o Produto PARA em uma máquina.',
+        hdrSetup),
+      ...rowsSetup
+    ]);
+    wsSetup['!cols'] = [{wch:30},{wch:56},{wch:56},{wch:18}];
+
+    // ── Montar e baixar ───────────────────────────────────────────
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, wsMaq,   'Maquinas');
+    XLSX.utils.book_append_sheet(wb, wsProd,  'Produtos');
+    XLSX.utils.book_append_sheet(wb, wsIns,   'Insumos');
+    XLSX.utils.book_append_sheet(wb, wsSetup, 'Setup');
+
+    const hoje = new Date().toISOString().slice(0, 10);
+    XLSX.writeFile(wb, `template_importacao_${hoje}.xlsx`);
+    toast(`✅ Template gerado: ${rowsMaq.length} máquinas · ${rowsProd.length} produtos · ${rowsIns.length} insumos · ${rowsSetup.length} setups`, 'ok');
+  } catch(err) {
+    toast('Erro ao gerar template: ' + err.message, 'err');
+    console.error('[downloadMaqTemplate]', err);
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -14162,18 +14259,9 @@ window.exportarArquivoPadrao = exportarArquivoPadrao;
 window.downloadMaqTemplate = downloadMaqTemplate;
 
 // ===== SETUP TEMPLATES E IMPORTAÇÃO =====
-function downloadSetupTemplate(e) {
+async function downloadSetupTemplate(e) {
   e.preventDefault();
-  const ws = XLSX.utils.aoa_to_sheet([
-    ['maquina','produto_origem','produto_destino','tempo_minutos'],
-    ['SELGRON 01','POLVILHO 500G','COCO 100G',15],
-    ['SELGRON 01','COCO 100G','POLVILHO 500G',10],
-    ['ALFATECK 14','FARINHA 1KG','BICARBONATO 250G',25],
-    ['ALFATECK 14','BICARBONATO 250G','FARINHA 1KG',20]
-  ]);
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'Setup');
-  XLSX.writeFile(wb, 'template_setup_simples.xlsx');
+  await _baixarTemplateCompleto();
 }
 
 async function importarSetupExcel(file) {
