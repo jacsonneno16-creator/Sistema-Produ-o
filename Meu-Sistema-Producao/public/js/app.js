@@ -8063,47 +8063,172 @@ async function importarArquivoPadrao(input) {
     try {
       toast('Lendo arquivo...', 'ok');
       const wb = XLSX.read(e.target.result, { type: 'binary' });
+      const names = wb.SheetNames.map(s => s.trim());
 
-      // ── Localizar abas pelo nome ─────────────────────────────────────
-      const sheetBase = wb.SheetNames.find(s => s.includes('Base_Maquina')) || wb.SheetNames[0];
-      const sheetConsumo = wb.SheetNames.find(s => s.includes('Consumo'));
+      // ── Detectar formato: novo template (Produtos/Insumos/Setup/Maquinas)
+      //    ou formato legado (Base_Maquina_Tempo / Consumo_Insumos)
+      const isNovoFormato =
+        names.some(s => /^Produtos$/i.test(s)) ||
+        names.some(s => /^Insumos$/i.test(s)) ||
+        names.some(s => /^Setup$/i.test(s));
 
-      if (!sheetBase) { toast('Aba "Base_Maquina_Tempo" não encontrada no arquivo.', 'err'); return; }
+      // ── helpers de leitura ───────────────────────────────────────────
+      function lerAba(nomeRegex) {
+        const nome = wb.SheetNames.find(s => nomeRegex.test(s.trim()));
+        if (!nome) return [];
+        return XLSX.utils.sheet_to_json(wb.Sheets[nome], { header: 1, defval: '' });
+      }
 
-      // ── Ler aba Base_Maquina_Tempo ───────────────────────────────────
-      // Colunas: A=Cód. B=Descrição C=UNID D=KG/FD(ignorar) E=PC/MIN F=Maquina G=status
-      const wsBase = wb.Sheets[sheetBase];
-      const rowsBase = XLSX.utils.sheet_to_json(wsBase, { header: 1, defval: '' });
-      const dadosProdutos = rowsBase.slice(1)
-        .filter(r => r[0] && r[1] && !isNaN(parseInt(r[0])))
-        .map(r => ({
-          cod:       parseInt(r[0]) || 0,
-          descricao: String(r[1]).trim(),
-          unid:      parseInt(r[2]) || 1,
-          // r[3] = KG/FD — ignorado (fórmula Excel)
-          pc_min:    parseFloat(r[4]) || 0,
-          maquina:   String(r[5] || 'MANUAL').trim().toUpperCase(),
-          produtoAtivo: _parseAtivo(r[6]),
-          ativo:     _parseAtivo(r[6])
-        }));
+      // ════════════════════════════════════════════════════════════════
+      // NOVO FORMATO — abas: Produtos, Insumos, Setup (+ opcional: Maquinas)
+      // Produtos:  linha1=título, linha2=aviso, linha3=cabeçalho, dados a partir da linha 4
+      //   colunas: cod | descricao | unid | pc_min | maquina | status
+      // Insumos:   mesma estrutura de 3 linhas de cabeçalho
+      //   colunas: cod_produto | desc_produto | insumo | qty | status
+      // Setup:     mesma estrutura
+      //   colunas: maquina | de | para | minutos
+      // Maquinas:  mesma estrutura
+      //   colunas: nome | codigo | tipo | setor | status | undMin | eficiencia | hTurno | nTurnos | setup | produtos
+      // ════════════════════════════════════════════════════════════════
+      let dadosProdutos = [], insumosPorProduto = {}, setupEntries = [];
 
-      if (!dadosProdutos.length) { toast('Nenhum produto válido encontrado na aba Base_Maquina_Tempo.', 'err'); return; }
+      if (isNovoFormato) {
 
-      // ── Ler aba Consumo_Insumos ──────────────────────────────────────
-      // Colunas: A=produto_key(ignorar) B=DESCRIÇÃO PROD ACABADO C=DESCRIÇÃO INSUMOS D=qty E=status
-      let insumosPorProduto = {};
-      if (sheetConsumo) {
-        const wsConsumo = wb.Sheets[sheetConsumo];
-        const rowsConsumo = XLSX.utils.sheet_to_json(wsConsumo, { header: 1, defval: '' });
-        rowsConsumo.slice(1).forEach(r => {
+        // ── Aba Produtos ────────────────────────────────────────────────
+        const rowsProd = lerAba(/^Produtos$/i);
+        // Pula 3 linhas de cabeçalho (título, aviso, headers)
+        dadosProdutos = rowsProd.slice(3)
+          .filter(r => r[0] && r[1] && !isNaN(parseInt(r[0])))
+          .filter(r => _parseAtivo(r[5]))   // ignora DESATIVADO
+          .map(r => ({
+            cod:          parseInt(r[0]) || 0,
+            descricao:    String(r[1]).trim(),
+            unid:         parseInt(r[2]) || 1,
+            pc_min:       parseFloat(r[3]) || 0,
+            maquina:      String(r[4] || 'MANUAL').trim().toUpperCase(),
+            produtoAtivo: _parseAtivo(r[5]),
+            ativo:        _parseAtivo(r[5])
+          }));
+
+        // ── Aba Insumos ─────────────────────────────────────────────────
+        const rowsIns = lerAba(/^Insumos$/i);
+        rowsIns.slice(3).forEach(r => {
+          // cod_produto | desc_produto | insumo | qty | status
+          if (!_parseAtivo(r[4])) return;  // ignora DESATIVADO
           const prodNome = String(r[1] || '').trim();
           const insNome  = String(r[2] || '').trim();
           const qty      = parseFloat(r[3]) || 0;
-          const ativo    = _parseAtivo(r[4]);
           if (!prodNome || !insNome) return;
           if (!insumosPorProduto[prodNome]) insumosPorProduto[prodNome] = [];
-          insumosPorProduto[prodNome].push({ insumo: insNome, qty, ativo });
+          insumosPorProduto[prodNome].push({ insumo: insNome, qty });
         });
+
+        // ── Aba Setup ───────────────────────────────────────────────────
+        const rowsSetup = lerAba(/^Setup$/i);
+        rowsSetup.slice(3).forEach(r => {
+          // maquina | de | para | minutos
+          const maq  = String(r[0] || '').trim();
+          const de   = String(r[1] || '').trim();
+          const para = String(r[2] || '').trim();
+          const mins = parseFloat(r[3]) || 0;
+          if (maq && de && para && mins > 0) setupEntries.push({ maquina: maq, de, para, minutos: mins });
+        });
+
+        // ── Aba Maquinas (opcional — apenas se presente) ────────────────
+        const rowsMaq = lerAba(/^Maquinas$/i);
+        if (rowsMaq.length > 3) {
+          for (const r of rowsMaq.slice(3)) {
+            const nomeMaq = String(r[0] || '').trim();
+            if (!nomeMaq) continue;
+            const statusMaq = String(r[4] || 'ativa').trim().toLowerCase();
+            if (statusMaq === 'inativa' || statusMaq === 'desativada') continue;
+            const prodListStr = String(r[10] || '');
+            const produtosCompativeis = prodListStr
+              .split(',').map(p => p.trim()).filter(Boolean)
+              .map(p => ({ produto: p, velocidade: null }));
+
+            const maqPayload = {
+              nome:       nomeMaq,
+              codigo:     String(r[1] || '').trim(),
+              tipo:       String(r[2] || 'Empacotadeira').trim(),
+              setor:      String(r[3] || 'Embalagem').trim(),
+              status:     statusMaq || 'ativa',
+              pcMin:      parseFloat(r[5]) || 0,
+              eficiencia: parseFloat(r[6]) || 100,
+              hTurno:     parseFloat(r[7]) || 8,
+              nTurnos:    parseFloat(r[8]) || 1,
+              tempoSetupPadrao: parseFloat(r[9]) || 0,
+              produtosCompativeis,
+              atualizadoEm: new Date().toISOString()
+            };
+            await carregarMaquinasCached();
+            const maqExistente = (window.MAQUINAS_DATA || {})[nomeMaq];
+            if (maqExistente && maqExistente._id) {
+              await setDoc(lojaDoc('maquinas', maqExistente._id), { ...maqPayload, criadoEm: maqExistente.criadoEm || new Date().toISOString() });
+              window.MAQUINAS_DATA[nomeMaq] = { ...maqExistente, ...maqPayload };
+            } else {
+              maqPayload.criadoEm = new Date().toISOString();
+              const docRef = await addDoc(lojaCol('maquinas'), maqPayload);
+              window.MAQUINAS_DATA[nomeMaq] = { ...maqPayload, _id: docRef.id };
+              if (!MAQUINAS.includes(nomeMaq)) MAQUINAS.push(nomeMaq);
+            }
+          }
+        }
+
+      } else {
+        // ════════════════════════════════════════════════════════════════
+        // FORMATO LEGADO — abas: Base_Maquina_Tempo, Consumo_Insumos
+        // Base_Maquina_Tempo cols: Cód. | Descrição | UNID | KG/FD | PC/MIN | Maquina | status
+        // Consumo_Insumos cols: produto_key | desc_produto | desc_insumo | qty | status
+        // ════════════════════════════════════════════════════════════════
+        const sheetBase = wb.SheetNames.find(s => s.includes('Base_Maquina')) || wb.SheetNames[0];
+        if (!sheetBase) { toast('Aba "Base_Maquina_Tempo" não encontrada no arquivo.', 'err'); return; }
+
+        const rowsBase = XLSX.utils.sheet_to_json(wb.Sheets[sheetBase], { header: 1, defval: '' });
+        dadosProdutos = rowsBase.slice(1)
+          .filter(r => r[0] && r[1] && !isNaN(parseInt(r[0])))
+          .filter(r => _parseAtivo(r[6]))
+          .map(r => ({
+            cod:          parseInt(r[0]) || 0,
+            descricao:    String(r[1]).trim(),
+            unid:         parseInt(r[2]) || 1,
+            pc_min:       parseFloat(r[4]) || 0,
+            maquina:      String(r[5] || 'MANUAL').trim().toUpperCase(),
+            produtoAtivo: _parseAtivo(r[6]),
+            ativo:        _parseAtivo(r[6])
+          }));
+
+        const sheetConsumo = wb.SheetNames.find(s => s.includes('Consumo'));
+        if (sheetConsumo) {
+          const rowsConsumo = XLSX.utils.sheet_to_json(wb.Sheets[sheetConsumo], { header: 1, defval: '' });
+          rowsConsumo.slice(1).forEach(r => {
+            if (!_parseAtivo(r[4])) return;
+            const prodNome = String(r[1] || '').trim();
+            const insNome  = String(r[2] || '').trim();
+            const qty      = parseFloat(r[3]) || 0;
+            if (!prodNome || !insNome) return;
+            if (!insumosPorProduto[prodNome]) insumosPorProduto[prodNome] = [];
+            insumosPorProduto[prodNome].push({ insumo: insNome, qty });
+          });
+        }
+      }
+
+      if (!dadosProdutos.length) { toast('Nenhum produto válido encontrado no arquivo.', 'err'); return; }
+
+      // ── Importar Setup (novo formato) ────────────────────────────────
+      if (setupEntries.length > 0) {
+        let setupAdicionados = 0;
+        for (const se of setupEntries) {
+          await addDoc(lojaCol('setup_maquinas'), {
+            maquina: se.maquina.toUpperCase(),
+            produto_origem: se.de,
+            produto_destino: se.para,
+            tempo_setup: se.minutos,
+            criadoEm: new Date().toISOString()
+          });
+          setupAdicionados++;
+        }
+        toast(`⏱️ ${setupAdicionados} registros de setup importados`, 'ok');
       }
 
       // ── Garantir que o cache de máquinas está carregado ─────────────
@@ -8271,70 +8396,96 @@ async function importarArquivoPadrao(input) {
   reader.readAsBinaryString(file);
 }
 
-// Exporta todos os dados no mesmo formato do arquivo de importação
+// Exporta todos os dados no novo formato de template (4 abas)
 async function exportarArquivoPadrao() {
   try {
-    // ── Aba Base_Maquina_Tempo ────────────────────────────────────────
     const produtos = getAllProdutos();
     const fichas   = fichaTecnicaData || [];
 
-    const headerBase = ['Cód.', 'Descrição', 'UNID', 'KG/FD', 'PC/MIN', 'Maquina22', 'status'];
-    const rowsBase = produtos.map(p => {
-      const ativo = p.produtoAtivo !== false ? 'ATIVO' : 'Desativado';
+    // ── Linha de títulos + aviso + cabeçalho (padrão do novo template) ─
+    function cabecalho(titulo, aviso, headers) {
       return [
-        p.cod,
-        p.descricao,
-        p.unid,
-        '',        // KG/FD — calculado externamente, deixar vazio
-        p.pc_min,
-        p.maquina,
-        ativo
+        [titulo], [aviso], headers
       ];
-    });
+    }
 
-    const wsBase = XLSX.utils.aoa_to_sheet([headerBase, ...rowsBase]);
-    // Largura das colunas
-    wsBase['!cols'] = [
-      { wch: 10 }, { wch: 60 }, { wch: 8 }, { wch: 10 },
-      { wch: 10 }, { wch: 20 }, { wch: 12 }
-    ];
+    // ── Aba Produtos ──────────────────────────────────────────────────
+    const hdrProd = ['cod','descricao','unid','pc_min','maquina','status'];
+    const rowsProd = produtos.map(p => [
+      p.cod, p.descricao, p.unid, p.pc_min, p.maquina,
+      p.produtoAtivo !== false ? 'ATIVO' : 'DESATIVADO'
+    ]);
+    const wsProd = XLSX.utils.aoa_to_sheet([
+      ...cabecalho('PRODUTOS — Base Máquina x Tempo',
+        'Preencha cod, descricao, unid, pc_min e maquina. Status: ATIVO ou DESATIVADO.',
+        hdrProd),
+      ...rowsProd
+    ]);
+    wsProd['!cols'] = [{ wch:10 },{ wch:60 },{ wch:10 },{ wch:12 },{ wch:25 },{ wch:12 }];
 
-    // ── Aba Consumo_Insumos ───────────────────────────────────────────
-    const headerConsumo = [
-      'ESCADINHA_INSUMO_PRODUCAO[produto_key]',
-      'ESCADINHA_INSUMO_PRODUCAO[DESCRIÇÃO PROD ACABADO]',
-      'ESCADINHA_INSUMO_PRODUCAO[DESCRIÇÃO INSUMOS]',
-      '[Sumconsumo_receita]',
-      'status'
-    ];
-    const rowsConsumo = [];
+    // ── Aba Insumos ───────────────────────────────────────────────────
+    const hdrIns = ['cod_produto','desc_produto','insumo','qty','status'];
+    const rowsIns = [];
     fichas.forEach(ficha => {
       const prod = produtos.find(p => parseInt(p.cod) === parseInt(ficha.cod));
-      const statusProd = prod && prod.produtoAtivo === false ? 'DESATIVADO' : 'ATIVO';
+      const status = prod && prod.produtoAtivo === false ? 'DESATIVADO' : 'ATIVO';
       (ficha.insumos || []).forEach(ins => {
-        rowsConsumo.push([
-          ficha.cod,
-          ficha.desc,
-          ins.insumo,
-          ins.qty,
-          statusProd
-        ]);
+        rowsIns.push([ficha.cod, ficha.desc, ins.insumo, ins.qty, status]);
       });
     });
+    const wsIns = XLSX.utils.aoa_to_sheet([
+      ...cabecalho('INSUMOS — Consumo por Produto',
+        'Uma linha por insumo por produto. qty = quantidade consumida por caixa. Status: ATIVO ou DESATIVADO.',
+        hdrIns),
+      ...rowsIns
+    ]);
+    wsIns['!cols'] = [{ wch:14 },{ wch:60 },{ wch:55 },{ wch:12 },{ wch:12 }];
 
-    const wsConsumo = XLSX.utils.aoa_to_sheet([headerConsumo, ...rowsConsumo]);
-    wsConsumo['!cols'] = [
-      { wch: 12 }, { wch: 60 }, { wch: 50 }, { wch: 20 }, { wch: 12 }
-    ];
+    // ── Aba Setup (exporta do Firestore se disponível) ────────────────
+    const hdrSetup = ['maquina','de','para','minutos'];
+    let rowsSetup = [];
+    try {
+      const snapSetup = await getDocs(lojaCol('setup_maquinas'));
+      rowsSetup = snapSetup.docs.map(d => {
+        const s = d.data();
+        return [s.maquina || '', s.produto_origem || '', s.produto_destino || '', s.tempo_setup || 0];
+      });
+    } catch(e) { console.warn('Erro ao ler setup para exportação:', e); }
+    const wsSetup = XLSX.utils.aoa_to_sheet([
+      ...cabecalho('SETUP — Tempo de troca entre produtos por máquina',
+        'Cada linha: tempo (min) para trocar do Produto DE para o Produto PARA em uma máquina.',
+        hdrSetup),
+      ...rowsSetup
+    ]);
+    wsSetup['!cols'] = [{ wch:30 },{ wch:55 },{ wch:55 },{ wch:20 }];
 
-    // ── Montar workbook na ordem correta das abas ─────────────────────
+    // ── Aba Maquinas ──────────────────────────────────────────────────
+    const hdrMaq = ['nome','codigo','tipo','setor','status','undMin','eficiencia','hTurno','nTurnos','setup','produtos'];
+    const maqData = window.MAQUINAS_DATA || {};
+    const rowsMaq = Object.values(maqData).map(m => [
+      m.nome || '', m.codigo || '', m.tipo || 'Empacotadeira', m.setor || 'Embalagem',
+      m.status || 'ativa', m.pcMin || 0, m.eficiencia || 100, m.hTurno || 8, m.nTurnos || 1,
+      m.tempoSetupPadrao || 0,
+      (Array.isArray(m.produtosCompativeis) ? m.produtosCompativeis.map(p => p.produto).join(', ') : '')
+    ]);
+    const wsMaq = XLSX.utils.aoa_to_sheet([
+      ...cabecalho('CADASTRO DE MÁQUINAS',
+        'Preencha uma linha por máquina. A coluna "produtos" aceita vários produtos separados por vírgula.',
+        hdrMaq),
+      ...rowsMaq
+    ]);
+    wsMaq['!cols'] = [{ wch:28 },{ wch:12 },{ wch:18 },{ wch:18 },{ wch:10 },{ wch:10 },{ wch:12 },{ wch:10 },{ wch:10 },{ wch:10 },{ wch:60 }];
+
+    // ── Montar workbook ───────────────────────────────────────────────
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, wsConsumo, 'Consumo_Insumos');
-    XLSX.utils.book_append_sheet(wb, wsBase, 'Base_Maquina_Tempo');
+    XLSX.utils.book_append_sheet(wb, wsProd,  'Produtos');
+    XLSX.utils.book_append_sheet(wb, wsIns,   'Insumos');
+    XLSX.utils.book_append_sheet(wb, wsSetup, 'Setup');
+    XLSX.utils.book_append_sheet(wb, wsMaq,   'Maquinas');
 
     const hoje = new Date().toISOString().slice(0, 10);
-    XLSX.writeFile(wb, `INSUMOS_PRODUCAO_${hoje}.xlsx`);
-    toast(`✅ Exportado: ${produtos.length} produtos · ${rowsConsumo.length} insumos`, 'ok');
+    XLSX.writeFile(wb, `TEMPLATE_IMPORTACAO_${hoje}.xlsx`);
+    toast(`✅ Exportado: ${produtos.length} produtos · ${rowsIns.length} insumos · ${rowsSetup.length} setups · ${rowsMaq.length} máquinas`, 'ok');
   } catch(err) {
     toast('Erro ao exportar: ' + err.message, 'err');
     console.error('[exportarArquivoPadrao]', err);
