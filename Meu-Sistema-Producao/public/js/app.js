@@ -4184,16 +4184,24 @@ function loadFichaTecnica(input){
         const wsIns=wb.Sheets[insSheet];
         const insRows=XLSX.utils.sheet_to_json(wsIns,{header:1,defval:''}).slice(1);
         insRows.forEach(r=>{
+          // Colunas: r[0]=produto_key, r[1]=desc_produto, r[2]=desc_insumo, r[3]=qty, r[4]=status
+          const statusIns=String(r[4]||'').toUpperCase().trim();
+          if(statusIns==='DESATIVADO') return; // ignora insumos desativados
           const prodDesc=String(r[1]||'').trim();
           const insDesc=String(r[2]||'').trim();
-          const qty=parseFloat(r[3])||0;
+          const qty=parseFloat(String(r[3]||'').replace(',','.'))||0;
           if(prodDesc&&insDesc&&qty){
             if(!insByProd[prodDesc]) insByProd[prodDesc]=[];
             insByProd[prodDesc].push({insumo:insDesc,qty});
           }
         });
       }
-      fichaTecnicaData=rows.slice(1).filter(r=>r[0]&&r[1]&&!isNaN(parseInt(r[0]))).map(r=>({
+      // Colunas Base_Maquina_Tempo: r[0]=Cód, r[1]=Descrição, r[2]=UNID, r[3]=KG/FD, r[4]=PC/MIN, r[5]=Maquina, r[6]=status
+      fichaTecnicaData=rows.slice(1).filter(r=>{
+        if(!r[0]||!r[1]||isNaN(parseInt(r[0]))) return false;
+        const statusProd=String(r[6]||'').toUpperCase().trim();
+        return statusProd!=='DESATIVADO'; // só importa produtos ATIVO ou sem status definido
+      }).map(r=>({
         cod:parseInt(r[0])||0,
         desc:String(r[1]).trim(),
         unid:parseInt(r[2])||1,
@@ -7556,63 +7564,65 @@ function editarProduto(cod, maquina, descricao) {
 }
 
 async function excluirProduto(cod, maquina, descricao) {
-  if (!confirm(`Tem certeza que deseja excluir o produto:\n\n${descricao} (${cod}) - ${maquina}\n\nEsta ação não pode ser desfeita.`)) {
+  if (!confirm(`Tem certeza que deseja excluir o produto:\n\n${descricao} (${cod})\n\nEsta ação não pode ser desfeita.`)) {
     return;
   }
   
   try {
-    // Verificar se há registros de produção vinculados
-    const registrosVinculados = records.filter(r => String(r.codProduto) === String(cod) && r.maquina === maquina);
+    // Verificar se há registros de produção vinculados (por cod, independente de máquina)
+    const registrosVinculados = records.filter(r => String(r.codProduto) === String(cod) || String(r.cod) === String(cod));
     if (registrosVinculados.length > 0) {
       if (!confirm(`ATENÇÃO: Este produto possui ${registrosVinculados.length} registro(s) de produção vinculados.\n\nExcluir o produto pode causar inconsistências no sistema.\n\nDeseja continuar mesmo assim?`)) {
         return;
       }
     }
     
-    // Remover produto dos arrays globais
+    // Remover produto dos arrays globais — por cod (produto pode ter múltiplas máquinas)
     let removidoSucesso = false;
+    const codStr = String(cod);
 
     // Buscar todos os registros com este cod (inclui _id do Firestore)
     const todosOsProdutos = getAllProdutos();
-    const produtosParaExcluir = todosOsProdutos.filter(p =>
-      String(p.cod) === String(cod) && p.maquina === maquina
-    );
+    const produtosParaExcluir = todosOsProdutos.filter(p => String(p.cod) === codStr);
 
-    // Tentar remover do array de produtos extras (localStorage)
-    const extraIndex = PRODUTOS_EXTRA.findIndex(p => String(p.cod) === String(cod) && p.maquina === maquina);
-    if (extraIndex >= 0) {
-      PRODUTOS_EXTRA.splice(extraIndex, 1);
+    // Remover TODOS os registros com este cod do array de produtos extras (localStorage)
+    const extraAntes = PRODUTOS_EXTRA.length;
+    const novosExtra = PRODUTOS_EXTRA.filter(p => String(p.cod) !== codStr);
+    if (novosExtra.length < extraAntes) {
+      PRODUTOS_EXTRA.length = 0;
+      novosExtra.forEach(p => PRODUTOS_EXTRA.push(p));
       localStorage.setItem('produtos_extra', JSON.stringify(PRODUTOS_EXTRA));
       removidoSucesso = true;
     }
 
-    // Tentar remover do array global de produtos (Firestore cache)
+    // Remover TODOS do cache global (Firestore cache)
     if (typeof window.PRODUTOS !== 'undefined' && Array.isArray(window.PRODUTOS)) {
-      const globalIndex = window.PRODUTOS.findIndex(p => String(p.cod) === String(cod) && p.maquina === maquina);
-      if (globalIndex >= 0) {
-        window.PRODUTOS.splice(globalIndex, 1);
+      const antes = window.PRODUTOS.length;
+      const novos = window.PRODUTOS.filter(p => String(p.cod) !== codStr);
+      if (novos.length < antes) {
+        window.PRODUTOS.length = 0;
+        novos.forEach(p => window.PRODUTOS.push(p));
         removidoSucesso = true;
       }
     }
 
-    // Excluir do Firestore usando _id quando disponível, ou buscar por cod como fallback
+    // Excluir do Firestore — todos os docs com este cod
     const firestoreMatches = produtosParaExcluir.filter(p => p._id);
     if (firestoreMatches.length > 0) {
-      firestoreMatches.forEach(p => {
-        deleteDoc(lojaDoc('produtos', p._id)).catch(e => console.warn('Firestore delete err:', p._id, e));
-      });
+      await Promise.all(firestoreMatches.map(p =>
+        deleteDoc(lojaDoc('produtos', p._id)).catch(e => console.warn('Firestore delete err:', p._id, e))
+      ));
       removidoSucesso = true;
     } else {
       // Fallback: buscar no Firestore pelo cod caso _id não esteja em memória
       try {
         const snap = await getDocs(query(lojaCol('produtos'), where('cod', '==', parseInt(cod))));
-        snap.docs.forEach(d => {
-          const data = d.data();
-          if (!maquina || data.maquina === maquina) {
-            deleteDoc(lojaDoc('produtos', d.id)).catch(e => console.warn('Firestore delete fallback err:', d.id, e));
-            removidoSucesso = true;
-          }
-        });
+        if (!snap.empty) {
+          await Promise.all(snap.docs.map(d =>
+            deleteDoc(lojaDoc('produtos', d.id)).catch(e => console.warn('Firestore delete fallback err:', d.id, e))
+          ));
+          removidoSucesso = true;
+        }
       } catch(e) { console.warn('Erro ao buscar produto no Firestore para exclusão:', e); }
     }
 
