@@ -8173,12 +8173,11 @@ async function importarArquivoPadrao(input) {
         return XLSX.utils.sheet_to_json(wb.Sheets[nome], { header: 1, defval: '' });
       }
 
-      let dadosProdutos = [], insumosPorProduto = {}, setupEntries = [];
-      let temAbaSetup = false, temAbaMaquinas = false;
+      // ── PASSO 1: Ler e validar todos os dados do arquivo ────────────
+      let dadosProdutos = [], insumosPorProduto = {}, setupEntries = [], maquinasEntries = [];
 
       if (isNovoFormato) {
-
-        // ── Aba Produtos — importa TODOS (ativo e desativado) ───────────
+        // Produtos (aba linha 1=titulo, 2=aviso, 3=header, dados da linha 4)
         const rowsProd = lerAba(/^Produtos$/i);
         dadosProdutos = rowsProd.slice(3)
           .filter(r => r[0] && r[1] && !isNaN(parseInt(r[0])))
@@ -8192,7 +8191,7 @@ async function importarArquivoPadrao(input) {
             ativo:        _parseAtivo(r[5])
           }));
 
-        // ── Aba Insumos ─────────────────────────────────────────────────
+        // Insumos
         const rowsIns = lerAba(/^Insumos$/i);
         rowsIns.slice(3).forEach(r => {
           if (!_parseAtivo(r[4])) return;
@@ -8204,62 +8203,41 @@ async function importarArquivoPadrao(input) {
           insumosPorProduto[prodNome].push({ insumo: insNome, qty });
         });
 
-        // ── Aba Setup ───────────────────────────────────────────────────
+        // Setup
         const rowsSetup = lerAba(/^Setup$/i);
-        if (rowsSetup.length > 3) {
-          temAbaSetup = true;
-          rowsSetup.slice(3).forEach(r => {
-            const maq  = String(r[0] || '').trim();
-            const de   = String(r[1] || '').trim();
-            const para = String(r[2] || '').trim();
-            const mins = parseFloat(r[3]) || 0;
-            if (maq && de && para && mins > 0) setupEntries.push({ maquina: maq, de, para, minutos: mins });
-          });
-        }
+        rowsSetup.slice(3).forEach(r => {
+          const maq  = String(r[0] || '').trim();
+          const de   = String(r[1] || '').trim();
+          const para = String(r[2] || '').trim();
+          const mins = parseFloat(r[3]) || 0;
+          if (maq && de && para && mins > 0) setupEntries.push({ maquina: maq, de, para, minutos: mins });
+        });
 
-        // ── Aba Maquinas ────────────────────────────────────────────────
+        // Maquinas
         const rowsMaq = lerAba(/^Maquinas$/i);
-        if (rowsMaq.length > 3) {
-          temAbaMaquinas = true;
-          // Limpa máquinas existentes antes de reimportar
-          await carregarMaquinasCached();
-          const snapMaq = await getDocs(lojaCol('maquinas'));
-          await Promise.all(snapMaq.docs.map(d => deleteDoc(lojaDoc('maquinas', d.id))));
-          if (typeof window.MAQUINAS_DATA !== 'undefined') window.MAQUINAS_DATA = {};
-          if (typeof MAQUINAS !== 'undefined' && Array.isArray(MAQUINAS)) MAQUINAS.splice(0, MAQUINAS.length);
-
-          for (const r of rowsMaq.slice(3)) {
-            const nomeMaq = String(r[0] || '').trim();
-            if (!nomeMaq) continue;
-            const statusMaq = String(r[4] || 'ativa').trim().toLowerCase();
-            const prodListStr = String(r[10] || '');
-            const produtosCompativeis = prodListStr.split(',').map(p => p.trim()).filter(Boolean).map(p => ({ produto: p, velocidade: null }));
-            const maqPayload = {
-              nome: nomeMaq,
-              codigo: String(r[1] || '').trim(),
-              tipo: String(r[2] || 'Empacotadeira').trim(),
-              setor: String(r[3] || 'Embalagem').trim(),
-              status: statusMaq || 'ativa',
-              pcMin: parseFloat(r[5]) || 0,
-              eficiencia: parseFloat(r[6]) || 100,
-              hTurno: parseFloat(r[7]) || 8,
-              nTurnos: parseFloat(r[8]) || 1,
-              tempoSetupPadrao: parseFloat(r[9]) || 0,
-              produtosCompativeis,
-              criadoEm: new Date().toISOString(),
-              atualizadoEm: new Date().toISOString()
-            };
-            const docRef = await addDoc(lojaCol('maquinas'), maqPayload);
-            if (!window.MAQUINAS_DATA) window.MAQUINAS_DATA = {};
-            window.MAQUINAS_DATA[nomeMaq] = { ...maqPayload, _id: docRef.id };
-            if (typeof MAQUINAS !== 'undefined' && !MAQUINAS.includes(nomeMaq)) MAQUINAS.push(nomeMaq);
-          }
-        }
+        rowsMaq.slice(3).forEach(r => {
+          const nome = String(r[0] || '').trim();
+          if (!nome) return;
+          const prodListStr = String(r[10] || '');
+          maquinasEntries.push({
+            nome,
+            codigo:     String(r[1] || '').trim(),
+            tipo:       String(r[2] || 'Empacotadeira').trim(),
+            setor:      String(r[3] || 'Embalagem').trim(),
+            status:     String(r[4] || 'ativa').trim().toLowerCase(),
+            pcMin:      parseFloat(r[5]) || 0,
+            eficiencia: parseFloat(r[6]) || 100,
+            hTurno:     parseFloat(r[7]) || 8,
+            nTurnos:    parseFloat(r[8]) || 1,
+            tempoSetupPadrao: parseFloat(r[9]) || 0,
+            produtosCompativeis: prodListStr.split(',').map(p => p.trim()).filter(Boolean).map(p => ({ produto: p, velocidade: null }))
+          });
+        });
 
       } else {
-        // ── FORMATO LEGADO ───────────────────────────────────────────────
+        // Formato legado
         const sheetBase = wb.SheetNames.find(s => s.includes('Base_Maquina')) || wb.SheetNames[0];
-        if (!sheetBase) { toast('Aba "Base_Maquina_Tempo" não encontrada.', 'err'); return; }
+        if (!sheetBase) { toast('Aba Base_Maquina_Tempo nao encontrada.', 'err'); return; }
         const rowsBase = XLSX.utils.sheet_to_json(wb.Sheets[sheetBase], { header: 1, defval: '' });
         dadosProdutos = rowsBase.slice(1)
           .filter(r => r[0] && r[1] && !isNaN(parseInt(r[0])))
@@ -8272,7 +8250,6 @@ async function importarArquivoPadrao(input) {
             produtoAtivo: _parseAtivo(r[6]),
             ativo:        _parseAtivo(r[6])
           }));
-
         const sheetConsumo = wb.SheetNames.find(s => s.includes('Consumo'));
         if (sheetConsumo) {
           const rowsConsumo = XLSX.utils.sheet_to_json(wb.Sheets[sheetConsumo], { header: 1, defval: '' });
@@ -8288,130 +8265,148 @@ async function importarArquivoPadrao(input) {
         }
       }
 
-      if (!dadosProdutos.length) { toast('Nenhum produto válido encontrado no arquivo.', 'err'); return; }
+      toast('Arquivo lido: ' + dadosProdutos.length + ' produtos, ' + setupEntries.length + ' setups, ' + maquinasEntries.length + ' maquinas', 'ok');
 
-      // ── LIMPAR tudo antes de reimportar (substitui em vez de acumular) ─
+      if (!dadosProdutos.length) { toast('Nenhum produto valido encontrado no arquivo.', 'err'); return; }
+
+      // ── PASSO 2: Limpar tudo antes de gravar ────────────────────────
       toast('Limpando dados anteriores...', 'ok');
 
-      // Produtos
-      const snapProd = await getDocs(lojaCol('produtos'));
-      await Promise.all(snapProd.docs.map(d => deleteDoc(lojaDoc('produtos', d.id))));
-      if (typeof window.PRODUTOS !== 'undefined') window.PRODUTOS.splice(0, window.PRODUTOS.length);
-      if (typeof PRODUTOS_EXTRA !== 'undefined') {
-        PRODUTOS_EXTRA.splice(0, PRODUTOS_EXTRA.length);
-        localStorage.removeItem('produtos_extra');
+      async function limparCol(col) {
+        try {
+          const snap = await getDocs(lojaCol(col));
+          if (snap.empty) return;
+          for (let i = 0; i < snap.docs.length; i += 50)
+            await Promise.all(snap.docs.slice(i, i+50).map(d => deleteDoc(lojaDoc(col, d.id))));
+        } catch(err) { console.warn('Erro ao limpar ' + col + ':', err.message); }
       }
 
-      // Fichas técnicas
-      const snapFicha = await getDocs(lojaCol('fichaTecnica'));
-      await Promise.all(snapFicha.docs.map(d => deleteDoc(lojaDoc('fichaTecnica', d.id))));
-      if (typeof fichaTecnicaData !== 'undefined') fichaTecnicaData.splice(0, fichaTecnicaData.length);
-      if (typeof FICHA_TECNICA !== 'undefined') FICHA_TECNICA.splice(0, FICHA_TECNICA.length);
+      await limparCol('produtos');
+      await limparCol('fichaTecnica');
+      if (setupEntries.length > 0) await limparCol('setup_maquinas');
+      if (maquinasEntries.length > 0) await limparCol('maquinas');
 
-      // Setup — só limpa se veio aba Setup no arquivo
-      if (temAbaSetup) {
-        const snapSetup = await getDocs(lojaCol('setup_maquinas'));
-        await Promise.all(snapSetup.docs.map(d => deleteDoc(lojaDoc('setup_maquinas', d.id))));
-      }
+      // Limpar memória
+      if (Array.isArray(window.PRODUTOS)) window.PRODUTOS.splice(0, window.PRODUTOS.length);
+      if (typeof PRODUTOS_EXTRA !== 'undefined' && Array.isArray(PRODUTOS_EXTRA)) { PRODUTOS_EXTRA.splice(0, PRODUTOS_EXTRA.length); localStorage.removeItem('produtos_extra'); }
+      if (typeof fichaTecnicaData !== 'undefined' && Array.isArray(fichaTecnicaData)) fichaTecnicaData.splice(0, fichaTecnicaData.length);
+      if (typeof FICHA_TECNICA !== 'undefined' && Array.isArray(FICHA_TECNICA)) FICHA_TECNICA.splice(0, FICHA_TECNICA.length);
+      if (maquinasEntries.length > 0) { window.MAQUINAS_DATA = {}; if (typeof MAQUINAS !== 'undefined' && Array.isArray(MAQUINAS)) MAQUINAS.splice(0, MAQUINAS.length); }
 
-      // Máquinas — só limpa se NÃO veio aba Maquinas (que já limpou acima)
-      // Se não veio aba Maquinas, reconstrói a partir dos produtos
-      if (!temAbaMaquinas) {
-        await carregarMaquinasCached();
-      }
-
-      // ── Setup: gravar em lote ────────────────────────────────────────
-      let setupAdicionados = 0;
-      if (temAbaSetup && setupEntries.length > 0) {
-        const lote = 100;
-        for (let i = 0; i < setupEntries.length; i += lote) {
-          await Promise.all(setupEntries.slice(i, i + lote).map(se =>
-            addDoc(lojaCol('setup_maquinas'), {
-              maquina: se.maquina.toUpperCase(),
-              produto_origem: se.de,
-              produto_destino: se.para,
-              tempo_setup: se.minutos,
-              criadoEm: new Date().toISOString()
-            })
-          ));
-          setupAdicionados += Math.min(lote, setupEntries.length - i);
+      // ── PASSO 3: Gravar máquinas ─────────────────────────────────────
+      let maqCriadas = 0;
+      if (maquinasEntries.length > 0) {
+        toast('Salvando maquinas...', 'ok');
+        for (const m of maquinasEntries) {
+          try {
+            const payload = { ...m, criadoEm: new Date().toISOString(), atualizadoEm: new Date().toISOString() };
+            const docRef = await addDoc(lojaCol('maquinas'), payload);
+            if (!window.MAQUINAS_DATA) window.MAQUINAS_DATA = {};
+            window.MAQUINAS_DATA[m.nome] = { ...payload, _id: docRef.id };
+            if (typeof MAQUINAS !== 'undefined' && !MAQUINAS.includes(m.nome)) MAQUINAS.push(m.nome);
+            maqCriadas++;
+          } catch(err) { console.warn('Erro ao salvar maquina ' + m.nome + ':', err.message); }
         }
-      }
-
-      let criados = 0, fichasSalvas = 0, maqCriadas = 0;
-
-      // ── Máquinas a partir dos produtos (só se NÃO veio aba Maquinas) ─
-      if (!temAbaMaquinas) {
+        toast(maqCriadas + ' maquinas salvas', 'ok');
+      } else {
+        // Reconstrói maquinas a partir dos produtos
+        await carregarMaquinasCached();
         const maquinasMap = {};
         dadosProdutos.forEach(p => {
-          const m = p.maquina;
-          if (!maquinasMap[m]) maquinasMap[m] = { produtos: [], velocidades: [] };
-          maquinasMap[m].produtos.push(p);
-          if (p.pc_min > 0) maquinasMap[m].velocidades.push(p.pc_min);
+          if (!maquinasMap[p.maquina]) maquinasMap[p.maquina] = { produtos: [], pc_mins: [] };
+          maquinasMap[p.maquina].produtos.push(p.descricao);
+          if (p.pc_min > 0) maquinasMap[p.maquina].pc_mins.push(p.pc_min);
         });
-        for (const [nomeMaq, info] of Object.entries(maquinasMap)) {
-          const velMedia = info.velocidades.length
-            ? Math.round(info.velocidades.reduce((a,b)=>a+b,0)/info.velocidades.length*100)/100 : 0;
-          const produtosCompativeis = info.produtos.map(p => ({ produto: p.descricao, velocidade: p.pc_min > 0 ? p.pc_min : null }));
-          const maqPayload = { nome: nomeMaq, tipo: 'Empacotadeira', setor: 'Embalagem', status: 'ativa', pcMin: velMedia, eficiencia: 100, hTurno: 8, nTurnos: 1, tempoSetupPadrao: 0, produtosCompativeis, criadoEm: new Date().toISOString(), atualizadoEm: new Date().toISOString() };
-          const docRef = await addDoc(lojaCol('maquinas'), maqPayload);
-          if (!window.MAQUINAS_DATA) window.MAQUINAS_DATA = {};
-          window.MAQUINAS_DATA[nomeMaq] = { ...maqPayload, _id: docRef.id };
-          if (typeof MAQUINAS !== 'undefined' && !MAQUINAS.includes(nomeMaq)) MAQUINAS.push(nomeMaq);
-          maqCriadas++;
+        for (const [nome, d] of Object.entries(maquinasMap)) {
+          try {
+            const velMedia = d.pc_mins.length ? Math.round(d.pc_mins.reduce((a,b)=>a+b,0)/d.pc_mins.length*100)/100 : 0;
+            const payload = { nome, tipo: 'Empacotadeira', setor: 'Embalagem', status: 'ativa', pcMin: velMedia, eficiencia: 100, hTurno: 8, nTurnos: 1, tempoSetupPadrao: 0, produtosCompativeis: d.produtos.map(p=>({produto:p,velocidade:null})), criadoEm: new Date().toISOString(), atualizadoEm: new Date().toISOString() };
+            const docRef = await addDoc(lojaCol('maquinas'), payload);
+            if (!window.MAQUINAS_DATA) window.MAQUINAS_DATA = {};
+            window.MAQUINAS_DATA[nome] = { ...payload, _id: docRef.id };
+            if (typeof MAQUINAS !== 'undefined' && !MAQUINAS.includes(nome)) MAQUINAS.push(nome);
+            maqCriadas++;
+          } catch(err) { console.warn('Erro ao salvar maquina ' + nome + ':', err.message); }
         }
       }
 
-      // ── Produtos: inserir todos (ativos + desativados) em lote ───────
-      toast(`Salvando ${dadosProdutos.length} produtos...`, 'ok');
-      const loteProd = 50;
-      for (let i = 0; i < dadosProdutos.length; i += loteProd) {
-        await Promise.all(dadosProdutos.slice(i, i+loteProd).map(p => salvarProdutoFirestore(p)));
-        criados += Math.min(loteProd, dadosProdutos.length - i);
+      // ── PASSO 4: Gravar produtos em lotes ────────────────────────────
+      toast('Salvando ' + dadosProdutos.length + ' produtos...', 'ok');
+      let criados = 0;
+      for (let i = 0; i < dadosProdutos.length; i += 50) {
+        const lote = dadosProdutos.slice(i, i + 50);
+        await Promise.all(lote.map(async p => {
+          try {
+            await salvarProdutoFirestore(p);
+            criados++;
+          } catch(err) { console.warn('Erro ao salvar produto ' + p.cod + ':', err.message); }
+        }));
       }
+      toast(criados + ' produtos salvos', 'ok');
 
-      // ── Fichas técnicas: inserir em lote ─────────────────────────────
-      toast('Salvando fichas técnicas...', 'ok');
-      const fichasParaSalvar = dadosProdutos.map(produto => ({
-        cod:     parseInt(produto.cod),
-        desc:    produto.descricao,
-        unid:    produto.unid,
-        pc_min:  produto.pc_min,
-        maquina: produto.maquina,
-        insumos: (insumosPorProduto[produto.descricao] || []).map(i => ({ insumo: i.insumo, qty: i.qty })),
+      // ── PASSO 5: Gravar fichas técnicas em lotes ────────────────────
+      toast('Salvando fichas tecnicas...', 'ok');
+      let fichasSalvas = 0;
+      const fichas = dadosProdutos.map(p => ({
+        cod:     parseInt(p.cod),
+        desc:    p.descricao,
+        unid:    p.unid,
+        pc_min:  p.pc_min,
+        maquina: p.maquina,
+        insumos: (insumosPorProduto[p.descricao] || []).map(i => ({ insumo: i.insumo, qty: i.qty })),
         criadoEm: new Date().toISOString(),
         atualizadoEm: new Date().toISOString()
       }));
-      const loteFicha = 50;
-      for (let i = 0; i < fichasParaSalvar.length; i += loteFicha) {
-        const lote = fichasParaSalvar.slice(i, i+loteFicha);
-        const refs = await Promise.all(lote.map(f => addDoc(lojaCol('fichaTecnica'), f)));
-        lote.forEach((f, idx) => {
-          f._firestoreId = refs[idx].id;
-          fichaTecnicaData.push(f);
-          FICHA_TECNICA.push({ ...f });
-        });
-        fichasSalvas += lote.length;
+      for (let i = 0; i < fichas.length; i += 50) {
+        const lote = fichas.slice(i, i + 50);
+        try {
+          const refs = await Promise.all(lote.map(f => addDoc(lojaCol('fichaTecnica'), f)));
+          lote.forEach((f, idx) => {
+            f._firestoreId = refs[idx].id;
+            if (typeof fichaTecnicaData !== 'undefined') fichaTecnicaData.push(f);
+            if (typeof FICHA_TECNICA !== 'undefined') FICHA_TECNICA.push({ ...f });
+          });
+          fichasSalvas += lote.length;
+        } catch(err) { console.warn('Erro ao salvar lote de fichas:', err.message); }
       }
 
-      // ── Recarga única no final ────────────────────────────────────────
+      // ── PASSO 6: Gravar setup em lotes ───────────────────────────────
+      let setupAdicionados = 0;
+      if (setupEntries.length > 0) {
+        toast('Salvando ' + setupEntries.length + ' setups...', 'ok');
+        for (let i = 0; i < setupEntries.length; i += 100) {
+          try {
+            await Promise.all(setupEntries.slice(i, i + 100).map(se =>
+              addDoc(lojaCol('setup_maquinas'), {
+                maquina: se.maquina,
+                produto_origem: se.de,
+                produto_destino: se.para,
+                tempo_setup: se.minutos,
+                criadoEm: new Date().toISOString()
+              })
+            ));
+            setupAdicionados += Math.min(100, setupEntries.length - i);
+          } catch(err) { console.warn('Erro ao salvar lote de setup:', err.message); }
+        }
+      }
+
+      // ── PASSO 7: Recarregar UI ───────────────────────────────────────
       invalidateCache('maquinas', 'produtos');
       await carregarMaquinasCached(true);
       _carregadoFichaTecnica = true;
-
       renderProdutosCfg();
       renderCadastroMaquinas();
       if (typeof renderFichaTecnicaCfg === 'function') renderFichaTecnicaCfg();
       if (typeof renderFichaTecnica === 'function') renderFichaTecnica();
-      if (typeof renderSetupMaquinas === 'function' && setupAdicionados > 0) renderSetupMaquinas();
+      if (typeof renderSetupMaquinas === 'function') renderSetupMaquinas();
 
       const partes = [
-        `${criados} produto(s)`,
-        maqCriadas ? `${maqCriadas} máquina(s)` : '',
-        fichasSalvas ? `${fichasSalvas} ficha(s)` : '',
-        setupAdicionados ? `${setupAdicionados} setup(s)` : ''
+        criados + ' produto(s)',
+        maqCriadas ? maqCriadas + ' maquina(s)' : '',
+        fichasSalvas ? fichasSalvas + ' ficha(s)' : '',
+        setupAdicionados ? setupAdicionados + ' setup(s)' : ''
       ].filter(Boolean);
-      toast(`✅ Importado: ${partes.join(' · ')}`, 'ok');
+      toast('Importado: ' + partes.join(' + '), 'ok');
 
     } catch(err) {
       toast('Erro ao importar: ' + err.message, 'err');
