@@ -10510,20 +10510,41 @@ function weekHrsForMachine(machine, monday){
 }
 
 function paPopulaSemanas(){
+  // ── Semanas ──────────────────────────────────────────────────
   const sel = document.getElementById('pa-semana-sel');
-  if(!sel) return;
-  const val = sel.value;
-  while(sel.options.length > 1) sel.remove(1);
-  const today = new Date();
-  for(let i=0; i<8; i++){
-    const mon = getWeekMonday(new Date(today.getTime() + i*7*86400000));
-    const sun = new Date(mon); sun.setDate(mon.getDate()+6);
-    const opt = document.createElement('option');
-    opt.value = dateStr(mon);
-    opt.textContent = `${fmtDate(mon)} – ${fmtDate(sun)} / ${mon.getFullYear()}`;
-    sel.appendChild(opt);
+  if(sel){
+    const val = sel.value;
+    while(sel.options.length > 1) sel.remove(1);
+    const today = new Date();
+    for(let i=0; i<8; i++){
+      const mon = getWeekMonday(new Date(today.getTime() + i*7*86400000));
+      const sun = new Date(mon); sun.setDate(mon.getDate()+6);
+      const opt = document.createElement('option');
+      opt.value = dateStr(mon);
+      opt.textContent = `${fmtDate(mon)} – ${fmtDate(sun)} / ${mon.getFullYear()}`;
+      sel.appendChild(opt);
+    }
+    if(val) sel.value = val;
   }
-  if(val) sel.value = val;
+
+  // ── Meses ────────────────────────────────────────────────────
+  const mesSel = document.getElementById('pa-mes-sel');
+  if(mesSel){
+    const valM = mesSel.value;
+    while(mesSel.options.length > 1) mesSel.remove(1);
+    const today2 = new Date();
+    const MESES = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+    for(let i=0; i<6; i++){
+      const d = new Date(today2.getFullYear(), today2.getMonth()+i, 1);
+      const opt = document.createElement('option');
+      opt.value = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+      opt.textContent = `${MESES[d.getMonth()]} ${d.getFullYear()}`;
+      mesSel.appendChild(opt);
+    }
+    if(valM) mesSel.value = valM;
+  }
+
+  // ── Máquinas filter ──────────────────────────────────────────────
   const maqSel = document.getElementById('pa-maq-filter');
   if(maqSel){
     while(maqSel.options.length > 1) maqSel.remove(1);
@@ -10533,9 +10554,30 @@ function paPopulaSemanas(){
       maqSel.appendChild(o);
     });
   }
+
+  // ── Mostrar/ocultar seletores conforme modo ──────────────────
+  paAtualizarVisibilidadeModo();
+}
+
+function paGetModo(){
+  return document.querySelector('input[name="pa-modo-periodo"]:checked')?.value || 'mes';
+}
+
+function paAtualizarVisibilidadeModo(){
+  const modo = paGetModo();
+  const rowSemana = document.getElementById('pa-row-semana');
+  const rowMes    = document.getElementById('pa-row-mes');
+  if(rowSemana) rowSemana.style.display = modo === 'semana' ? '' : 'none';
+  if(rowMes)    rowMes.style.display    = modo === 'mes'    ? '' : 'none';
+}
+
+function pa_onModoChange(){
+  paAtualizarVisibilidadeModo();
+  if(paResultados.length) renderProgAutomaticaResultado();
 }
 
 function pa_onSemanaChange(){ if(paResultados.length) renderProgAutomaticaResultado(); }
+function pa_onMesChange(){    if(paResultados.length) renderProgAutomaticaResultado(); }
 
 function gerarProgAutomarica(){
   // ================================================================
@@ -10573,30 +10615,51 @@ function gerarProgAutomarica(){
   const cobAlvo   = parseFloat(document.getElementById('pa-cobertura-alvo')?.value||'15');
   const riscoLim  = parseFloat(document.getElementById('pa-risco-critico')?.value||'3');
   const maxPctMaq = parseFloat(document.getElementById('pa-max-pct-maq')?.value||'60') / 100;
-
-  const semanaSel = document.getElementById('pa-semana-sel')?.value;
-  const monday    = semanaSel ? new Date(semanaSel+'T12:00:00') : getWeekMonday(new Date());
-  const days      = getWeekDays(monday);
   const alertEl   = document.getElementById('pa-alerta');
 
-  // PROBLEMA 4 FIX — opção de fechamento do mês na última semana
-  // 'este-mes'   → semanas calculadas só com dias do mês da semana selecionada
-  // 'mes-seguinte' → semana pode cruzar a virada (comportamento anterior)
-  const fechamentoMes = document.getElementById('pa-fechamento-mes')?.value || 'mes-seguinte';
-  const mesRef        = monday.getMonth();
-  const anoRef        = monday.getFullYear();
-  const ultimoDiaMes  = new Date(anoRef, mesRef + 1, 0); // último dia do mês ref
+  // ── MODO: mês ou semana ──────────────────────────────────────────
+  const paModo = paGetModo(); // 'mes' | 'semana'
 
-  // Pré-calcular os 4 Mondays e suas capacidades respeitando a regra de fechamento
-  const semanasPA = []; // [{monday, sunday, capPorMaq}]
-  for(let si = 0; si < 4; si++){
-    const wMon = new Date(monday); wMon.setDate(monday.getDate() + si * 7);
-    const wSun = new Date(wMon);   wSun.setDate(wMon.getDate() + 6);
-    // Clip de dias para este mês se modo 'este-mes' e esta semana cruza a virada
-    const efetivaSun = (fechamentoMes === 'este-mes' && wSun > ultimoDiaMes)
-      ? ultimoDiaMes : wSun;
-    semanasPA.push({ monday: wMon, sunday: efetivaSun, sunOriginal: wSun });
+  // Determinar período de referência e montar semanasPA
+  let semanasPA = [];
+  let monday, ultimoDiaMes, mesRef, anoRef;
+
+  if(paModo === 'semana'){
+    // Modo Semana: apenas a semana selecionada
+    const semanaSel = document.getElementById('pa-semana-sel')?.value;
+    monday = semanaSel ? new Date(semanaSel+'T12:00:00') : getWeekMonday(new Date());
+    mesRef = monday.getMonth();
+    anoRef = monday.getFullYear();
+    ultimoDiaMes = new Date(anoRef, mesRef + 1, 0);
+    const wSun = new Date(monday); wSun.setDate(monday.getDate() + 6);
+    semanasPA.push({ monday: new Date(monday), sunday: wSun, sunOriginal: wSun });
+  } else {
+    // Modo Mês: todas as semanas do mês selecionado
+    const mesSel = document.getElementById('pa-mes-sel')?.value;
+    const hoje = new Date();
+    if(mesSel){
+      const [yStr, mStr] = mesSel.split('-');
+      anoRef = parseInt(yStr); mesRef = parseInt(mStr) - 1;
+    } else {
+      anoRef = hoje.getFullYear(); mesRef = hoje.getMonth();
+    }
+    ultimoDiaMes = new Date(anoRef, mesRef + 1, 0);
+    const primeiroDiaMes = new Date(anoRef, mesRef, 1);
+    // Primeira segunda-feira que cobre o mês
+    let cur = getWeekMonday(primeiroDiaMes);
+    while(cur <= ultimoDiaMes){
+      const wMon = new Date(cur);
+      const wSun = new Date(cur); wSun.setDate(cur.getDate() + 6);
+      // Clip ao último dia do mês
+      const efetivaSun = wSun > ultimoDiaMes ? ultimoDiaMes : wSun;
+      semanasPA.push({ monday: wMon, sunday: efetivaSun, sunOriginal: wSun });
+      cur = new Date(cur); cur.setDate(cur.getDate() + 7);
+    }
+    monday = semanasPA[0].monday;
   }
+
+  const days = getWeekDays(monday);
+  const nSemanas = semanasPA.length; // dinâmico: 1 (semana) ou 4-5 (mês)
 
   if (!projecaoCalculada.length) {
     if(alertEl) alertEl.innerHTML = '<div style="background:rgba(255,179,0,.1);border:1px solid rgba(255,179,0,.3);border-radius:8px;padding:12px 14px;font-size:12px;color:var(--warn);margin-bottom:8px">'
@@ -10711,8 +10774,8 @@ function gerarProgAutomarica(){
     // Item 2 — produção programada por semana (entra no estoque na semana certa)
     // si=0: já contabilizado em naoPontadaAtual
     // si>0: entra na simulação quando o loop chegar naquela semana
-    const jaProgPorSemana = [0, 0, 0, 0];
-    for(let si = 0; si < 4; si++){
+    const jaProgPorSemana = Array(nSemanas).fill(0);
+    for(let si = 0; si < nSemanas; si++){
       const sp      = semanasPA[si];
       const wMonStr = dateStr(sp.monday);
       const wSunStr = dateStr(sp.sunday);
@@ -10837,12 +10900,12 @@ function gerarProgAutomarica(){
   // PROBLEMA 4 FIX: capacidade de cada semana é calculada com base nos
   // dias EFETIVOS da semana (respeitando clip de mês quando 'este-mes').
   const maqCapacidades = {};  // horas efetivas disponíveis/semana (média das 4 semanas)
-  const maqCapPorSemana = Array.from({length:4}, () => { const s={}; MAQUINAS.forEach(m=>s[m]=0); return s; });
+  const maqCapPorSemana = Array.from({length:nSemanas}, () => { const s={}; MAQUINAS.forEach(m=>s[m]=0); return s; });
   for(const maq of MAQUINAS){
     const maqData2 = getMaquinaData(maq);
     const efic = (maqData2 && parseFloat(maqData2.eficiencia) > 0)
       ? parseFloat(maqData2.eficiencia) / 100 : 1;
-    for(let si = 0; si < 4; si++){
+    for(let si = 0; si < nSemanas; si++){
       const sp = semanasPA[si];
       let hrsEfetivas = weekHrsForMachine(maq, sp.monday);
       if(!hrsEfetivas || hrsEfetivas <= 0){
@@ -10905,17 +10968,17 @@ function gerarProgAutomarica(){
   candidates.forEach(c => {
     allocations[c.prod] = {
       hrsTotal: 0, cxTotal: 0,
-      semanas: [0,0,0,0],
+      semanas: Array(nSemanas).fill(0),
       maquinas: {},
-      detalhes: Array.from({length:4}, () => ([]))
+      detalhes: Array.from({length:nSemanas}, () => ([]))
     };
   });
 
-  const maqHrsUsadas    = Array.from({length:4}, () => {
+  const maqHrsUsadas    = Array.from({length:nSemanas}, () => {
     const s = {}; MAQUINAS.forEach(m => { s[m] = 0; }); return s;
   });
   // PROBLEMA 4 FIX: usar capacidade efetiva por semana (com clip de mês)
-  const maqHrsRestantes = Array.from({length:4}, (_, si) => {
+  const maqHrsRestantes = Array.from({length:nSemanas}, (_, si) => {
     const s = {}; MAQUINAS.forEach(m => { s[m] = maqCapPorSemana[si][m] || 0; }); return s;
   });
 
@@ -11024,7 +11087,7 @@ function gerarProgAutomarica(){
     // recommending production that is already covered by scheduled records.
     const path = [];
     let estoq = c.estoqueSim; // = estoque + naoPontadaAtual
-    for(let s = 0; s < 4; s++){
+    for(let s = 0; s < nSemanas; s++){
       // Inject already-programmed production for this week (Item 2)
       estoq += (c.jaProgPorSemana && c.jaProgPorSemana[s] > 0 && s > 0)
         ? c.jaProgPorSemana[s] : 0;
@@ -11040,7 +11103,7 @@ function gerarProgAutomarica(){
     c._trajetoria = path;
 
     // Regra 3: não precisa produzir se o mês fecha bem sem nova produção
-    if(path[3].cobFin >= cobTeto){
+    if(path[nSemanas-1].cobFin >= cobTeto){
       c._semanaEntry = -1;
       return;
     }
@@ -11053,7 +11116,7 @@ function gerarProgAutomarica(){
 
     // Regra 2: encontrar a semana onde cobFim cai abaixo de cobMin
     let semRuptura = -1;
-    for(let s = 0; s < 4; s++){
+    for(let s = 0; s < nSemanas; s++){
       if(path[s].cobFin < cobMin){
         semRuptura = s;
         break;
@@ -11104,7 +11167,7 @@ function gerarProgAutomarica(){
   });
 
   // ── LOOP PRINCIPAL: 4 semanas, guiado por _semanaEntry ───────────
-  for(let sem = 0; sem < 4; sem++){
+  for(let sem = 0; sem < nSemanas; sem++){
 
     // ITEM 2 FIX — injetar produção já programada desta semana no estoque simulado
     // jaProgPorSemana[0] já está em estoqueSimInicial; semanas 1-3 entram aqui.
@@ -11202,7 +11265,7 @@ function gerarProgAutomarica(){
           // Simular restante do mês SEM nova produção, mas COM jaProgPorSemana futuro
           let estoqSemProd = c.estoqueSim;
           let cobreSemp = true;
-          for(let fs = sem; fs < 4; fs++){
+          for(let fs = sem; fs < nSemanas; fs++){
             // Injetar produção já programada desta semana futura (não duplicar sem=0)
             if(fs > 0) estoqSemProd += (c.jaProgPorSemana && c.jaProgPorSemana[fs]) || 0;
             // Injetar nova alocação desta semana se já foi registrada
@@ -11268,7 +11331,7 @@ function gerarProgAutomarica(){
         // FIX 2 — carryover: se ainda sobrou quantidade não alocada por falta
         // de capacidade, guardar para que a próxima semana absorva o deficit.
         // Isso evita "blocos fantasma" — o Gantt só mostrará o que realmente cabe.
-        if(cxRestante > 0 && sem < 3){
+        if(cxRestante > 0 && sem < nSemanas - 1){
           c._carryover = (c._carryover || 0) + cxRestante;
         }
       }
@@ -11306,7 +11369,7 @@ function gerarProgAutomarica(){
   // ── Recalcular prioridade com estado pós-simulação ───────────────
   candidates.forEach(c => {
     let estoq = c.estoque + (c.naoPontadaAtual || 0);
-    for(let s = 0; s < 4; s++){
+    for(let s = 0; s < nSemanas; s++){
       if(s > 0) estoq += (c.jaProgPorSemana && c.jaProgPorSemana[s]) || 0;
       estoq = Math.max(0, estoq + (allocations[c.prod].semanas[s] || 0) - c.demandaSemanal);
     }
@@ -11323,7 +11386,7 @@ function gerarProgAutomarica(){
   function recalcPath(c){
     const path = [];
     let estoq = c.estoque + (c.naoPontadaAtual || 0); // igual a estoqueSimInicial
-    for(let s = 0; s < 4; s++){
+    for(let s = 0; s < nSemanas; s++){
       // Injetar produção já programada nesta semana (s>0; s=0 já está em estoq)
       if(s > 0) estoq += (c.jaProgPorSemana && c.jaProgPorSemana[s]) || 0;
       const ini = estoq + (allocations[c.prod].semanas[s] || 0);
@@ -11379,7 +11442,7 @@ function gerarProgAutomarica(){
   for(let pass = 0; pass < 3; pass++){
     let algumaTroca = false;
 
-    for(let sem = 0; sem < 4; sem++){
+    for(let sem = 0; sem < nSemanas; sem++){
       for(const maqSrc of MAQUINAS){
         const capSrc = (maqCapPorSemana[sem]?.[maqSrc] || maqCapacidades[maqSrc] || 1);
         const occSrc = maqHrsUsadas[sem][maqSrc] / capSrc;
@@ -11462,7 +11525,7 @@ function gerarProgAutomarica(){
 
     for(const maq of MAQUINAS){
       // Use per-semana capacity (calculated per week for FASE B loop)
-      for(let semOrig = 0; semOrig < 4; semOrig++){
+      for(let semOrig = 0; semOrig < nSemanas; semOrig++){
         const cap = (maqCapPorSemana[semOrig]?.[maq] || maqCapacidades[maq] || 1);
         const occ = maqHrsUsadas[semOrig][maq] / cap;
 
@@ -11479,7 +11542,7 @@ function gerarProgAutomarica(){
             if(!det) continue;
 
             const candidatosDst = [];
-            for(let s = semOrig + 1; s < 4; s++) candidatosDst.push(s);
+            for(let s = semOrig + 1; s < nSemanas; s++) candidatosDst.push(s);
             for(let s = semOrig - 1; s >= 0; s--) candidatosDst.push(s);
 
             for(const semDst of candidatosDst){
@@ -11490,7 +11553,7 @@ function gerarProgAutomarica(){
               // Verificar que remoção em semOrig não causa ruptura
               let estoqCheck = c.estoque;
               let ruptura = false;
-              for(let s = 0; s < 4; s++){
+              for(let s = 0; s < nSemanas; s++){
                 const cxS = s === semOrig ? (allocations[c.prod].semanas[s] - det.cx) : allocations[c.prod].semanas[s];
                 estoqCheck = Math.max(0, estoqCheck + cxS - c.demandaSemanal);
                 if(s <= semOrig && c.demandaDiaria > 0 && estoqCheck / c.demandaDiaria < cobMin){
@@ -11501,7 +11564,7 @@ function gerarProgAutomarica(){
 
               // Verificar teto no destino
               let estoqDst = c.estoque;
-              for(let s = 0; s < 4; s++){
+              for(let s = 0; s < nSemanas; s++){
                 const cxS = (s === semOrig ? (allocations[c.prod].semanas[s] - det.cx) : allocations[c.prod].semanas[s])
                           + (s === semDst ? det.cx : 0);
                 estoqDst = Math.max(0, estoqDst + cxS - c.demandaSemanal);
@@ -11518,7 +11581,7 @@ function gerarProgAutomarica(){
 
         // ── Semana leve: antecipar de semana futura mais cheia ───────
         if(occ < ALVO_MIN_OCC){
-          for(let semSrc = semOrig + 1; semSrc < 4; semSrc++){
+          for(let semSrc = semOrig + 1; semSrc < nSemanas; semSrc++){
             const occSrc = maqHrsUsadas[semSrc][maq] / cap;
             if(occSrc <= ALVO_MIN_OCC) continue;
 
@@ -11537,7 +11600,7 @@ function gerarProgAutomarica(){
 
               // Verificar teto após antecipação
               let estoqCheck = c.estoque;
-              for(let s = 0; s < 4; s++){
+              for(let s = 0; s < nSemanas; s++){
                 const cxS = (s === semSrc ? (allocations[c.prod].semanas[s] - det.cx) : allocations[c.prod].semanas[s])
                           + (s === semOrig ? det.cx : 0);
                 estoqCheck = Math.max(0, estoqCheck + cxS - c.demandaSemanal);
@@ -11563,7 +11626,7 @@ function gerarProgAutomarica(){
   for(let pass = 0; pass < 2; pass++){
     let algumFill = false;
 
-    for(let sem = 0; sem < 4; sem++){
+    for(let sem = 0; sem < nSemanas; sem++){
       // Máquinas ociosas: <30% e não são 0% apenas porque nada foi programado
       const maqsOciosas = MAQUINAS.filter(m => {
         const cap = maqCapacidades[m] || 1;
@@ -11758,7 +11821,7 @@ function gerarProgAutomarica(){
       cobAtual:          c.cobAtual,
       cobComProg:        c.cobComProg,
       jaProgTotal:       c.jaProgTotal || 0,
-      jaProgPorSemana:   c.jaProgPorSemana || [0,0,0,0],
+      jaProgPorSemana:   c.jaProgPorSemana || Array(nSemanas).fill(0),
       saldoVirada:       c.saldoVirada || 0,
       necessidadeProxMes:c.necessidadeProxMes || 0,
       demandaDiaria:     c.demandaDiaria,
@@ -11769,8 +11832,9 @@ function gerarProgAutomarica(){
       hrsAlocadas:       parseFloat(hrsSemana1.toFixed(2)),
       hrsAlocadasTotal:  parseFloat(hrsAlocTotalFinal.toFixed(2)),
       cxAlocadas:        semanasFinal[0] || 0, // semana 1 (já ajustada pelo modo)
-      cxAlocadasTotal:   cxAlocadasFinal,      // total 4 semanas (já ajustado)
-      semanas:           semanasFinal,          // [cx_s1..s4] ajustados
+      cxAlocadasTotal:   cxAlocadasFinal,      // total do período (já ajustado)
+      nSemanas:          nSemanas,              // quantas semanas no período
+      semanas:           semanasFinal,          // [cx_s1..sN] ajustados
       detalhes:          detalhesFinal,         // por semana × máquina ajustados
       pctMaquina:        pctMaquina,
       cobProjetada,
@@ -11788,7 +11852,7 @@ function gerarProgAutomarica(){
   renderProgAutomaticaResultado();
   renderProgAutomaticaStats();
   document.getElementById('pa-apply-btn').style.display = paResultados.length ? 'flex' : 'none';
-  toast(`✅ Programação equilibrada: ${paResultados.length} produtos em 4 semanas`, 'ok');
+  toast(`✅ Programação equilibrada: ${paResultados.length} produto(s) em ${nSemanas} semana(s)`, 'ok');
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -11871,12 +11935,24 @@ function renderProgAutomaticaStats(){
     : fmtHrs(totalHrs);
   document.getElementById('pa-stat-hrs').textContent = hrsLabel;
 
-  const sel  = document.getElementById('pa-semana-sel');
-  const sval = sel ? sel.value : '';
-  const mon  = sval ? new Date(sval+'T12:00:00') : getWeekMonday(new Date());
-  const sun  = new Date(mon); sun.setDate(mon.getDate()+6);
-  const cxLabel = totalCxMes > 0 ? ` · ${totalCxMes.toLocaleString('pt-BR')} cx/mês` : '';
-  document.getElementById('pa-stat-semana').textContent = fmtDate(mon)+' – '+fmtDate(sun) + cxLabel;
+  // Label do período conforme modo selecionado
+  const paModoStats = paGetModo();
+  let periodoLabel = '';
+  if(paModoStats === 'semana'){
+    const sel  = document.getElementById('pa-semana-sel');
+    const sval = sel ? sel.value : '';
+    const mon  = sval ? new Date(sval+'T12:00:00') : getWeekMonday(new Date());
+    const sun  = new Date(mon); sun.setDate(mon.getDate()+6);
+    periodoLabel = fmtDate(mon)+' – '+fmtDate(sun);
+  } else {
+    const mesSel = document.getElementById('pa-mes-sel');
+    const mval = mesSel ? mesSel.value : '';
+    const MESES = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+    if(mval){ const [y,m]=mval.split('-'); periodoLabel=`${MESES[parseInt(m)-1]} ${y}`; }
+    else { const h=new Date(); periodoLabel=`${MESES[h.getMonth()]} ${h.getFullYear()}`; }
+  }
+  const cxLabel = totalCxMes > 0 ? ` · ${totalCxMes.toLocaleString('pt-BR')} cx` : '';
+  document.getElementById('pa-stat-semana').textContent = periodoLabel + cxLabel;
 }
 
 function renderProgAutomaticaResultado(){
@@ -11915,7 +11991,7 @@ function renderProgAutomaticaResultado(){
           ${maqSemInsumo>0?`<span style="background:rgba(255,71,87,.18);color:var(--red);padding:2px 8px;border-radius:6px;font-size:11px;font-weight:700">⚠️ ${maqSemInsumo} sem insumo</span>`:''}
         </div>
         <div style="display:flex;align-items:center;gap:14px;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text2)">
-          <span>${maqCox} cx S1${coxMesLabel} · ${fmtHrs(maqHrs)} · ${pctTotal}% da semana</span>
+          <span>${paGetModo()==='semana' ? maqCox+' cx' : (maqCox > 0 ? 'S1: '+maqCox+' cx' : '')}${coxMesLabel} · ${fmtHrs(maqHrs)} · ${pctTotal}% da capacidade</span>
           <div class="cov-bar-track" style="width:80px"><div class="cov-bar-fill" style="width:${pctTotal}%;background:${parseFloat(pctTotal)>85?'var(--red)':parseFloat(pctTotal)>65?'var(--warn)':'var(--cyan)'}"></div></div>
         </div>
       </div>
@@ -11927,13 +12003,13 @@ function renderProgAutomaticaResultado(){
             <th>Estoque</th>
             <th>Cob. Atual</th>
             <th>Dem. Sem.</th>
-            <th>Semana 1</th>
-            <th>Total Mês</th>
+            <th id="pa-th-s1">S1 / Período</th>
+            <th>Total Período</th>
             <th>Tempo</th>
             <th>% Máq.</th>
             <th>Cob. Final</th>
             <th>Insumos</th>
-            <th>Distribuição S1 + Plano 4 Sem.</th>
+            <th id="pa-th-dist">Distribuição por Semana</th>
           </tr></thead>
           <tbody>${items.map((p,pi)=>{
             const cobColor = p.risco==='critico'?'var(--red)':p.risco==='alto'?'var(--warn)':p.risco==='medio'?'var(--cyan)':'var(--green)';
@@ -11943,8 +12019,8 @@ function renderProgAutomaticaResultado(){
             const rowBg = !p.insumosOk ? 'background:rgba(255,71,87,.06);' : '';
             const rowBorder = !p.insumosOk ? 'border-left:3px solid var(--red);' : '';
 
-            // Mini plano 4 semanas
-            const semanas = p.semanas || [p.cxAlocadas||0, 0, 0, 0];
+            // Mini plano de semanas (dinâmico: 1 semana ou N semanas do mês)
+            const semanas = p.semanas || Array(p.nSemanas||1).fill(0).map((_,i)=>i===0?(p.cxAlocadas||0):0);
             const maxSem  = Math.max(...semanas, 1);
             const semPills = semanas.map((cx, i) => {
               const barW   = Math.round(cx / maxSem * 40);
@@ -12081,8 +12157,20 @@ async function aplicarProgAutomaticaNoGantt(){
   // registro somando as caixas — evita duplicata no Gantt.
   function buildPlanejamento(sug){
     const plano = []; // [{si, maq, cx, pcMin, dtDesejada}]
-    const semanaSel = document.getElementById('pa-semana-sel')?.value;
-    const monday    = semanaSel ? new Date(semanaSel+'T12:00:00') : getWeekMonday(new Date());
+    // Recuperar a segunda da semana 0 correta conforme modo (mês ou semana)
+    const paModoApply = paGetModo();
+    let monday;
+    if(paModoApply === 'semana'){
+      const semanaSel = document.getElementById('pa-semana-sel')?.value;
+      monday = semanaSel ? new Date(semanaSel+'T12:00:00') : getWeekMonday(new Date());
+    } else {
+      // Modo mês: usar a segunda da primeira semana do mês selecionado
+      const mesSel = document.getElementById('pa-mes-sel')?.value;
+      const hoje = new Date();
+      let anoA = hoje.getFullYear(), mesA = hoje.getMonth();
+      if(mesSel){ const [y,m]=mesSel.split('-'); anoA=parseInt(y); mesA=parseInt(m)-1; }
+      monday = getWeekMonday(new Date(anoA, mesA, 1));
+    }
 
     const useDetalhes = sug.detalhes && sug.detalhes.some(sem => sem && sem.length > 0);
 
@@ -12116,7 +12204,8 @@ async function aplicarProgAutomaticaNoGantt(){
       }
     } else {
       // Fallback — um registro por semana, máquina principal
-      const semanasCx = sug.semanas || [sug.cxAlocadas || 0, 0, 0, 0];
+      const nSemFb = sug.nSemanas || sug.semanas?.length || 1;
+      const semanasCx = sug.semanas || Array(nSemFb).fill(0).map((_,i)=>i===0?(sug.cxAlocadas||0):0);
       const ficha     = getAllProdutos().find(p => String(p.cod)===String(sug.cod) || p.descricao===sug.prod);
       const pcMinUsar = (ficha && ficha.pc_min) || sug.pc_min || 0;
 
@@ -14648,5 +14737,8 @@ window.renderProgAutomaticaResultado = renderProgAutomaticaResultado;
 window.aplicarProgAutomaticaNoGantt = aplicarProgAutomaticaNoGantt;
 window.simularCenario = simularCenario;
 window.pa_onSemanaChange = pa_onSemanaChange;
+window.pa_onMesChange    = pa_onMesChange;
+window.pa_onModoChange   = pa_onModoChange;
+window.paGetModo          = paGetModo;
 window.paToggleInsumos = paToggleInsumos;
 window.progToggleInsumos = progToggleInsumos;

@@ -605,7 +605,35 @@
       <div class="dc dc-cyan"><div class="dc-lbl">Sugestões Geradas</div><div class="dc-num" style="font-size:26px" id="pa-stat-sugestoes">—</div></div>
       <div class="dc dc-purple"><div class="dc-lbl">Máquinas Envolvidas</div><div class="dc-num" style="font-size:26px" id="pa-stat-maq">—</div></div>
       <div class="dc dc-green"><div class="dc-lbl">Horas de Produção</div><div class="dc-num" style="font-size:22px" id="pa-stat-hrs">—</div></div>
-      <div class="dc" style="background:var(--s1);border:1px solid var(--border)"><div class="dc-lbl">Semana Alvo</div><div class="dc-num" style="font-size:16px;padding-top:6px" id="pa-stat-semana">—</div></div>
+      <div class="dc" style="background:var(--s1);border:1px solid var(--border)"><div class="dc-lbl">Período Alvo</div><div class="dc-num" style="font-size:16px;padding-top:6px" id="pa-stat-semana">—</div></div>
+    </div>
+
+    <!-- Seletor de Modo: Mês ou Semana -->
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;padding:10px 14px;background:var(--s1);border:1px solid var(--border);border-radius:10px">
+      <span style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;min-width:72px">Período</span>
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:5px 14px;border-radius:20px;border:1px solid var(--border);font-size:12px;font-weight:600;transition:all .15s">
+        <input type="radio" name="pa-modo-periodo" value="mes" checked onchange="pa_onModoChange()" style="accent-color:var(--cyan)">
+        📅 Mês
+      </label>
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:5px 14px;border-radius:20px;border:1px solid var(--border);font-size:12px;font-weight:600;transition:all .15s">
+        <input type="radio" name="pa-modo-periodo" value="semana" onchange="pa_onModoChange()" style="accent-color:var(--cyan)">
+        📆 Semana
+      </label>
+      <!-- Mês alvo (visível no modo Mês) -->
+      <div id="pa-row-mes" style="display:flex;align-items:center;gap:8px">
+        <label style="font-size:11px;color:var(--text3)">Mês alvo</label>
+        <select id="pa-mes-sel" class="finp" style="font-size:12px;padding:5px 10px;min-width:170px" onchange="pa_onMesChange()">
+          <option value="">— selecione —</option>
+        </select>
+        <span style="font-size:10px;color:var(--text3)">venda + estoque desejado − estoque atual, distribuído nas semanas</span>
+      </div>
+      <!-- Semana alvo (visível no modo Semana) -->
+      <div id="pa-row-semana" style="display:none;align-items:center;gap:8px">
+        <label style="font-size:11px;color:var(--text3)">Semana</label>
+        <select id="pa-semana-sel" class="finp" style="font-size:12px;padding:5px 10px;min-width:220px" onchange="pa_onSemanaChange()">
+          <option value="">— semana atual —</option>
+        </select>
+      </div>
     </div>
 
     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:16px">
@@ -614,9 +642,6 @@
       <button class="btn btn-success" id="pa-apply-btn" onclick="aplicarProgAutomaticaNoGantt()" style="display:none;background:var(--green);color:#000;border:none;padding:10px 20px">✅ Aplicar no Gantt / Programação</button>
       <button class="btn btn-ghost" onclick="simularCenario()">🔬 Simular Cenário</button>
       <div style="flex:1"></div>
-      <select id="pa-semana-sel" class="finp" style="font-size:12px;padding:7px 10px;min-width:200px" onchange="pa_onSemanaChange()">
-        <option value="">— Selecionar semana alvo —</option>
-      </select>
       <select id="pa-maq-filter" class="finp" style="font-size:12px;padding:7px 10px;min-width:160px" onchange="renderProgAutomaticaResultado()">
         <option value="">Todas as máquinas</option>
       </select>
