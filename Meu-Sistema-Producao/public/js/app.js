@@ -2475,7 +2475,11 @@ function buildSchedule(monday){
     const totalProd = (typeof calcularTotalProduzido==='function')
       ? calcularTotalProduzido(r.id) : 0;
     const remaining = (r.qntCaixas||0) - totalProd;
-    return remaining > 0;
+    if (remaining <= 0) return false;
+    // Não replicar além da semana imediatamente seguinte à dtDesejada
+    const desejadaMon = getWeekMonday(new Date(startDate + 'T12:00:00'));
+    const nextMon = new Date(desejadaMon); nextMon.setDate(nextMon.getDate() + 7);
+    return mondayStr <= dateStr(nextMon);
   });
 
   // Group by machine, respect sortOrder field
