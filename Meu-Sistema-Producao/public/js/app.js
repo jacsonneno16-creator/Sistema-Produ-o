@@ -10756,6 +10756,17 @@ function gerarProgAutomarica(){
     // semana a semana no loop principal (Item 2).
     const estoqueSimInicial = estoque + naoPontadaAtual;
 
+    // ── FÓRMULA SIMPLES DE NECESSIDADE MENSAL ──────────────────────
+    // Quanto produzir no mês = venda do mês + estoque desejado no fim − estoque atual
+    // Estoque desejado = (metaCoberturaDias / 30) × projeção mensal
+    // Ex: venda=20.000, meta=30d, estoque=2.000 → (20.000 + 20.000 − 2.000) = 38.000
+    const projMensal     = proj.projFinal * 4; // projeção semanal × 4
+    const diasMetaEst    = (metaCoberturaDias > 0) ? metaCoberturaDias : cobAlvo;
+    const estoqueDesejado = Math.round((diasMetaEst / 30) * projMensal);
+    const cxNecessarioMensal = Math.max(0,
+      projMensal + estoqueDesejado - estoque - naoPontadaAtual - jaProgTotal
+    );
+
     candidates.push({
       prod: proj.produto,
       cod:  proj.cod,
@@ -10768,6 +10779,8 @@ function gerarProgAutomarica(){
       jaProgTotal,
       saldoVirada,
       necessidadeProxMes,
+      cxNecessarioMensal,                    // teto total do mês pela fórmula simples
+      cxAlocadoTotal:     0,                 // acumula o que foi alocado no mês
       cobAtual:           parseFloat(cobAtual.toFixed(1)),
       cobComProg:         parseFloat(cobComProg.toFixed(1)),
       demandaDiaria:      parseFloat(demandaDiaria.toFixed(2)),
@@ -11147,6 +11160,16 @@ function gerarProgAutomarica(){
         }
         if(cxNecessario <= 0) continue;
 
+        // ── TETO MENSAL: nunca alocar mais do que cxNecessarioMensal no total ──
+        // Garante que a soma de todas as semanas não ultrapasse a necessidade
+        // calculada pela fórmula simples (venda + estoque desejado − estoque atual).
+        if(c.cxNecessarioMensal > 0){
+          const cxRestanteMes = Math.max(0, c.cxNecessarioMensal - (c.cxAlocadoTotal || 0));
+          if(cxRestanteMes <= 0) continue;
+          cxNecessario = Math.min(cxNecessario, cxRestanteMes);
+        }
+        if(cxNecessario <= 0) continue;
+
         // Respeitar mínimo e múltiplo
         if(c.producaoMinima > 0 && cxNecessario < c.producaoMinima)
           cxNecessario = c.producaoMinima;
@@ -11235,6 +11258,7 @@ function gerarProgAutomarica(){
           if(cxAlocar <= 0) continue;
 
           registrarAlocacao(c.prod, sem, mc.maquina, cxAlocar, hrsAlocar, mc.pc_min, c.unid);
+          c.cxAlocadoTotal       = (c.cxAlocadoTotal || 0) + cxAlocar;
           c.estoqueSim       += cxAlocar;
           cxRestante         -= cxAlocar;
           cxEfetivamenteAlocado += cxAlocar;
