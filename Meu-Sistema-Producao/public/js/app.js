@@ -7267,7 +7267,7 @@ async function carregarProdutosFirestore() {
     if (!snap.empty) {
       PRODUTOS = snap.docs
         .map(d => normalizeProdutoFirestore({ ...d.data(), _id: d.id }))
-        .filter(p => p.ativo !== false && p.descricao);
+        .filter(p => p.descricao);
       console.log('[PRODUTOS] Carregados do Firestore:', PRODUTOS.length);
     } else {
       console.log('[PRODUTOS] Nenhum produto no Firestore. Use Configurações → Produtos para importar.');
@@ -7564,80 +7564,72 @@ function editarProduto(cod, maquina, descricao) {
 }
 
 async function excluirProduto(cod, maquina, descricao) {
-  if (!confirm(`Tem certeza que deseja excluir o produto:\n\n${descricao} (${cod})\n\nEsta ação não pode ser desfeita.`)) {
-    return;
-  }
-  
+  if (!confirm('Tem certeza que deseja excluir o produto:\n\n' + descricao + ' (' + cod + ')\n\nEsta acao nao pode ser desfeita.')) return;
+
   try {
-    // Verificar se há registros de produção vinculados (por cod, independente de máquina)
     const registrosVinculados = records.filter(r => String(r.codProduto) === String(cod) || String(r.cod) === String(cod));
     if (registrosVinculados.length > 0) {
-      if (!confirm(`ATENÇÃO: Este produto possui ${registrosVinculados.length} registro(s) de produção vinculados.\n\nExcluir o produto pode causar inconsistências no sistema.\n\nDeseja continuar mesmo assim?`)) {
-        return;
-      }
+      if (!confirm('ATENCAO: Este produto possui ' + registrosVinculados.length + ' registro(s) de producao vinculados.\n\nDeseja continuar mesmo assim?')) return;
     }
-    
-    // Remover produto dos arrays globais — por cod (produto pode ter múltiplas máquinas)
-    let removidoSucesso = false;
+
     const codStr = String(cod);
+    const codNum = parseInt(cod);
 
-    // Buscar todos os registros com este cod (inclui _id do Firestore)
+    // 1. Apagar do Firestore — tenta por _id primeiro, depois query por cod
     const todosOsProdutos = getAllProdutos();
-    const produtosParaExcluir = todosOsProdutos.filter(p => String(p.cod) === codStr);
+    const comId = todosOsProdutos.filter(p => String(p.cod) === codStr && p._id);
 
-    // Remover TODOS os registros com este cod do array de produtos extras (localStorage)
-    const extraAntes = PRODUTOS_EXTRA.length;
-    const novosExtra = PRODUTOS_EXTRA.filter(p => String(p.cod) !== codStr);
-    if (novosExtra.length < extraAntes) {
-      PRODUTOS_EXTRA.splice(0, PRODUTOS_EXTRA.length);
-      novosExtra.forEach(p => PRODUTOS_EXTRA.push(p));
-      localStorage.setItem('produtos_extra', JSON.stringify(PRODUTOS_EXTRA));
-      removidoSucesso = true;
-    }
-
-    // Remover TODOS do cache global (Firestore cache)
-    if (typeof window.PRODUTOS !== 'undefined' && Array.isArray(window.PRODUTOS)) {
-      const antes = window.PRODUTOS.length;
-      const novos = window.PRODUTOS.filter(p => String(p.cod) !== codStr);
-      if (novos.length < antes) {
-        window.PRODUTOS.splice(0, window.PRODUTOS.length);
-        novos.forEach(p => window.PRODUTOS.push(p));
-        removidoSucesso = true;
+    if (comId.length > 0) {
+      await Promise.all(comId.map(p => deleteDoc(lojaDoc('produtos', p._id))));
+    } else {
+      const snap = await getDocs(query(lojaCol('produtos'), where('cod', '==', codNum)));
+      if (!snap.empty) {
+        await Promise.all(snap.docs.map(d => deleteDoc(lojaDoc('produtos', d.id))));
       }
     }
 
-    // Excluir do Firestore — todos os docs com este cod
-    const firestoreMatches = produtosParaExcluir.filter(p => p._id);
-    if (firestoreMatches.length > 0) {
-      await Promise.all(firestoreMatches.map(p =>
-        deleteDoc(lojaDoc('produtos', p._id)).catch(e => console.warn('Firestore delete err:', p._id, e))
-      ));
-      removidoSucesso = true;
-    } else {
-      // Fallback: buscar no Firestore pelo cod caso _id não esteja em memória
-      try {
-        const snap = await getDocs(query(lojaCol('produtos'), where('cod', '==', parseInt(cod))));
-        if (!snap.empty) {
-          await Promise.all(snap.docs.map(d =>
-            deleteDoc(lojaDoc('produtos', d.id)).catch(e => console.warn('Firestore delete fallback err:', d.id, e))
-          ));
-          removidoSucesso = true;
-        }
-      } catch(e) { console.warn('Erro ao buscar produto no Firestore para exclusão:', e); }
+    // 2. Apagar ficha tecnica vinculada
+    try {
+      const snapFicha = await getDocs(query(lojaCol('fichaTecnica'), where('cod', '==', codNum)));
+      if (!snapFicha.empty) {
+        await Promise.all(snapFicha.docs.map(d => deleteDoc(lojaDoc('fichaTecnica', d.id))));
+      }
+    } catch(ef) { console.warn('Erro ao apagar ficha:', ef); }
+
+    // 3. Limpar memoria — remove TODOS os registros com esse cod
+    if (Array.isArray(window.PRODUTOS)) {
+      for (let i = window.PRODUTOS.length - 1; i >= 0; i--) {
+        if (String(window.PRODUTOS[i].cod) === codStr) window.PRODUTOS.splice(i, 1);
+      }
+    }
+    if (typeof PRODUTOS_EXTRA !== 'undefined' && Array.isArray(PRODUTOS_EXTRA)) {
+      for (let i = PRODUTOS_EXTRA.length - 1; i >= 0; i--) {
+        if (String(PRODUTOS_EXTRA[i].cod) === codStr) PRODUTOS_EXTRA.splice(i, 1);
+      }
+      localStorage.setItem('produtos_extra', JSON.stringify(PRODUTOS_EXTRA));
+    }
+    if (typeof fichaTecnicaData !== 'undefined' && Array.isArray(fichaTecnicaData)) {
+      for (let i = fichaTecnicaData.length - 1; i >= 0; i--) {
+        if (parseInt(fichaTecnicaData[i].cod) === codNum) fichaTecnicaData.splice(i, 1);
+      }
+    }
+    if (typeof FICHA_TECNICA !== 'undefined' && Array.isArray(FICHA_TECNICA)) {
+      for (let i = FICHA_TECNICA.length - 1; i >= 0; i--) {
+        if (parseInt(FICHA_TECNICA[i].cod) === codNum) FICHA_TECNICA.splice(i, 1);
+      }
     }
 
+    // 4. Recarregar do Firestore e re-renderizar
     invalidateCache('produtos');
-    if (removidoSucesso) {
-      toast(`Produto "${descricao}" excluído com sucesso`, 'ok');
-      registrarAuditoria('PRODUTO_EXCLUIDO', { cod, descricao, maquina, registrosVinculados: registrosVinculados.length });
-      renderProdutosCfg();
-    } else {
-      toast('Produto não encontrado. Recarregue a página e tente novamente.', 'warn');
-    }
-    
+    await carregarProdutosCached(true);
+    renderProdutosCfg();
+
+    toast('Produto "' + descricao + '" excluido', 'ok');
+    registrarAuditoria('PRODUTO_EXCLUIDO', { cod, descricao, maquina });
+
   } catch(e) {
     console.error('Erro ao excluir produto:', e);
-    toast('Erro ao excluir produto: ' + e.message, 'err');
+    toast('Erro ao excluir: ' + e.message, 'err');
   }
 }
 
