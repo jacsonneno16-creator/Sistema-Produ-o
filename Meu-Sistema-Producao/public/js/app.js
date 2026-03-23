@@ -1721,6 +1721,8 @@ function getProdInfo(rec){
           return { ...byCode, pc_min: produtoEntry.velocidade };
         }
       }
+      // Se o record tem pcMin salvo (vindo da PA p/ máquina específica), usar ele
+      if(rec.pcMin && rec.pcMin > 0) return { ...byCode, pc_min: rec.pcMin };
       return byCode;
     }
   }
@@ -1739,6 +1741,7 @@ function getProdInfo(rec){
         return { ...byName, pc_min: produtoEntry.velocidade };
       }
     }
+    if(rec.pcMin && rec.pcMin > 0) return { ...byName, pc_min: rec.pcMin };
     return byName;
   }
   // Priority 3: use stored pcMin/unidPorCx from record itself
@@ -10868,8 +10871,10 @@ function gerarProgAutomarica(){
     const s = {}; MAQUINAS.forEach(m => { s[m] = 0; }); return s;
   });
   // PROBLEMA 4 FIX: usar capacidade efetiva por semana (com clip de mês)
+  // maxPctMaq aplicado já aqui para que scoreMaquina e todos os checks downstream
+  // respeitem o limite configurado (ex: 90%) desde o início da alocação.
   const maqHrsRestantes = Array.from({length:4}, (_, si) => {
-    const s = {}; MAQUINAS.forEach(m => { s[m] = maqCapPorSemana[si][m] || 0; }); return s;
+    const s = {}; MAQUINAS.forEach(m => { s[m] = (maqCapPorSemana[si][m] || 0) * maxPctMaq; }); return s;
   });
 
   // ── Helper: score de máquina ────────────────────────────────────
@@ -11172,12 +11177,11 @@ function gerarProgAutomarica(){
         // é marcado em c._carryover para ser considerado na próxima semana.
         const maqPrinc = maqsOrdenadas[0];
         const hrsNecPrinc = (cxRestante * c.unid) / (maqPrinc.pc_min * 60);
-        const maxHrsPrinc = (maqCapPorSemana[sem][maqPrinc.maquina] || maqCapacidades[maqPrinc.maquina] || 0) * maxPctMaq;
-        const hrsJaAlocPrinc = allocations[c.prod].maquinas[maqPrinc.maquina]
-          ? (allocations[c.prod].maquinas[maqPrinc.maquina] * c.unid) / (maqPrinc.pc_min * 60)
-          : 0;
-        const hrsPermitPrinc   = Math.max(0, maxHrsPrinc - hrsJaAlocPrinc);
-        const hrsAlocarPrinc   = Math.min(hrsNecPrinc, maqHrsRestantes[sem][maqPrinc.maquina], hrsPermitPrinc);
+        // maxHrsPrinc = hrsRestantes já incorpora maxPctMaq (aplicado na inicialização)
+        const maxHrsPrinc = maqHrsRestantes[sem][maqPrinc.maquina];
+        const hrsJaAlocPrinc = 0; // redundante: maqHrsRestantes já desconta alocações via registrarAlocacao
+        const hrsPermitPrinc   = maxHrsPrinc;
+        const hrsAlocarPrinc   = Math.min(hrsNecPrinc, hrsPermitPrinc);
         const cxAlocarPrinc    = Math.floor(hrsAlocarPrinc * 60 * maqPrinc.pc_min / c.unid);
         const principalAbsorve = cxAlocarPrinc >= cxRestante;
 
@@ -11187,12 +11191,8 @@ function gerarProgAutomarica(){
         for(let mi = 0; mi < maxMaquinas && cxRestante > 0; mi++){
           const mc        = maqsOrdenadas[mi];
           const hrsNec    = (cxRestante * c.unid) / (mc.pc_min * 60);
-          const maxHrs    = (maqCapPorSemana[sem][mc.maquina] || maqCapacidades[mc.maquina] || 0) * maxPctMaq;
-          const hrsJaAloc = allocations[c.prod].maquinas[mc.maquina]
-            ? (allocations[c.prod].maquinas[mc.maquina] * c.unid) / (mc.pc_min * 60)
-            : 0;
-          const hrsPermit = Math.max(0, maxHrs - hrsJaAloc);
-          const hrsAlocar = Math.min(hrsNec, maqHrsRestantes[sem][mc.maquina], hrsPermit);
+          // maqHrsRestantes já inclui o cap de maxPctMaq
+          const hrsAlocar = Math.min(hrsNec, maqHrsRestantes[sem][mc.maquina]);
           if(hrsAlocar < 0.01) continue;
 
           const cxAlocar = Math.floor(hrsAlocar * 60 * mc.pc_min / c.unid);
@@ -12123,7 +12123,7 @@ async function aplicarProgAutomaticaNoGantt(){
         dtSolicitacao: p.dtDesejada,
         dtDesejada:    p.dtDesejada,
         sortOrder:     Date.now() + pi,   // garante sequência única
-        obs:           `Auto S${p.si+1} ${p.maq} — ${motivoBase}`,
+        obs:           `Auto S${p.si+1} — ${motivoBase}`,
         updatedAt:     hoje
       };
       await dbPut(obj);
