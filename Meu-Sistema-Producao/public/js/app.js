@@ -2815,7 +2815,7 @@ function renderGanttSemanal(){
     <div class="g-head-label" style="font-size:9px">Tempo<br>h</div>
     <div class="g-head-label" style="font-size:9px">Set Up<br>h</div>
     <div class="g-head-label" style="font-size:9px">H.<br>Prog.</div>
-    <div class="g-head-label" style="font-size:9px">Destino /<br>Ref.</div>`;
+    <div class="g-head-label" style="font-size:9px">Obser-<br>vação</div>`;
   days.forEach(d=>{
     const isToday=dateStr(d)===today;
     const isWknd=hoursOnDay(d)===0;
@@ -2867,14 +2867,16 @@ function renderGanttSemanal(){
 
     let firstRowOfMaq=true;
 
-    // ── CONSOLIDAR por produto: agrupar entries do mesmo produto+obs em uma linha.
-    // Registros com obs diferente (ex: Nacional vs Exportação) ficam em linhas separadas.
+    // ── CONSOLIDAR por produto: agrupar entries do mesmo produto em uma linha.
+    // Registros manuais com obs diferente ficam em linhas separadas.
+    // Registros automáticos (obs vazia) sempre agrupam por produto apenas.
     const prodMap = {};
     for(const entry of entries){
       const obs = (entry.rec.obs || '').trim();
       const prodNorm = (entry.rec.produto || '').trim().toLowerCase();
-      // Chave inclui obs para separar linhas com mesmo produto mas destinos distintos
-      const pk = prodNorm + '||' + obs.toLowerCase();
+      // Registros automáticos (obs vazia) agrupam só por produto+máquina
+      // Registros manuais com obs diferente ficam em linhas separadas
+      const pk = obs ? (prodNorm + '||' + obs.toLowerCase()) : prodNorm;
       if(!prodMap[pk]){
         prodMap[pk] = {
           produto:    entry.rec.produto,
@@ -10461,7 +10463,16 @@ function weekHrsForMachine(machine, monday){
   return getWeekDays(monday).reduce((a,d) => a + hoursOnMachineDay(machine, d), 0);
 }
 
+function pa_onModoChange(){
+  const modo = document.querySelector('input[name="pa-modo-periodo"]:checked')?.value || 'mes';
+  const rowMes    = document.getElementById('pa-row-mes');
+  const rowSemana = document.getElementById('pa-row-semana');
+  if(rowMes)    rowMes.style.display    = modo === 'mes'    ? 'flex' : 'none';
+  if(rowSemana) rowSemana.style.display = modo === 'semana' ? 'flex' : 'none';
+}
+
 function paPopulaSemanas(){
+  // Popular semanas
   const sel = document.getElementById('pa-semana-sel');
   if(!sel) return;
   const val = sel.value;
@@ -10476,6 +10487,26 @@ function paPopulaSemanas(){
     sel.appendChild(opt);
   }
   if(val) sel.value = val;
+
+  // Popular meses
+  const mesSel = document.getElementById('pa-mes-sel');
+  if(mesSel){
+    const mesVal = mesSel.value;
+    while(mesSel.options.length > 1) mesSel.remove(1);
+    const now = new Date();
+    for(let i=0; i<6; i++){
+      const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
+      const opt = document.createElement('option');
+      opt.value = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+      opt.textContent = `${GANTT_MONTH_NAMES[d.getMonth()]} / ${d.getFullYear()}`;
+      mesSel.appendChild(opt);
+    }
+    if(mesVal) mesSel.value = mesVal;
+    else if(mesSel.options.length > 1) mesSel.selectedIndex = 1; // seleciona mês atual por padrão
+  }
+
+  // Garantir visibilidade correta dos seletores
+  pa_onModoChange();
   const maqSel = document.getElementById('pa-maq-filter');
   if(maqSel){
     while(maqSel.options.length > 1) maqSel.remove(1);
@@ -12107,7 +12138,7 @@ async function aplicarProgAutomaticaNoGantt(){
         dtSolicitacao: p.dtDesejada,
         dtDesejada:    p.dtDesejada,
         sortOrder:     Date.now() + pi,   // garante sequência única
-        obs:           `Auto S${p.si+1} — ${motivoBase}`,
+        obs:           '',
         updatedAt:     hoje
       };
       await dbPut(obj);
@@ -14572,5 +14603,7 @@ window.renderProgAutomaticaResultado = renderProgAutomaticaResultado;
 window.aplicarProgAutomaticaNoGantt = aplicarProgAutomaticaNoGantt;
 window.simularCenario = simularCenario;
 window.pa_onSemanaChange = pa_onSemanaChange;
+window.pa_onModoChange   = pa_onModoChange;
+window.pa_onMesChange    = function(){ if(paResultados.length) renderProgAutomaticaResultado(); };
 window.paToggleInsumos = paToggleInsumos;
 window.progToggleInsumos = progToggleInsumos;
