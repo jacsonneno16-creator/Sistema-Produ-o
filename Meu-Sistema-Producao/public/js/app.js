@@ -1705,53 +1705,37 @@ function fmtHrs(h){
 // Central helper: get reliable pc_min and unid for a record
 function getProdInfo(rec){
   const all = getAllProdutos();
-  // Priority 1: match by product code (most reliable)
-  if(rec.prodCod){
-    const byCode=all.find(x=>x.cod===rec.prodCod);
-    if(byCode) {
-      // Check if machine has specific velocity for this product
-      const maqData = getMaquinaData(rec.maquina);
-      if (maqData && Array.isArray(maqData.produtosCompativeis)) {
-        const produtoEntry = maqData.produtosCompativeis.find(p => 
-          p.produto === byCode.descricao || 
-          byCode.descricao.includes(p.produto) ||
-          p.produto.includes(byCode.descricao)
-        );
-        if (produtoEntry && produtoEntry.velocidade && produtoEntry.velocidade > 0) {
-          return { ...byCode, pc_min: produtoEntry.velocidade };
-        }
-      }
-      // Se o record tem pcMin salvo (vindo da PA p/ máquina específica), usar ele
-      if(rec.pcMin && rec.pcMin > 0) return { ...byCode, pc_min: rec.pcMin };
-      return byCode;
-    }
+
+  // Resolve ficha do produto (por código ou nome)
+  let ficha = null;
+  if(rec.prodCod) ficha = all.find(x => x.cod === rec.prodCod);
+  if(!ficha && rec.produto) ficha = all.find(x => rec.produto.startsWith(x.descricao.substring(0,22)));
+
+  // Velocidade da máquina específica para este produto.
+  // getPcMinMaquinaProduto lê de produtosCompativeis[].velocidade da máquina correta.
+  const nomeProduto = ficha ? ficha.descricao : (rec.produto || '');
+  const velMaquina = rec.maquina ? getPcMinMaquinaProduto(rec.maquina, nomeProduto) : null;
+
+  if(ficha){
+    // Ordem de prioridade da velocidade:
+    // 1. Velocidade configurada na máquina para este produto (produtosCompativeis)
+    // 2. pcMin salvo no registro (calculado pela PA para a máquina específica)
+    // 3. Velocidade genérica da ficha do produto (fallback)
+    const pcMinFinal = (velMaquina && velMaquina > 0)
+      ? velMaquina
+      : (rec.pcMin && rec.pcMin > 0 ? rec.pcMin : ficha.pc_min);
+    return { ...ficha, pc_min: pcMinFinal };
   }
-  // Priority 2: match by machine + product name prefix
-  const byName=all.find(x=>x.maquina===rec.maquina&&rec.produto&&rec.produto.startsWith(x.descricao.substring(0,22)));
-  if(byName) {
-    // Check for specific velocity in machine
-    const maqData = getMaquinaData(rec.maquina);
-    if (maqData && Array.isArray(maqData.produtosCompativeis)) {
-      const produtoEntry = maqData.produtosCompativeis.find(p => 
-        p.produto === byName.descricao || 
-        byName.descricao.includes(p.produto) ||
-        p.produto.includes(byName.descricao)
-      );
-      if (produtoEntry && produtoEntry.velocidade && produtoEntry.velocidade > 0) {
-        return { ...byName, pc_min: produtoEntry.velocidade };
-      }
-    }
-    if(rec.pcMin && rec.pcMin > 0) return { ...byName, pc_min: rec.pcMin };
-    return byName;
-  }
-  // Priority 3: use stored pcMin/unidPorCx from record itself
-  if(rec.pcMin&&rec.unidPorCx) return {pc_min:rec.pcMin, unid:rec.unidPorCx};
-  // Priority 4: check machine data from Firestore
-  const maqData = getMaquinaData(rec.maquina);
-  if (maqData && maqData.pcMin) return {pc_min: parseFloat(maqData.pcMin), unid: rec.unidPorCx || 1};
-  // Priority 5: first product of same machine
-  const byMaq=all.find(x=>x.maquina===rec.maquina);
-  return byMaq||{pc_min:1,unid:1};
+
+  // Sem ficha: usar velocidade da máquina ou do registro
+  const pcMinFallback = (velMaquina && velMaquina > 0)
+    ? velMaquina
+    : (rec.pcMin && rec.pcMin > 0 ? rec.pcMin : 0);
+  if(pcMinFallback > 0) return { pc_min: pcMinFallback, unid: rec.unidPorCx || 1 };
+
+  // Último recurso: primeiro produto da máquina
+  const byMaq = all.find(x => x.maquina === rec.maquina);
+  return byMaq || { pc_min: 1, unid: 1 };
 }
 
 // ===== MÁQUINAS =====
