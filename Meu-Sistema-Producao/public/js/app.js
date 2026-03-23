@@ -574,18 +574,33 @@ async function salvarSetupFirestore(maquina, prodOrigem, prodDestino, tempoMinut
   } catch(e) { toast('Erro ao salvar setup: ' + e.message, 'err'); }
 }
 
-// Normaliza nome de produto para chave de lookup
+// Normaliza nome de produto para chave de lookup de setup.
+// Remove o sufixo de embalagem (ex: "- CX 12", "- UN 6") que não faz parte
+// da identidade do produto para fins de troca de setup.
 function normProd(s){
   return (s||'').toUpperCase().trim()
-    .replace(/\s+/g,' ')
-    .replace(/[_\-]+/g,' ')
-    .replace(/\bDA\s+TERRINHA\b/g,'TERRINHA')
-    .replace(/\bDE\s+TERRINHA\b/g,'TERRINHA')
-    .replace(/\bDATERRINHA\b/g,'TERRINHA')
-    .replace(/\bDO\s+RANCHO\b/g,'RANCHO')
-    .replace(/\bCOOP\b/g,'COOP')
-    .replace(/\bMERCADAO\b/g,'MERCADAO')
-    .replace(/\bOBA\b/g,'OBA');
+    // Remover sufixo de embalagem antes de qualquer outra coisa:
+    //   "PRODUTO X - CX 12"  → "PRODUTO X"
+    //   "PRODUTO X CX 12"    → "PRODUTO X"   (sem travessão)
+    //   "PRODUTO X - UN 6"   → "PRODUTO X"
+    //   "PRODUTO X - PCT 24" → "PRODUTO X"
+    .replace(/\s*[-–]\s*(CX|UN|PCT|FD|SC|BD|KG|KIT)\s*\d+.*$/i, '')
+    .replace(/\s+(CX|UN|PCT|FD|SC|BD|KG|KIT)\s+\d+.*$/i, '')
+    // Normalizar pontuação e espaços
+    .replace(/[_\-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    // Variantes de marca / localização
+    .replace(/\bDA\s+TERRINHA\b/g,  'TERRINHA')
+    .replace(/\bDE\s+TERRINHA\b/g,  'TERRINHA')
+    .replace(/\bDATERRINHA\b/g,     'TERRINHA')
+    .replace(/\bDO\s+RANCHO\b/g,    'RANCHO')
+    .replace(/\bCOOP\b/g,           'COOP')
+    .replace(/\bMERCADAO\b/g,       'MERCADAO')
+    .replace(/\bOBA\b/g,            'OBA')
+    // Colapsar espaços finais novamente após substituições
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 // Matriz de setup: agora vem exclusivamente do Firestore (coleção setup_maquinas).
