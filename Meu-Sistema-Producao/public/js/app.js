@@ -2454,11 +2454,16 @@ function buildSchedule(monday){
     if(!startDate) return false;
     if(startDate>=mondayStr && startDate<=sundayStr) return true;
     if(startDate<mondayStr){
-      // Verificar se ainda há produção restante (overflow real)
+      // Overflow real: só registros que foram INICIADOS mas não concluídos.
+      // Registros Pendentes (totalProduzido = 0) de semanas anteriores NÃO
+      // devem aparecer em semanas futuras — eles ficam visíveis apenas na
+      // sua semana original até o usuário os reprogramar ou produzi-los.
+      // Isso evita acúmulo de quantidades e repetição infinita no Gantt.
       const totalProd = (typeof calcularTotalProduzido==='function')
         ? calcularTotalProduzido(r.id) : 0;
+      if(totalProd <= 0) return false; // pendente puro — não overflow
       const remaining = (r.qntCaixas||0) - totalProd;
-      return remaining > 0; // só overflow real
+      return remaining > 0; // só overflow real: iniciado mas não concluído
     }
     return false;
   });
