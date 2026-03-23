@@ -5829,11 +5829,11 @@ function renderProducaoDiaControlado() {
           .join('');
         if (!funcOpts) return;
         html += `
-          <div style="padding:4px 8px;border-top:1px solid var(--border);background:rgba(139,92,246,.05);display:flex;align-items:center;gap:6px">
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-            <span style="font-size:9px;color:var(--purple);white-space:nowrap">${maq.length>10?maq.substring(0,10)+'…':maq}</span>
+          <div style="padding:5px 8px;border-top:1px solid var(--border);background:rgba(139,92,246,.05);display:flex;align-items:center;gap:6px">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" stroke-width="2" style="flex-shrink:0"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+            <span style="font-size:9px;color:var(--purple);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;width:90px;min-width:90px;flex-shrink:0" title="${maq}">${maq}</span>
             <select onchange="pdSelecionarFunc(this,'${ds}','${maq}')"
-                    style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:10px;padding:2px 4px">
+                    style="flex:1;min-width:0;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:10px;padding:2px 4px">
               <option value="">— operador —</option>
               ${funcOpts}
             </select>
@@ -9522,35 +9522,11 @@ function toggleTopbarMenu() {
   if(menu) menu.classList.toggle('on');
 }
 
-// ── Alternar tema claro / escuro ──────────────────────────────────────────────
-function toggleTema() {
-  const html  = document.documentElement;
-  const isLight = html.getAttribute('data-theme') === 'light';
-  const novoTema = isLight ? 'dark' : 'light';
-  html.setAttribute('data-theme', novoTema);
-  localStorage.setItem('dt-tema', novoTema);
+// ── Alternar tema claro / escuro (definido em index.html como script global) ──
+// A função toggleTema() está no script inline do index.html para garantir
+// que esteja no escopo global e possa ser chamada por onclick="toggleTema()".
+// Este alias registra a função no window caso o módulo seja carregado antes.
 
-  // Atualizar ícone e label no botão do menu
-  const icon  = document.getElementById('hd-tema-icon');
-  const label = document.getElementById('hd-tema-label');
-  if(icon)  icon.textContent  = novoTema === 'light' ? '🌙' : '☀️';
-  if(label) label.textContent = novoTema === 'light' ? 'Tema Escuro' : 'Tema Claro';
-}
-
-// Aplicar tema salvo assim que o script carrega
-(function aplicarTemaSalvo(){
-  const saved = localStorage.getItem('dt-tema');
-  if(saved === 'light'){
-    document.documentElement.setAttribute('data-theme', 'light');
-    // Atualizar botão após DOM pronto
-    window.addEventListener('DOMContentLoaded', () => {
-      const icon  = document.getElementById('hd-tema-icon');
-      const label = document.getElementById('hd-tema-label');
-      if(icon)  icon.textContent  = '🌙';
-      if(label) label.textContent = 'Tema Escuro';
-    }, { once: true });
-  }
-})();
 
 // ===== LOGIN HANDLING =====
 function handleLogin() {
@@ -14729,6 +14705,7 @@ window.tableWeekReset = tableWeekReset;
 window.tableWeekNav = tableWeekNav;
 window.toggleHdMenu = toggleHdMenu;
 window.toggleTopbarMenu = toggleTopbarMenu;
+window.toggleTema = toggleTema;
 window.goPg = goPg;
 window.editRec = editRec;
 window.askDel = askDel;

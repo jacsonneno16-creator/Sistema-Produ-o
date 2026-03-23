@@ -1540,6 +1540,45 @@
 <div class="toasts" id="toasts"></div>
 
 <script src="js/turnosMaquinas.js"></script>
+
+<!-- Tema: definido como script normal (não módulo) para ficar no escopo global -->
+<script>
+  // Aplicar tema salvo ANTES do render para evitar flash
+  (function(){
+    var t = localStorage.getItem('dt-tema');
+    if(t === 'light') document.documentElement.setAttribute('data-theme','light');
+  })();
+
+  function toggleTema(){
+    var html = document.documentElement;
+    var isLight = html.getAttribute('data-theme') === 'light';
+    var novoTema = isLight ? 'dark' : 'light';
+    if(novoTema === 'dark'){
+      html.removeAttribute('data-theme');
+    } else {
+      html.setAttribute('data-theme', novoTema);
+    }
+    localStorage.setItem('dt-tema', novoTema);
+    var icon  = document.getElementById('hd-tema-icon');
+    var label = document.getElementById('hd-tema-label');
+    if(icon)  icon.textContent  = novoTema === 'light' ? '🌙' : '☀️';
+    if(label) label.textContent = novoTema === 'light' ? 'Tema Escuro' : 'Tema Claro';
+    // Atualizar ícone no botão imediatamente após abrir a página em tema claro
+    _atualizarBotaoTema();
+  }
+
+  function _atualizarBotaoTema(){
+    var isLight = document.documentElement.getAttribute('data-theme') === 'light';
+    var icon  = document.getElementById('hd-tema-icon');
+    var label = document.getElementById('hd-tema-label');
+    if(icon)  icon.textContent  = isLight ? '🌙' : '☀️';
+    if(label) label.textContent = isLight ? 'Tema Escuro' : 'Tema Claro';
+  }
+
+  // Atualizar botão após DOM pronto (caso tema claro esteja salvo)
+  document.addEventListener('DOMContentLoaded', _atualizarBotaoTema);
+</script>
+
 <script type="module" src="js/app.js"></script>
 
 <!-- PWA Install Bar -->
