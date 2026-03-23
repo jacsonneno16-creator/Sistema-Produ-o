@@ -2494,6 +2494,12 @@ function buildSchedule(monday){
     byMaq[m].sort((a,b)=>{
       const sa=a.sortOrder!=null?a.sortOrder:a.id;
       const sb=b.sortOrder!=null?b.sortOrder:b.id;
+      // Não-alergênico sempre antes de alergênico na mesma máquina
+      const pA = getAllProdutos().find(p => p.descricao === a.produto || p.descricao?.trim() === a.produto?.trim());
+      const pB = getAllProdutos().find(p => p.descricao === b.produto || p.descricao?.trim() === b.produto?.trim());
+      const aAlerg = pA?.alergenico === true ? 1 : 0;
+      const bAlerg = pB?.alergenico === true ? 1 : 0;
+      if(aAlerg !== bAlerg) return aAlerg - bAlerg; // não-alerg (0) vem antes de alerg (1)
       return sa-sb;
     });
   }
@@ -2943,8 +2949,10 @@ function renderGanttSemanal(){
       // Máquina col
       html+=`<div class="g-col-maq"><span class="g-col-maq-txt">${recMaq}</span></div>`;
 
-      // Produto label col
-      html+=`<div class="g-label"><strong title="${produto}${obs?' — '+obs:''}">${produto}</strong></div>`;
+      // Produto label col — inclui badge de alergênico se aplicável
+      const prodAlerg = getAllProdutos().find(p => p.descricao === produto || p.descricao?.trim() === produto?.trim());
+      const isAlerg = prodAlerg?.alergenico === true;
+      html+=`<div class="g-label"><strong title="${produto}${obs?' — '+obs:''}">${produto}</strong>${isAlerg?'<span style="font-size:9px;font-weight:700;color:#ff9900;background:rgba(255,153,0,.15);border:1px solid rgba(255,153,0,.35);padding:1px 5px;border-radius:6px;margin-left:5px;white-space:nowrap">⚠️ Alerg.</span>':''}</div>`;
 
       // Qtd cx col — soma de todos os registros
       html+=`<div class="g-col-qty"><div class="g-col-qty-txt">${qntCaixas}<br><span style="font-size:9px;color:var(--text3);font-weight:400">cx</span></div></div>`;
@@ -7503,6 +7511,7 @@ function renderProdutosCfg() {
           <span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:${desativado?'var(--text4)':'var(--cyan)'};flex-shrink:0">${p.cod}</span>
           <span style="font-size:12px;color:${desativado?'var(--text3)':'var(--text)'}">${p.descricao}</span>
           ${desativado ? '<span style="font-size:9px;font-weight:700;color:var(--red);background:rgba(255,71,87,.12);border:1px solid rgba(255,71,87,.3);padding:1px 7px;border-radius:10px;letter-spacing:.5px">DESATIVADO</span>' : ''}
+          ${p.alergenico ? '<span style="font-size:9px;font-weight:700;color:#ff9900;background:rgba(255,153,0,.12);border:1px solid rgba(255,153,0,.3);padding:1px 7px;border-radius:10px;letter-spacing:.5px">⚠️ ALERGÊNICO</span>' : ''}
         </div>
         <div style="display:flex;align-items:center;gap:6px;margin-top:5px;flex-wrap:wrap">
           <span style="font-size:10px;color:${desativado?'var(--text4)':'var(--warn)'};font-family:'JetBrains Mono',monospace">${p.pc_min} und/min</span>
@@ -7588,6 +7597,7 @@ function openAddProduto() {
   ['pm-cobertura','pm-prod-min','pm-multiplo','pm-prioridade'].forEach(id => { const el = document.getElementById(id); if(el) el.value = ''; });
   const tipoMin = document.getElementById('pm-tipo-min'); if(tipoMin) tipoMin.value = '';
   const pmAtivo = document.getElementById('pm-ativo'); if(pmAtivo) pmAtivo.value = 'true';
+  const pmAlerg = document.getElementById('pm-alergenico'); if(pmAlerg) pmAlerg.value = 'false';
   const pmInsumos = document.getElementById('pm-insumos-list'); if(pmInsumos) pmInsumos.innerHTML = '';
   const titleEl = document.getElementById('prod-modal-title') || document.getElementById('maq-modal-title');
   if(titleEl) titleEl.textContent = 'Novo Produto';
@@ -7619,6 +7629,7 @@ function editarProduto(cod, maquina, descricao) {
   const elTipo = document.getElementById('pm-tipo-min');   if(elTipo) elTipo.value  = produto.tipoMinimo          || '';
   const elPrio = document.getElementById('pm-prioridade'); if(elPrio) elPrio.value  = produto.prioridadeProducao  || '';
   const elAtivo= document.getElementById('pm-ativo');      if(elAtivo) elAtivo.value = (produto.produtoAtivo !== false) ? 'true' : 'false';
+  const elAlerg= document.getElementById('pm-alergenico'); if(elAlerg) elAlerg.value = produto.alergenico ? 'true' : 'false';
   
   // Popular máquinas no select
   const sel = document.getElementById('pm-maq');
@@ -7744,10 +7755,11 @@ async function saveProdModal() {
   const tipoMinimo         = document.getElementById('pm-tipo-min')?.value             || '';
   const prioridadeProducao = parseInt(document.getElementById('pm-prioridade')?.value) || 2;
   const produtoAtivo       = document.getElementById('pm-ativo')?.value !== 'false';
+  const alergenico         = document.getElementById('pm-alergenico')?.value === 'true';
 
   const dados = {
     cod, descricao: desc, unid, kg_fd: 0, pc_min: pcmin, maquina: maq,
-    metaCoberturaDias, producaoMinima, multiploProducao, tipoMinimo, prioridadeProducao, produtoAtivo
+    metaCoberturaDias, producaoMinima, multiploProducao, tipoMinimo, prioridadeProducao, produtoAtivo, alergenico
   };
 
   const eraNovoProduto = !_produtoEditando;
@@ -12260,10 +12272,19 @@ async function aplicarProgAutomaticaNoGantt(){
     `O Gantt refletirá exatamente a divisão calculada.`
   )) return;
 
-  const ficha0    = null; // será buscado por produto abaixo
+  // Ordenar sugestões: não-alergênico antes de alergênico por dia×máquina
+  // Isso garante que ao criar os registros, o sortOrder coloca não-alerg primeiro.
+  const sugsOrdenadas = [...paResultados].sort((a, b) => {
+    const fA = getAllProdutos().find(p => String(p.cod)===String(a.cod) || p.descricao===a.prod);
+    const fB = getAllProdutos().find(p => String(p.cod)===String(b.cod) || p.descricao===b.prod);
+    const aA = fA?.alergenico === true ? 1 : 0;
+    const bA = fB?.alergenico === true ? 1 : 0;
+    return aA - bA; // não-alerg (0) antes de alerg (1)
+  });
+
   let criados = 0;
 
-  for(const sug of paResultados){
+  for(const sug of sugsOrdenadas){
     const plano    = planosMap.get(sug) || [];
     const ficha    = getAllProdutos().find(p => String(p.cod)===String(sug.cod) || p.descricao===sug.prod);
     const unidUsar = (ficha && ficha.unid) || sug.unid || 1;
