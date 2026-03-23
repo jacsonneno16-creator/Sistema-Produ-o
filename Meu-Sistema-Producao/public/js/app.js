@@ -9522,6 +9522,36 @@ function toggleTopbarMenu() {
   if(menu) menu.classList.toggle('on');
 }
 
+// ── Alternar tema claro / escuro ──────────────────────────────────────────────
+function toggleTema() {
+  const html  = document.documentElement;
+  const isLight = html.getAttribute('data-theme') === 'light';
+  const novoTema = isLight ? 'dark' : 'light';
+  html.setAttribute('data-theme', novoTema);
+  localStorage.setItem('dt-tema', novoTema);
+
+  // Atualizar ícone e label no botão do menu
+  const icon  = document.getElementById('hd-tema-icon');
+  const label = document.getElementById('hd-tema-label');
+  if(icon)  icon.textContent  = novoTema === 'light' ? '🌙' : '☀️';
+  if(label) label.textContent = novoTema === 'light' ? 'Tema Escuro' : 'Tema Claro';
+}
+
+// Aplicar tema salvo assim que o script carrega
+(function aplicarTemaSalvo(){
+  const saved = localStorage.getItem('dt-tema');
+  if(saved === 'light'){
+    document.documentElement.setAttribute('data-theme', 'light');
+    // Atualizar botão após DOM pronto
+    window.addEventListener('DOMContentLoaded', () => {
+      const icon  = document.getElementById('hd-tema-icon');
+      const label = document.getElementById('hd-tema-label');
+      if(icon)  icon.textContent  = '🌙';
+      if(label) label.textContent = 'Tema Escuro';
+    }, { once: true });
+  }
+})();
+
 // ===== LOGIN HANDLING =====
 function handleLogin() {
   const email = document.getElementById('lf-email').value.trim();
@@ -12390,6 +12420,7 @@ function renderCalculos(){
 
 window.toggleSidebar = toggleSidebar;
 window.toggleTopbarMenu = toggleTopbarMenu;
+window.toggleTema = toggleTema;
 window.handleLogin = handleLogin;
 window.logout = () => import('./auth.js').then(m => m.logout());
 
