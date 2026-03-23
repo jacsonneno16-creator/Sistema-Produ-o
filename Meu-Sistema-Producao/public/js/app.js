@@ -2773,9 +2773,10 @@ function renderGanttSemanal(){
       <span style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block">${r.produto.substring(0,30)}</span>
     </div>`).join('');
 
-  // COL WIDTHS — LABEL_W é ajustável pelo usuário (salvo no localStorage)
-  const MAQ_W=72, QTY_W=48, TEMPO_W=52, SETUP_W=52, TOTMAQ_W=68, OBS_W=140, DQTY_W=36;
+  // COL WIDTHS — LABEL_W e OBS_W são ajustáveis pelo usuário (salvo no localStorage)
+  const MAQ_W=72, QTY_W=48, TEMPO_W=52, SETUP_W=52, TOTMAQ_W=68, DQTY_W=36;
   const LABEL_W = parseInt(localStorage.getItem('gantt-label-width') || '280');
+  const OBS_W   = parseInt(localStorage.getItem('gantt-obs-width')   || '140');
   const gridCols=`${MAQ_W}px ${LABEL_W}px ${QTY_W}px ${TEMPO_W}px ${SETUP_W}px ${TOTMAQ_W}px ${OBS_W}px repeat(7,1fr) repeat(7,${DQTY_W}px)`;
 
   // Pre-calculate total SCHEDULED hours per machine for THIS WEEK only
@@ -2815,7 +2816,11 @@ function renderGanttSemanal(){
     <div class="g-head-label" style="font-size:9px">Tempo<br>h</div>
     <div class="g-head-label" style="font-size:9px">Set Up<br>h</div>
     <div class="g-head-label" style="font-size:9px">H.<br>Prog.</div>
-    <div class="g-head-label" style="font-size:9px">Obser-<br>vação</div>`;
+    <div class="g-head-label" style="font-size:9px;white-space:nowrap;position:relative" id="gantt-col-obs">Observação
+      <div id="gantt-obs-resizer" style="position:absolute;right:0;top:0;width:6px;height:100%;cursor:col-resize;display:flex;align-items:center;justify-content:center;z-index:10" title="Arraste para redimensionar">
+        <div style="width:2px;height:60%;background:var(--border);border-radius:2px"></div>
+      </div>
+    </div>`;
   days.forEach(d=>{
     const isToday=dateStr(d)===today;
     const isWknd=hoursOnDay(d)===0;
@@ -2961,9 +2966,28 @@ function renderGanttSemanal(){
             html+=`<div style="position:absolute;left:${blkLeft.toFixed(1)}%;width:${blkW.toFixed(1)}%;top:0;bottom:0;background:${blkColors[blk.turnoIdx]||''};border-left:1px dashed rgba(255,255,255,.06)"></div>`;
           });
 
-          daySeg.forEach(seg=>{
-            const leftPct=seg.startPct.toFixed(1);
-            const widthPct=(seg.endPct-seg.startPct).toFixed(1);
+          // Mesclar segmentos contíguos do mesmo dia para evitar barra partida.
+          // Dois segmentos são contíguos quando endPct de um ≈ startPct do próximo
+          // (diferença ≤ 0.5 pp). Segmentos de turnos diferentes mas consecutivos
+          // também são fundidos — a barra única vai do início do primeiro ao fim do último.
+          const segsMerged = [];
+          const segsOrdered = [...daySeg].sort((a,b) => a.startPct - b.startPct);
+          segsOrdered.forEach(seg => {
+            const last = segsMerged[segsMerged.length - 1];
+            if(last && Math.abs(seg.startPct - last.endPct) <= 0.5){
+              // Fundir: estender o último segmento
+              last.endPct      = Math.max(last.endPct, seg.endPct);
+              last.caixasNoDia += seg.caixasNoDia;
+              last.hrsNoDia    += seg.hrsNoDia;
+              last.turnoLabel   = ''; // multi-turno: não exibir label de turno
+            } else {
+              segsMerged.push({ ...seg });
+            }
+          });
+
+          segsMerged.forEach(seg=>{
+            const leftPct  = Math.max(0, seg.startPct).toFixed(1);
+            const widthPct = Math.max(0.5, seg.endPct - seg.startPct).toFixed(1);
             const cx=seg.caixasNoDia;
             const hrsLabel=fmtHrs(seg.hrsNoDia);
             const turnoTip=seg.turnoLabel?` · ${seg.turnoLabel}`:'';
@@ -3002,6 +3026,14 @@ function renderGanttSemanal(){
   document.getElementById('gantt-table').innerHTML=html;
   document.getElementById('gantt-summary').innerHTML='';
 
+  // ── Helper local: reconstruir grid com larguras salvas ──
+  function _ganttRebuildGrid(){
+    const MAQ_W=72, QTY_W=48, TEMPO_W=52, SETUP_W=52, TOTMAQ_W=68, DQTY_W=36;
+    const lW = parseInt(localStorage.getItem('gantt-label-width') || '280');
+    const oW = parseInt(localStorage.getItem('gantt-obs-width')   || '140');
+    return `${MAQ_W}px ${lW}px ${QTY_W}px ${TEMPO_W}px ${SETUP_W}px ${TOTMAQ_W}px ${oW}px repeat(7,1fr) repeat(7,${DQTY_W}px)`;
+  }
+
   // ── Resize da coluna Produto do Gantt ──
   (function initGanttLabelResizer(){
     const resizer = document.getElementById('gantt-label-resizer');
@@ -3012,17 +3044,38 @@ function renderGanttSemanal(){
       const startW = parseInt(localStorage.getItem('gantt-label-width') || '280');
       resizer.querySelector('div').style.background = 'var(--cyan)';
       function onMove(ev){
-        const delta = ev.clientX - startX;
-        const newW = Math.max(120, Math.min(520, startW + delta));
+        const newW = Math.max(120, Math.min(520, startW + (ev.clientX - startX)));
         localStorage.setItem('gantt-label-width', newW);
-        const MAQ_W=72, QTY_W=48, TEMPO_W=52, SETUP_W=52, TOTMAQ_W=68, OBS_W=140, DQTY_W=36;
-        const newGrid=`${MAQ_W}px ${newW}px ${QTY_W}px ${TEMPO_W}px ${SETUP_W}px ${TOTMAQ_W}px ${OBS_W}px repeat(7,1fr) repeat(7,${DQTY_W}px)`;
-        document.querySelectorAll('.gantt-row, .gantt-head-row').forEach(el=>{
-          el.style.gridTemplateColumns = newGrid;
-        });
+        const g = _ganttRebuildGrid();
+        document.querySelectorAll('.gantt-row, .gantt-head-row').forEach(el=>{ el.style.gridTemplateColumns = g; });
       }
       function onUp(){
         resizer.querySelector('div').style.background = 'var(--border)';
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+      }
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+  })();
+
+  // ── Resize da coluna Observação do Gantt ──
+  (function initGanttObsResizer(){
+    const obsResizer = document.getElementById('gantt-obs-resizer');
+    if(!obsResizer) return;
+    obsResizer.addEventListener('mousedown', function(e){
+      e.preventDefault();
+      const startX = e.clientX;
+      const startW = parseInt(localStorage.getItem('gantt-obs-width') || '140');
+      obsResizer.querySelector('div').style.background = 'var(--cyan)';
+      function onMove(ev){
+        const newW = Math.max(60, Math.min(400, startW + (ev.clientX - startX)));
+        localStorage.setItem('gantt-obs-width', newW);
+        const g = _ganttRebuildGrid();
+        document.querySelectorAll('.gantt-row, .gantt-head-row').forEach(el=>{ el.style.gridTemplateColumns = g; });
+      }
+      function onUp(){
+        obsResizer.querySelector('div').style.background = 'var(--border)';
         document.removeEventListener('mousemove', onMove);
         document.removeEventListener('mouseup', onUp);
       }
@@ -10557,8 +10610,31 @@ function gerarProgAutomarica(){
   const riscoLim  = parseFloat(document.getElementById('pa-risco-critico')?.value||'3');
   const maxPctMaq = parseFloat(document.getElementById('pa-max-pct-maq')?.value||'60') / 100;
 
-  const semanaSel = document.getElementById('pa-semana-sel')?.value;
-  const monday    = semanaSel ? new Date(semanaSel+'T12:00:00') : getWeekMonday(new Date());
+  // ── Calcular monday de referência ─────────────────────────────────
+  // Modo "Mês": usar a primeira segunda-feira do mês alvo selecionado.
+  //             Isso evita que a programação caia no mês atual quando o
+  //             usuário quer programar o mês seguinte.
+  // Modo "Semana": usar a semana selecionada no selector (comportamento original).
+  const modoPeriodo = document.querySelector('input[name="pa-modo-periodo"]:checked')?.value || 'mes';
+  const mesSel      = document.getElementById('pa-mes-sel')?.value;     // "YYYY-MM"
+  const semanaSel   = document.getElementById('pa-semana-sel')?.value;  // "YYYY-MM-DD"
+
+  let monday;
+  if(modoPeriodo === 'mes' && mesSel){
+    // Primeira segunda-feira do mês alvo
+    const [anoAlvo, mesAlvo] = mesSel.split('-').map(Number);
+    const primeiroDiaMes = new Date(anoAlvo, mesAlvo - 1, 1, 12, 0, 0);
+    monday = getWeekMonday(primeiroDiaMes);
+    // Se a segunda caiu no mês anterior, avançar uma semana para ficar dentro do mês alvo
+    if(monday.getMonth() !== primeiroDiaMes.getMonth() && monday < primeiroDiaMes){
+      monday = new Date(monday); monday.setDate(monday.getDate() + 7);
+    }
+  } else if(modoPeriodo === 'semana' && semanaSel){
+    monday = new Date(semanaSel + 'T12:00:00');
+  } else {
+    monday = getWeekMonday(new Date());
+  }
+
   const days      = getWeekDays(monday);
   const alertEl   = document.getElementById('pa-alerta');
 
@@ -10890,6 +10966,45 @@ function gerarProgAutomarica(){
   // respeitem o limite configurado (ex: 90%) desde o início da alocação.
   const maqHrsRestantes = Array.from({length:4}, (_, si) => {
     const s = {}; MAQUINAS.forEach(m => { s[m] = (maqCapPorSemana[si][m] || 0) * maxPctMaq; }); return s;
+  });
+
+  // ── FIX 5: descontar horas de registros já existentes no Gantt ────
+  // Sem esse desconto, a programação automática ignora o que já está
+  // programado e aloca até 100% da capacidade, ultrapassando o limite
+  // configurado pelo usuário (ex: 90%).
+  // Para cada registro já existente (não-Concluído), calculamos as horas
+  // que ele ocupa em cada uma das 4 semanas e descontamos de maqHrsRestantes.
+  records.forEach(r => {
+    if(r.status === 'Concluído') return;
+    const maqNome = r.maquina;
+    if(!maqNome || !MAQUINAS.includes(maqNome)) return;
+    const pcMinRec = (function(){
+      const maqD = getMaquinaData(maqNome);
+      const prodEntry = Array.isArray(maqD?.produtosCompativeis)
+        ? maqD.produtosCompativeis.find(p => p.produto === r.produto) : null;
+      return parseFloat(prodEntry?.velocidade || maqD?.pcMin || 1) || 1;
+    })();
+    const unidRec = (function(){
+      const ficha = getAllProdutos().find(p => String(p.cod) === String(r.prodCod) || p.descricao === r.produto);
+      return parseFloat(ficha?.unid || 1) || 1;
+    })();
+    const hrsRec = ((r.qntCaixas || 0) * unidRec) / (pcMinRec * 60);
+    if(hrsRec <= 0) return;
+    const dtRec = r.dtDesejada || r.dtSolicitacao || '';
+    for(let si = 0; si < 4; si++){
+      const sp = semanasPA[si];
+      const wMon = dateStr(sp.monday);
+      const wSun = dateStr(sp.sunday);
+      if(dtRec >= wMon && dtRec <= wSun){
+        if(maqHrsRestantes[si][maqNome] != null){
+          maqHrsRestantes[si][maqNome] = Math.max(0, maqHrsRestantes[si][maqNome] - hrsRec);
+        }
+        if(maqHrsUsadas[si][maqNome] != null){
+          maqHrsUsadas[si][maqNome] += hrsRec;
+        }
+        break;
+      }
+    }
   });
 
   // ── Helper: score de máquina ────────────────────────────────────
