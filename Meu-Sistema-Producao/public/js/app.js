@@ -546,20 +546,40 @@ async function carregarSetupFirestore() {
     snap.docs.forEach(d => {
       const data = d.data();
       const maq = data.maquina || '';
-      const pA = normProd(data.produto_origem || '');
-      const pB = normProd(data.produto_destino || '');
-      const t = parseInt(data.tempo_setup) || 0;
-      if (!maq || !pA || !pB) return;
+      const pAOrig = (data.produto_origem || '').trim();
+      const pBOrig = (data.produto_destino || '').trim();
+      const pA = normProd(pAOrig);
+      const pB = normProd(pBOrig);
+      // Usar parseInt mas aceitar 0 como valor válido (|| pode descartar 0)
+      const t = (data.tempo_setup != null && data.tempo_setup !== '') ? parseInt(data.tempo_setup) : null;
+      if (!maq || !pA || !pB || t == null) return;
       if (!SETUP_FIRESTORE[maq]) SETUP_FIRESTORE[maq] = {};
+
+      // Indexar pela chave normalizada (busca principal)
       if (!SETUP_FIRESTORE[maq][pA]) SETUP_FIRESTORE[maq][pA] = {};
       SETUP_FIRESTORE[maq][pA][pB] = t;
+
+      // Indexar também pelo nome original para fallback quando normProd não bate
+      if (pAOrig !== pA) {
+        if (!SETUP_FIRESTORE[maq][pAOrig]) SETUP_FIRESTORE[maq][pAOrig] = {};
+        if (SETUP_FIRESTORE[maq][pAOrig][pBOrig] == null) SETUP_FIRESTORE[maq][pAOrig][pBOrig] = t;
+        if (SETUP_FIRESTORE[maq][pAOrig][pB] == null)     SETUP_FIRESTORE[maq][pAOrig][pB]     = t;
+      }
+
       // Bidirecional se não existir o inverso
       if (!SETUP_FIRESTORE[maq][pB]) SETUP_FIRESTORE[maq][pB] = {};
       if (SETUP_FIRESTORE[maq][pB][pA] == null) SETUP_FIRESTORE[maq][pB][pA] = t;
+      if (pBOrig !== pB) {
+        if (!SETUP_FIRESTORE[maq][pBOrig]) SETUP_FIRESTORE[maq][pBOrig] = {};
+        if (SETUP_FIRESTORE[maq][pBOrig][pAOrig] == null) SETUP_FIRESTORE[maq][pBOrig][pAOrig] = t;
+        if (SETUP_FIRESTORE[maq][pBOrig][pA] == null)     SETUP_FIRESTORE[maq][pBOrig][pA]     = t;
+      }
     });
     if (!snap.empty) console.log('[SETUP] Carregados do Firestore:', snap.size, 'registros');
   } catch(e) {
     console.warn('[SETUP] Usando matriz estática (fallback):', e.message);
+  }
+}
   }
 }
 
@@ -613,15 +633,41 @@ function getSetupMin(maq, prodDescA, prodDescB) {
   if (fsMaq) {
     const normA = normProd(prodDescA);
     const normB = normProd(prodDescB);
-    if (fsMaq[normA] && fsMaq[normA][normB] != null) return fsMaq[normA][normB];
-    if (fsMaq[normB] && fsMaq[normB][normA] != null) return fsMaq[normB][normA];
+
+    // Tentar todas as combinações: normalizado e original
+    const keysA = [...new Set([normA, prodDescA.trim()])];
+    const keysB = [...new Set([normB, prodDescB.trim()])];
+
+    for(const kA of keysA){
+      for(const kB of keysB){
+        if (fsMaq[kA] && fsMaq[kA][kB] != null) return fsMaq[kA][kB];
+        if (fsMaq[kB] && fsMaq[kB][kA] != null) return fsMaq[kB][kA];
+      }
+    }
+
+    // Diagnóstico: mostrar o que foi buscado vs o que existe no SETUP_FIRESTORE
+    if(!window._setupDiagKeys) window._setupDiagKeys = [];
+    const keyBuscada = `${normA} → ${normB}`;
+    if(!window._setupDiagKeys.includes(keyBuscada)){
+      window._setupDiagKeys.push(keyBuscada);
+      const chavesCadastradas = Object.keys(fsMaq).map(k =>
+        `${k} → [${Object.keys(fsMaq[k]||{}).join(', ')}]`
+      ).join(' | ');
+      console.warn(`[SETUP] Máquina "${maq}" — buscando: "${keyBuscada}" | Cadastrado: ${chavesCadastradas || 'nenhum'}`);
+    }
+  } else {
+    // Máquina sem nenhuma entrada no SETUP_FIRESTORE
+    if(!window._setupDiagNoMaq) window._setupDiagNoMaq = new Set();
+    if(!window._setupDiagNoMaq.has(maq)){
+      window._setupDiagNoMaq.add(maq);
+      console.warn(`[SETUP] Máquina "${maq}" não encontrada no SETUP_FIRESTORE. Chaves existentes: ${Object.keys(SETUP_FIRESTORE).join(', ') || 'nenhuma'}`);
+    }
   }
 
   // 2) Tempo padrão configurado na máquina (campo tempoSetupPadrao)
   const padrao = getSetupPadrao(maq);
   if (padrao > 0) return padrao;
 
-  // 3) Sem configuração → 0 minutos
   return 0;
 }
 
@@ -2541,7 +2587,18 @@ function buildSchedule(monday){
       if(!pcMin){scheduled.push({rec,segments:[],setupMin:0,setupSegments:[]});continue;}
 
       let setupMin=0;
-      if(ri>0) setupMin=getSetupMin(maq, recs[ri-1].produto, rec.produto);
+      if(ri===0){
+        // Primeiro produto da semana nesta máquina:
+        // Cobrar setup padrão da máquina (troca de bobina / limpeza inicial)
+        // mas apenas se a máquina tem tempoSetupPadrao configurado e há
+        // mais de 1 produto nesta máquina nesta semana (vai haver troca).
+        // Para o primeiro produto não há produto "anterior" conhecido,
+        // então usamos o setup padrão como custo de início de semana.
+        const padrao = getSetupPadrao(maq);
+        if(padrao > 0 && recs.length > 1) setupMin = padrao;
+      } else {
+        setupMin = getSetupMin(maq, recs[ri-1].produto, rec.produto);
+      }
 
       const totalUnid=rec.qntUnid||(rec.qntCaixas*unidPorCx);
 
@@ -2684,7 +2741,10 @@ function buildSchedule(monday){
   return {schedule:result,days};
 }
 
-function renderGantt(){
+async function renderGantt(){
+  // Garantir que setup está carregado antes de renderizar
+  // (evita que o Gantt abra antes dos dados de setup chegarem do Firestore)
+  await carregarSetupCached();
   if(ganttMode === 'mensal'){
     renderGanttMensal();
   } else {
@@ -2774,6 +2834,25 @@ function renderGanttSemanal(){
   }
   const {schedule,days}=buildSchedule(ganttBaseMonday);
   const today=dateStr(new Date());
+
+  // ── Diagnóstico de setup: verificar se há configuração ──────────
+  // Se nenhuma máquina tem setup padrão E SETUP_FIRESTORE está vazio,
+  // mostrar aviso visível no topo do Gantt.
+  const setupDiagEl = document.getElementById('gantt-setup-diag');
+  if(setupDiagEl){
+    const maqSemSetup = MAQUINAS.filter(m => {
+      const padrao = getSetupPadrao(m);
+      const temFS = !!(SETUP_FIRESTORE[m] && Object.keys(SETUP_FIRESTORE[m]).length > 0);
+      return padrao <= 0 && !temFS;
+    });
+    if(maqSemSetup.length > 0){
+      setupDiagEl.style.display = 'block';
+      setupDiagEl.innerHTML = `⚠ <strong>Setup não configurado</strong> nas máquinas: ${maqSemSetup.join(', ')} — a coluna SET UP mostrará "—". `
+        + `Configure o tempo padrão em <strong>Configurações → Máquinas → Setup Padrão (min)</strong>.`;
+    } else {
+      setupDiagEl.style.display = 'none';
+    }
+  }
 
   // Week label
   const mon=days[0],sun=days[6];
@@ -2954,14 +3033,26 @@ function renderGanttSemanal(){
       // Qtd cx col — soma de todos os registros
       html+=`<div class="g-col-qty"><div class="g-col-qty-txt">${qntCaixas}<br><span style="font-size:9px;color:var(--text3);font-weight:400">cx</span></div></div>`;
 
-      // Tempo col
-      html+=`<div style="display:flex;align-items:center;justify-content:center;border-left:1px solid var(--border);background:var(--s1);font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:600;color:var(--warn);padding:4px 2px;text-align:center">${prodHrsStr}</div>`;
+      // Tempo col — só produção; tooltip mostra total com setup
+      const totalHrsComSetup = prodHrs + setupMin/60;
+      const totalHrsTooltip = setupMin > 0
+        ? `Produção: ${prodHrsStr} + Setup: ${fmtHrs(setupMin/60)} = Total: ${fmtHrs(totalHrsComSetup)}`
+        : `Produção: ${prodHrsStr}`;
+      html+=`<div style="display:flex;align-items:center;justify-content:center;border-left:1px solid var(--border);background:var(--s1);font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:600;color:var(--warn);padding:4px 2px;text-align:center" title="${totalHrsTooltip}">${prodHrsStr}</div>`;
 
       // Set Up col — setup total (apenas o primeiro registro tem setup real)
       const setupHrs=setupMin/60;
       const setupStr=setupMin>0?fmtHrs(setupHrs):'—';
       const setupColor=setupMin>0?'var(--orange)':'var(--text3)';
-      html+=`<div style="display:flex;align-items:center;justify-content:center;border-left:1px solid var(--border);background:var(--s1);font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:${setupMin>0?'600':'400'};color:${setupColor};padding:4px 2px;text-align:center" title="Setup: ${setupStr}">${setupStr}</div>`;
+      // Verificar se setup não está configurado (para tooltip diagnóstico)
+      const setupPadrao=getSetupPadrao(recMaq);
+      const temSetupFS=!!(SETUP_FIRESTORE[recMaq] && Object.keys(SETUP_FIRESTORE[recMaq]).length>0);
+      const setupTooltip=setupMin>0
+        ? `Setup: ${setupStr}`
+        : (setupPadrao>0||temSetupFS
+            ? `Setup: ${setupStr} (produto único na máquina, sem troca)`
+            : `⚠ Setup padrão não configurado — defina em Configurações → Máquinas`);
+      html+=`<div style="display:flex;align-items:center;justify-content:center;border-left:1px solid var(--border);background:var(--s1);font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:${setupMin>0?'600':'400'};color:${setupColor};padding:4px 2px;text-align:center" title="${setupTooltip}">${setupStr}</div>`;
 
       // H. Prog. col — total scheduled hours for this machine this week (only first row)
       const weekProgStr=firstRowOfMaq?fmtHrs(maqTotH):'';
