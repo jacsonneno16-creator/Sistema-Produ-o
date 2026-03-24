@@ -784,6 +784,15 @@ async function renderGestaoLojas() {
                 ? '<span style="background:rgba(0,212,255,.15);color:var(--cyan);border:1px solid rgba(0,212,255,.3);border-radius:4px;padding:2px 8px;font-size:10px;font-weight:700">ATIVA</span>'
                 : `<button onclick="trocarLoja('${l.id}')" style="background:rgba(0,212,255,.08);border:1px solid rgba(0,212,255,.2);border-radius:6px;padding:4px 10px;font-size:11px;color:var(--cyan);cursor:pointer">Selecionar</button>`
               }
+              <button onclick="editarNomeLoja('${l.id}','${(l.nome||l.id).replace(/'/g,'\\\'')}')" style="background:rgba(255,255,255,.05);border:1px solid var(--border);border-radius:6px;padding:4px 9px;font-size:11px;color:var(--text2);cursor:pointer" title="Editar nome">✏️</button>
+            </div>
+          </div>
+          <div id="edit-loja-${l.id}" style="display:none;padding:8px 14px 10px;border-top:1px solid var(--border);background:var(--s2)">
+            <div style="font-size:11px;color:var(--text3);margin-bottom:6px">Novo nome para <strong style="color:var(--text)">${l.nome||l.id}</strong></div>
+            <div style="display:flex;gap:6px">
+              <input id="input-nome-loja-${l.id}" value="${l.nome||''}" placeholder="Nome da loja" style="flex:1;background:var(--s1);border:1px solid var(--border);border-radius:7px;padding:7px 11px;color:var(--text);font-size:12px;outline:none">
+              <button onclick="salvarNomeLoja('${l.id}')" style="background:var(--cyan);color:#000;border:none;border-radius:7px;padding:7px 14px;font-weight:700;font-size:11px;cursor:pointer">Salvar</button>
+              <button onclick="document.getElementById('edit-loja-${l.id}').style.display='none'" style="background:none;border:1px solid var(--border);border-radius:7px;padding:7px 11px;color:var(--text2);font-size:11px;cursor:pointer">✕</button>
             </div>
           </div>`).join('')}
         <div style="margin-top:8px;padding-top:12px;border-top:1px solid var(--border)">
@@ -795,6 +804,31 @@ async function renderGestaoLojas() {
         </div>
       </div>
     </div>`;
+}
+
+function editarNomeLoja(lojaId, nomeAtual) {
+  // Fecha todos os outros painéis de edição abertos
+  document.querySelectorAll('[id^="edit-loja-"]').forEach(el => el.style.display = 'none');
+  const el = document.getElementById('edit-loja-' + lojaId);
+  if (el) {
+    el.style.display = 'block';
+    const input = document.getElementById('input-nome-loja-' + lojaId);
+    if (input) { input.focus(); input.select(); }
+  }
+}
+
+async function salvarNomeLoja(lojaId) {
+  const input = document.getElementById('input-nome-loja-' + lojaId);
+  const novoNome = (input?.value || '').trim();
+  if (!novoNome) { toast('Informe o novo nome', 'err'); return; }
+  try {
+    await updateDoc(doc(firestoreDB, 'lojas', lojaId), { nome: novoNome });
+    toast(`Nome atualizado para "${novoNome}"`, 'ok');
+    await atualizarTopbarLoja();
+    renderGestaoLojas();
+  } catch(e) {
+    toast('Erro ao salvar nome: ' + e.message, 'err');
+  }
 }
 
 async function criarLojaCfg() {
@@ -812,6 +846,8 @@ window.trocarLoja = trocarLoja;
 window.atualizarTopbarLoja = atualizarTopbarLoja;
 window.renderGestaoLojas = renderGestaoLojas;
 window.criarLojaCfg = criarLojaCfg;
+window.editarNomeLoja = editarNomeLoja;
+window.salvarNomeLoja = salvarNomeLoja;
 
 // ===== WEEK FILTER HELPERS =====
 let maqViewMode = 'grid'; // 'grid' or 'list'
@@ -7515,8 +7551,22 @@ function importProdutosExcel(input) {
   reader.onload = async function(e) {
     try {
       const wb = XLSX.read(e.target.result, { type: 'binary' });
-      const ws = wb.Sheets[wb.SheetNames[0]];
-      const rows = XLSX.utils.sheet_to_json(ws);
+
+      // Busca aba "Produtos" pelo nome (formato padrão), senão usa a primeira
+      const nomeAba = wb.SheetNames.find(s => /^Produtos$/i.test(s.trim())) || wb.SheetNames[0];
+      const ws = wb.Sheets[nomeAba];
+
+      // Detecta se há linhas de título/aviso antes do cabeçalho real (formato novo)
+      const rawAll = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+      let headerIdx = 0;
+      for (let i = 0; i < Math.min(rawAll.length, 6); i++) {
+        const rowStr = rawAll[i].join('|').toLowerCase();
+        if (rowStr.includes('cod') && rowStr.includes('descricao')) { headerIdx = i; break; }
+      }
+      const hdrs = rawAll[headerIdx].map(h => String(h).trim());
+      const rows = rawAll.slice(headerIdx + 1)
+        .filter(r => r.some(v => v !== ''))
+        .map(r => { const o = {}; hdrs.forEach((h, i) => { o[h] = r[i]; }); return o; });
       
       let addedProds = 0, addedMaqs = 0, updatedMaqs = 0, erros = 0;
       const maquinasMap = new Map(); // Para agrupar produtos por máquina
