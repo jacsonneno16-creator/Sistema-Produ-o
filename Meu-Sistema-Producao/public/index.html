@@ -12,6 +12,17 @@
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <title>DT Produção — Planejamento e Controle</title>
 <link rel="stylesheet" href="css/style.css">
+<script>
+/* Aplica tema salvo antes de renderizar - evita flash de tema errado */
+(function(){
+  var t = localStorage.getItem('tema');
+  if(t === 'light') document.documentElement.style.cssText = 'visibility:hidden';
+  document.addEventListener('DOMContentLoaded', function(){
+    if(t === 'light') { document.body.classList.add('light'); updateBtnTema(); }
+    document.documentElement.style.cssText = '';
+  });
+})();
+</script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -130,6 +141,7 @@
         <option>Carregando...</option>
       </select>
     </div>
+    <button id="btn-tema" onclick="toggleTema()" title="Alternar tema claro/escuro">🌙</button>
     <div style="position:relative">
       <button id="hd-menu-btn" onclick="toggleHdMenu()" style="background:var(--s1);border:1px solid var(--border);border-radius:8px;width:36px;height:36px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--text2);transition:all .18s;flex-direction:column;gap:3px" title="Menu">
         <span style="display:block;width:4px;height:4px;border-radius:50%;background:currentColor"></span>
@@ -161,10 +173,6 @@
   <button onclick="openSettings()" style="width:100%;text-align:left;background:none;border:none;padding:11px 16px;color:var(--text);font-family:'Space Grotesk',sans-serif;font-size:13px;cursor:pointer;display:flex;align-items:center;gap:10px;transition:background .15s" onmouseover="this.style.background='var(--s3,rgba(255,255,255,.05))'" onmouseout="this.style.background='none'">
     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2"/></svg>
     Configurações
-  </button>
-  <div style="height:1px;background:var(--border);margin:2px 0"></div>
-  <button onclick="toggleTema()" id="hd-tema-btn" style="width:100%;text-align:left;background:none;border:none;padding:11px 16px;color:var(--text);font-family:'Space Grotesk',sans-serif;font-size:13px;cursor:pointer;display:flex;align-items:center;gap:10px;transition:background .15s" onmouseover="this.style.background='var(--s3,rgba(255,255,255,.05))'" onmouseout="this.style.background='none'">
-    <span id="hd-tema-icon">☀️</span> <span id="hd-tema-label">Tema Claro</span>
   </button>
   <div style="height:1px;background:var(--border);margin:2px 0"></div>
   <button onclick="window.logout&&window.logout()" style="width:100%;text-align:left;background:none;border:none;padding:11px 16px;color:var(--red,#e8321a);font-family:'Space Grotesk',sans-serif;font-size:13px;cursor:pointer;display:flex;align-items:center;gap:10px;transition:background .15s" onmouseover="this.style.background='rgba(232,50,26,.08)'" onmouseout="this.style.background='none'">
@@ -1505,14 +1513,6 @@
         </select>
       </div>
 
-      <div>
-        <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:5px">⚠️ Alergênico</label>
-        <select id="pm-alergenico" style="width:100%;background:var(--s2);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-size:13px;outline:none;box-sizing:border-box">
-          <option value="false">Não alergênico</option>
-          <option value="true">⚠️ Contém alergênico</option>
-        </select>
-      </div>
-
       <!-- ── Insumos da Ficha Técnica ─────────────────────────────── -->
       <div style="grid-column:1/-1;margin-top:6px;padding-top:14px;border-top:1px solid var(--border)">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
@@ -1540,45 +1540,6 @@
 <div class="toasts" id="toasts"></div>
 
 <script src="js/turnosMaquinas.js"></script>
-
-<!-- Tema: definido como script normal (não módulo) para ficar no escopo global -->
-<script>
-  // Aplicar tema salvo ANTES do render para evitar flash
-  (function(){
-    var t = localStorage.getItem('dt-tema');
-    if(t === 'light') document.documentElement.setAttribute('data-theme','light');
-  })();
-
-  function toggleTema(){
-    var html = document.documentElement;
-    var isLight = html.getAttribute('data-theme') === 'light';
-    var novoTema = isLight ? 'dark' : 'light';
-    if(novoTema === 'dark'){
-      html.removeAttribute('data-theme');
-    } else {
-      html.setAttribute('data-theme', novoTema);
-    }
-    localStorage.setItem('dt-tema', novoTema);
-    var icon  = document.getElementById('hd-tema-icon');
-    var label = document.getElementById('hd-tema-label');
-    if(icon)  icon.textContent  = novoTema === 'light' ? '🌙' : '☀️';
-    if(label) label.textContent = novoTema === 'light' ? 'Tema Escuro' : 'Tema Claro';
-    // Atualizar ícone no botão imediatamente após abrir a página em tema claro
-    _atualizarBotaoTema();
-  }
-
-  function _atualizarBotaoTema(){
-    var isLight = document.documentElement.getAttribute('data-theme') === 'light';
-    var icon  = document.getElementById('hd-tema-icon');
-    var label = document.getElementById('hd-tema-label');
-    if(icon)  icon.textContent  = isLight ? '🌙' : '☀️';
-    if(label) label.textContent = isLight ? 'Tema Escuro' : 'Tema Claro';
-  }
-
-  // Atualizar botão após DOM pronto (caso tema claro esteja salvo)
-  document.addEventListener('DOMContentLoaded', _atualizarBotaoTema);
-</script>
-
 <script type="module" src="js/app.js"></script>
 
 <!-- PWA Install Bar -->
@@ -1982,6 +1943,35 @@ window.irParaLogin = irParaLogin;
   </div>
 </div>
 
+
+<script>
+/* ============================================================
+   ALTERNÂNCIA DE TEMA CLARO / ESCURO
+   ============================================================ */
+function toggleTema() {
+  document.body.classList.toggle('light');
+  var temaAtual = document.body.classList.contains('light') ? 'light' : 'dark';
+  localStorage.setItem('tema', temaAtual);
+  updateBtnTema();
+}
+
+function updateBtnTema() {
+  var btn = document.getElementById('btn-tema');
+  if (!btn) return;
+  var isLight = document.body.classList.contains('light');
+  btn.textContent = isLight ? '🌙' : '☀️';
+  btn.title = isLight ? 'Mudar para tema escuro' : 'Mudar para tema claro';
+}
+
+/* Aplicar tema salvo ao carregar */
+(function aplicarTemaSalvo() {
+  var tema = localStorage.getItem('tema');
+  if (tema === 'light') {
+    document.body.classList.add('light');
+  }
+  updateBtnTema();
+})();
+</script>
 </body>
 
 </html>
