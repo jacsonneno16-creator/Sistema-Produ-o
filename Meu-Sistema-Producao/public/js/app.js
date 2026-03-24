@@ -9434,15 +9434,8 @@ function switchTabSidebar(name) {
       container.appendChild(rPanel);
     }
     rPanel.classList.add('on');
-    if (window.relatorios) {
-      setTimeout(() => {
-        window.relatorios.init();
-        // Após init, ativar o sub-tab padrão (producao)
-        setTimeout(() => {
-          if (typeof grpSwitchTab === 'function') grpSwitchTab('producao');
-        }, 80);
-      }, 50);
-    }
+    // Renderizar o sub-tab ativo ao entrar na aba
+    setTimeout(() => grpRender(), 80);
   }
   if(name==='usuarios') { openSettings(); setTimeout(()=>settingsNav('usuarios'), 80); }
 }
@@ -14655,134 +14648,384 @@ window.paToggleInsumos = paToggleInsumos;
 window.progToggleInsumos = progToggleInsumos;
 
 // ═══════════════════════════════════════════════════════════════════
-// HANDLERS GRP* — Relatórios (index.html onclick/onchange)
+// HANDLERS GRP* — Sub-abas de Relatórios
+// Compatível com o HTML: grp-panel-producao / maquinas / produtos /
+// funcionarios / insumos / gerencial
+// Filtros globais: grp-dt-ini, grp-dt-fim, grp-maq, grp-prod, grp-func
 // ═══════════════════════════════════════════════════════════════════
 
 let _grpTabAtivo = 'producao';
 
-// Lê os filtros varrendo o DOM — funciona com qualquer ID
-function _grpLerFiltrosExternos() {
-  const panel = document.getElementById('panel-relatorios');
-  const rel2  = document.getElementById('rel2-root');
-  const result = { dataInicio:'', dataFim:'', maquina:'', produto:'' };
-
-  // Buscar inputs de data FORA do rel2-root (filtros externos do index.html)
-  const allInputs = panel
-    ? Array.from(panel.querySelectorAll('input[type="date"], input[type="text"], select'))
-    : Array.from(document.querySelectorAll('input[type="date"], select'));
-
-  allInputs.forEach(el => {
-    // Ignorar os inputs que já são internos do rel2-root
-    if (rel2 && rel2.contains(el)) return;
-    const v = el.value || '';
-    if (!v) return;
-    const id = el.id || '';
-    // Data início
-    if (!result.dataInicio && (id.includes('ini') || id.includes('inicio') || id.includes('start') ||
-        el.placeholder?.includes('nício') || el === panel?.querySelectorAll('input[type="date"]')[0])) {
-      result.dataInicio = v;
-    }
-    // Data fim
-    else if (!result.dataFim && (id.includes('fim') || id.includes('end') || id.includes('final') ||
-        el === panel?.querySelectorAll('input[type="date"]')[1])) {
-      result.dataFim = v;
-    }
-    // Máquina
-    if (!result.maquina && el.tagName === 'SELECT' && (id.includes('maq') || id.includes('maquina'))) {
-      result.maquina = v;
-    }
-    // Produto
-    if (!result.produto && el.tagName === 'SELECT' && (id.includes('prod') || id.includes('produto'))) {
-      result.produto = v;
-    }
-  });
-
-  // Fallback por ordem de selects (se IDs não identificados)
-  if (!result.maquina || !result.produto) {
-    const sels = allInputs.filter(el => el.tagName === 'SELECT' && !(rel2 && rel2.contains(el)));
-    if (!result.maquina && sels[0]) result.maquina = sels[0].value || '';
-    if (!result.produto  && sels[1]) result.produto  = sels[1].value || '';
-  }
-
-  // Fallback datas por posição
-  const dates = allInputs.filter(el => el.type === 'date' && !(rel2 && rel2.contains(el)));
-  if (!result.dataInicio && dates[0]) result.dataInicio = dates[0].value || '';
-  if (!result.dataFim    && dates[1]) result.dataFim    = dates[1].value || '';
-
-  return result;
+// ── Ler filtros globais do topo ───────────────────────────────────
+function _grpFiltros() {
+  const v = id => (document.getElementById(id) || {}).value || '';
+  return {
+    dtIni:   v('grp-dt-ini'),
+    dtFim:   v('grp-dt-fim'),
+    maquina: v('grp-maq'),
+    produto: v('grp-prod'),
+    func:    v('grp-func'),
+  };
 }
 
-// Sincronizar filtros externos → inputs internos do rel2-root
-function _grpSincFiltros() {
-  const f = _grpLerFiltrosExternos();
-  const set = (id, v) => { const el = document.getElementById(id); if (el && v) el.value = v; };
-  if (f.dataInicio) set('rel2-data-inicio', f.dataInicio);
-  if (f.dataFim)    set('rel2-data-fim',    f.dataFim);
-  if (f.maquina)    set('rel2-maquina',     f.maquina);
-  if (f.produto)    set('rel2-produto',     f.produto);
-}
-
-// Garantir painel inicializado e visível
-function _grpEnsurePanel(cb) {
-  // Garantir que o panel-relatorios está visível
-  const panel = document.getElementById('panel-relatorios');
-  if (panel) panel.classList.add('on');
-
-  if (document.getElementById('rel2-root')) {
-    cb(); return;
-  }
-  // Painel ainda não inicializado
-  if (window.relatorios) {
-    window.relatorios.init();
-    setTimeout(cb, 120);
-  }
-}
-
-// grpRender — chamado pelos filtros externos (data, máquina, produto, operador)
-function grpRender() {
-  _grpEnsurePanel(() => {
-    _grpSincFiltros();
-    if (window.relatorios) window.relatorios.aplicarFiltros();
-  });
-}
-
-// grpSwitchTab — chamado pelos botões de sub-tab
+// ── Trocar sub-aba ────────────────────────────────────────────────
 function grpSwitchTab(id) {
   _grpTabAtivo = id;
 
-  // Atualizar visual dos botões
-  document.querySelectorAll('[onclick*="grpSwitchTab"]').forEach(btn => {
+  // Atualizar botões ativos
+  document.querySelectorAll('.grp-tab-btn, [onclick*="grpSwitchTab"]').forEach(btn => {
     const oc = btn.getAttribute('onclick') || '';
-    const active = oc.includes("'" + id + "'") || oc.includes('"' + id + '"');
-    btn.classList.toggle('active', active);
+    const on = oc.includes("'" + id + "'") || oc.includes('"' + id + '"');
+    btn.classList.toggle('active', on);
   });
 
-  _grpEnsurePanel(() => {
-    _grpSincFiltros();
-    if (window.relatorios) window.relatorios.render();
+  // Esconder todos os painéis grp
+  document.querySelectorAll('.grp-panel, [id^="grp-panel-"]').forEach(p => {
+    p.style.display = 'none';
   });
+
+  // Mostrar painel correspondente
+  const alvo = document.getElementById('grp-panel-' + id);
+  if (alvo) alvo.style.display = '';
+
+  // Renderizar conteúdo do painel
+  grpRender();
 }
 
-// grpClear — botão Limpar
-function grpClear() {
-  // Limpar todos os inputs/selects externos ao rel2-root
-  const panel = document.getElementById('panel-relatorios');
-  const rel2  = document.getElementById('rel2-root');
-  if (panel) {
-    panel.querySelectorAll('input[type="date"], select').forEach(el => {
-      if (rel2 && rel2.contains(el)) return;
-      el.value = '';
-    });
+// ── Renderizar sub-aba ativa ──────────────────────────────────────
+function grpRender() {
+  switch (_grpTabAtivo) {
+    case 'producao':     _grpRenderProducao();     break;
+    case 'maquinas':     _grpRenderMaquinas();     break;
+    case 'produtos':     _grpRenderProdutos();     break;
+    case 'funcionarios': _grpRenderFuncionarios(); break;
+    case 'insumos':      _grpRenderInsumos();      break;
+    case 'gerencial':    _grpRenderGerencial();    break;
   }
-  if (window.relatorios) window.relatorios.limparFiltros();
 }
 
-// grpExport — botão Excel
+// ── Helper: filtrar records pelos filtros globais ─────────────────
+function _grpGetRecords() {
+  const f = _grpFiltros();
+  return (window.records || []).filter(r => {
+    const dt = r.dtDesejada || r.dtSolicitacao || '';
+    if (f.dtIni   && dt && dt < f.dtIni)           return false;
+    if (f.dtFim   && dt && dt > f.dtFim)            return false;
+    if (f.maquina && r.maquina !== f.maquina)       return false;
+    if (f.produto && r.produto !== f.produto)       return false;
+    return true;
+  });
+}
+
+// ── Helper: realizado de um record no período ─────────────────────
+function _grpRealizado(r) {
+  const f = _grpFiltros();
+  let total = 0;
+  try {
+    const suffix = '_' + r.id;
+    const keys = (window.aponGetAllKeys || (() => []))();
+    keys.forEach(k => {
+      if (!k.endsWith(suffix)) return;
+      const dt = k.slice('apon_'.length, k.length - suffix.length);
+      if (f.dtIni && dt < f.dtIni) return;
+      if (f.dtFim && dt > f.dtFim) return;
+      const d = (window.aponStorageGet || (() => null))(k);
+      if (d) [7,8,9,10,11,12,13,14,15,16,17].forEach(h => { total += parseInt(d[h])||0; });
+    });
+  } catch(e) {}
+  return total;
+}
+
+// ── Helper: renderizar tabela em um container ─────────────────────
+function _grpTabela(containerId, colunas, linhas, totais) {
+  const el = document.getElementById(containerId);
+  if (!el) return;
+  if (!linhas.length) {
+    el.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text3);font-size:12px">Sem dados no período selecionado</div>';
+    return;
+  }
+  const th = colunas.map(c =>
+    `<th style="padding:9px 12px;text-align:${c.right?'right':'left'};font-family:'JetBrains Mono',monospace;font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.8px;color:var(--text3)">${c.label}</th>`
+  ).join('');
+
+  const rows = linhas.map((row, i) => {
+    const bg = i % 2 === 1 ? 'background:rgba(255,255,255,.01)' : '';
+    const cells = colunas.map(c => {
+      const v = row[c.key];
+      const cor = c.cor ? c.cor(v, row) : 'var(--text)';
+      return `<td style="padding:9px 12px;${c.right?'text-align:right;':''}font-family:${c.mono?'\'JetBrains Mono\',monospace':'inherit'};color:${cor}">${v ?? '—'}</td>`;
+    }).join('');
+    return `<tr style="${bg}">${cells}</tr>`;
+  }).join('');
+
+  const tot = totais ? `<tr style="background:rgba(242,101,34,.06);border-top:1px solid rgba(242,101,34,.2)">
+    ${colunas.map(c => `<td style="padding:9px 12px;${c.right?'text-align:right;':''}font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--cyan)">${totais[c.key] ?? ''}</td>`).join('')}
+  </tr>` : '';
+
+  el.innerHTML = `<div style="overflow-x:auto">
+    <table style="width:100%;border-collapse:collapse;font-size:12px">
+      <thead style="background:var(--s2);border-bottom:1px solid var(--border)"><tr>${th}</tr></thead>
+      <tbody>${rows}${tot}</tbody>
+    </table>
+  </div>`;
+}
+
+// ── PRODUÇÃO ──────────────────────────────────────────────────────
+function _grpRenderProducao() {
+  const body = document.getElementById('grp-body-producao');
+  if (!body) return;
+  const recs = _grpGetRecords();
+  if (!recs.length) {
+    body.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text3);font-size:12px">Sem dados no período</div>';
+    return;
+  }
+  // Agrupar por dia
+  const porDia = {};
+  recs.forEach(r => {
+    const dt = r.dtDesejada || r.dtSolicitacao || '';
+    if (!dt) return;
+    if (!porDia[dt]) porDia[dt] = { programado: 0, realizado: 0 };
+    porDia[dt].programado += r.qntCaixas || 0;
+    porDia[dt].realizado  += _grpRealizado(r);
+  });
+  const linhas = Object.entries(porDia).sort().map(([dt, d]) => {
+    const efic = d.programado > 0 ? Math.round(d.realizado / d.programado * 100) : 0;
+    const cor  = efic >= 85 ? '#2ec97a' : efic >= 70 ? '#f5c518' : '#e8321a';
+    return { data: dt, programado: d.programado.toLocaleString('pt-BR'), realizado: d.realizado.toLocaleString('pt-BR'), efic: efic + '%', _efic: efic };
+  });
+  const totP = Object.values(porDia).reduce((a,d) => a + d.programado, 0);
+  const totR = Object.values(porDia).reduce((a,d) => a + d.realizado, 0);
+  const totE = totP > 0 ? Math.round(totR / totP * 100) : 0;
+  _grpTabela('grp-body-producao', [
+    { key:'data',       label:'Data',        mono:true },
+    { key:'programado', label:'Programado',  right:true, mono:true },
+    { key:'realizado',  label:'Realizado',   right:true, mono:true, cor:(v,r) => r._efic >= 85 ? '#2ec97a' : r._efic >= 70 ? '#f5c518' : '#e8321a' },
+    { key:'efic',       label:'Eficiência',  right:true, mono:true, cor:(v,r) => r._efic >= 85 ? '#2ec97a' : r._efic >= 70 ? '#f5c518' : '#e8321a' },
+  ], linhas, { data:'TOTAL', programado: totP.toLocaleString('pt-BR'), realizado: totR.toLocaleString('pt-BR'), efic: totE + '%' });
+}
+
+// ── MÁQUINAS ──────────────────────────────────────────────────────
+function _grpRenderMaquinas() {
+  const recs = _grpGetRecords();
+  const porMaq = {};
+  recs.forEach(r => {
+    if (!r.maquina) return;
+    if (!porMaq[r.maquina]) porMaq[r.maquina] = { programado:0, realizado:0, ordens:0 };
+    porMaq[r.maquina].programado += r.qntCaixas || 0;
+    porMaq[r.maquina].realizado  += _grpRealizado(r);
+    porMaq[r.maquina].ordens++;
+  });
+  const linhas = Object.entries(porMaq).sort().map(([maq, d]) => {
+    const efic = d.programado > 0 ? Math.round(d.realizado / d.programado * 100) : 0;
+    return { maquina: maq, ordens: d.ordens, programado: d.programado.toLocaleString('pt-BR'), realizado: d.realizado.toLocaleString('pt-BR'), efic: efic + '%', _efic: efic };
+  });
+  const totP = Object.values(porMaq).reduce((a,d) => a + d.programado, 0);
+  const totR = Object.values(porMaq).reduce((a,d) => a + d.realizado, 0);
+  _grpTabela('grp-body-maquinas', [
+    { key:'maquina',    label:'Máquina',     mono:true, cor:()=>'var(--cyan)' },
+    { key:'ordens',     label:'Ordens',      right:true, mono:true },
+    { key:'programado', label:'Programado',  right:true, mono:true },
+    { key:'realizado',  label:'Realizado',   right:true, mono:true, cor:(v,r) => r._efic >= 85 ? '#2ec97a' : r._efic >= 70 ? '#f5c518' : '#e8321a' },
+    { key:'efic',       label:'Eficiência',  right:true, mono:true, cor:(v,r) => r._efic >= 85 ? '#2ec97a' : r._efic >= 70 ? '#f5c518' : '#e8321a' },
+  ], linhas, { maquina:'TOTAL', programado: totP.toLocaleString('pt-BR'), realizado: totR.toLocaleString('pt-BR'), efic: '' });
+}
+
+// ── PRODUTOS ──────────────────────────────────────────────────────
+function _grpRenderProdutos() {
+  const recs = _grpGetRecords();
+  const porProd = {};
+  recs.forEach(r => {
+    if (!r.produto) return;
+    if (!porProd[r.produto]) porProd[r.produto] = { maquina: r.maquina, programado:0, realizado:0 };
+    porProd[r.produto].programado += r.qntCaixas || 0;
+    porProd[r.produto].realizado  += _grpRealizado(r);
+  });
+  const linhas = Object.entries(porProd)
+    .sort((a,b) => b[1].realizado - a[1].realizado)
+    .map(([prod, d]) => {
+      const efic = d.programado > 0 ? Math.round(d.realizado / d.programado * 100) : 0;
+      return { produto: prod, maquina: d.maquina || '—', programado: d.programado.toLocaleString('pt-BR'), realizado: d.realizado.toLocaleString('pt-BR'), efic: efic + '%', _efic: efic };
+    });
+  _grpTabela('grp-body-produtos', [
+    { key:'produto',    label:'Produto' },
+    { key:'maquina',    label:'Máquina',     mono:true, cor:()=>'var(--cyan)' },
+    { key:'programado', label:'Programado',  right:true, mono:true },
+    { key:'realizado',  label:'Realizado',   right:true, mono:true, cor:(v,r) => r._efic >= 85 ? '#2ec97a' : r._efic >= 70 ? '#f5c518' : '#e8321a' },
+    { key:'efic',       label:'Eficiência',  right:true, mono:true, cor:(v,r) => r._efic >= 85 ? '#2ec97a' : r._efic >= 70 ? '#f5c518' : '#e8321a' },
+  ], linhas, null);
+}
+
+// ── FUNCIONÁRIOS ──────────────────────────────────────────────────
+function _grpRenderFuncionarios() {
+  const body = document.getElementById('grp-body-funcionarios');
+  if (!body) return;
+  const f = _grpFiltros();
+  // Agrupar apontamentos por funcionário
+  const porFunc = {};
+  try {
+    const keys = (window.aponGetAllKeys || (() => []))();
+    keys.forEach(k => {
+      // chave: apon_YYYY-MM-DD_recId
+      const parts = k.split('_');
+      if (parts.length < 3 || parts[0] !== 'apon') return;
+      const dt = parts[1];
+      if (f.dtIni && dt < f.dtIni) return;
+      if (f.dtFim && dt > f.dtFim) return;
+      const d = (window.aponStorageGet || (() => null))(k);
+      if (!d) return;
+      const func = d.operador || d.funcionario || '—';
+      if (f.func && func !== f.func) return;
+      if (!porFunc[func]) porFunc[func] = { total: 0, dias: new Set() };
+      [7,8,9,10,11,12,13,14,15,16,17].forEach(h => { porFunc[func].total += parseInt(d[h])||0; });
+      porFunc[func].dias.add(dt);
+    });
+  } catch(e) {}
+  const linhas = Object.entries(porFunc)
+    .sort((a,b) => b[1].total - a[1].total)
+    .map(([func, d]) => ({
+      funcionario: func,
+      dias: d.dias.size,
+      total: d.total.toLocaleString('pt-BR') + ' cx',
+      media: d.dias.size > 0 ? Math.round(d.total / d.dias.size).toLocaleString('pt-BR') + ' cx/dia' : '—',
+    }));
+  if (!linhas.length) {
+    body.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text3);font-size:12px">Sem apontamentos no período — verifique os filtros de data</div>';
+    return;
+  }
+  _grpTabela('grp-body-funcionarios', [
+    { key:'funcionario', label:'Funcionário' },
+    { key:'dias',        label:'Dias',         right:true, mono:true },
+    { key:'total',       label:'Total Prod.',  right:true, mono:true, cor:()=>'var(--cyan)' },
+    { key:'media',       label:'Média/Dia',    right:true, mono:true },
+  ], linhas, null);
+}
+
+// ── INSUMOS ───────────────────────────────────────────────────────
+function _grpRenderInsumos() {
+  const body = document.getElementById('grp-body-insumos');
+  if (!body) return;
+  try {
+    const pc = window.projecaoCalculada || [];
+    if (!pc.length) {
+      body.innerHTML = '<div style="padding:24px;color:var(--text3);font-size:12px">📈 Calcule a Projeção de Vendas para ver análise de cobertura de insumos</div>';
+      return;
+    }
+    const riscoConfig = {
+      critico: { cor:'#e8321a', label:'CRÍTICO', icon:'🔴' },
+      alto:    { cor:'#f5c518', label:'ALTO',    icon:'🟡' },
+      medio:   { cor:'#f26522', label:'MÉDIO',   icon:'🟠' },
+      ok:      { cor:'#2ec97a', label:'OK',      icon:'🟢' },
+    };
+    const sorted = [...pc].sort((a,b) => {
+      const rv = {critico:0,alto:1,medio:2,ok:3};
+      return (rv[a.risco]??4) - (rv[b.risco]??4);
+    });
+    body.innerHTML = sorted.slice(0,20).map(p => {
+      const cfg = riscoConfig[p.risco] || riscoConfig.ok;
+      return `<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;border-radius:7px;margin-bottom:6px;background:rgba(255,255,255,.03);border:1px solid var(--border)">
+        <div style="display:flex;align-items:center;gap:8px;flex:1;min-width:0">
+          <span>${cfg.icon}</span>
+          <div>
+            <div style="font-size:12px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:280px">${p.produto}</div>
+            <div style="font-size:10px;color:var(--text3)">${p.maquina||'—'} · Demanda: ${p.demandaDiaria?.toFixed(0)??'?'} cx/dia</div>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:12px;flex-shrink:0">
+          <div style="text-align:right">
+            <div style="font-family:'JetBrains Mono',monospace;font-size:14px;font-weight:700;color:${cfg.cor}">${p.coberturaAtual!=null?p.coberturaAtual.toFixed(1)+'d':'—'}</div>
+            <div style="font-size:9px;color:var(--text3)">COBERTURA</div>
+          </div>
+          <span style="display:inline-block;padding:2px 8px;border-radius:5px;font-size:10px;font-weight:700;background:${cfg.cor}22;color:${cfg.cor};border:1px solid ${cfg.cor}44;min-width:52px;text-align:center">${cfg.label}</span>
+        </div>
+      </div>`;
+    }).join('');
+  } catch(e) {
+    body.innerHTML = '<div style="padding:16px;color:var(--text3);font-size:12px">Erro ao carregar dados de insumos</div>';
+  }
+}
+
+// ── GERENCIAL ─────────────────────────────────────────────────────
+function _grpRenderGerencial() {
+  const recs = _grpGetRecords();
+  // KPIs gerenciais
+  let totalProg = 0, totalReal = 0;
+  const porMaq = {};
+  recs.forEach(r => {
+    const real = _grpRealizado(r);
+    totalProg += r.qntCaixas || 0;
+    totalReal += real;
+    if (!r.maquina) return;
+    if (!porMaq[r.maquina]) porMaq[r.maquina] = { prog:0, real:0 };
+    porMaq[r.maquina].prog += r.qntCaixas || 0;
+    porMaq[r.maquina].real += real;
+  });
+  const efic = totalProg > 0 ? Math.round(totalReal / totalProg * 100) : 0;
+  const eficCor = efic >= 85 ? '#2ec97a' : efic >= 70 ? '#f5c518' : '#e8321a';
+  let rupturas = 0;
+  try { rupturas = (window.projecaoCalculada||[]).filter(p => p.risco==='critico'||p.risco==='alto').length; } catch(e) {}
+
+  const kpiEl = document.getElementById('grp-body-gerencial');
+  if (!kpiEl) return;
+
+  const kpiHtml = `
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px">
+      ${[
+        { label:'Produção Total',   val: totalReal.toLocaleString('pt-BR') + ' cx', cor:'var(--cyan)',  icon:'📦' },
+        { label:'Programado',       val: totalProg.toLocaleString('pt-BR') + ' cx', cor:'var(--text2)', icon:'📋' },
+        { label:'Eficiência Geral', val: efic + '%',                                 cor: eficCor,       icon:'📈' },
+        { label:'Risco Ruptura',    val: rupturas + ' prod.',                        cor: rupturas===0?'#2ec97a':'#e8321a', icon:'🚨' },
+      ].map(k => `
+        <div style="background:var(--s1);border:1px solid var(--border);border-radius:12px;padding:16px 18px;border-left:3px solid ${k.cor}">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+            <div style="font-size:10px;text-transform:uppercase;letter-spacing:.7px;color:var(--text3)">${k.label}</div>
+            <span style="font-size:18px">${k.icon}</span>
+          </div>
+          <div style="font-family:'JetBrains Mono',monospace;font-size:26px;font-weight:700;color:${k.cor}">${k.val}</div>
+        </div>`).join('')}
+    </div>`;
+
+  const linhas = Object.entries(porMaq).sort().map(([maq, d]) => {
+    const e = d.prog > 0 ? Math.round(d.real / d.prog * 100) : 0;
+    return { maquina: maq, programado: d.prog.toLocaleString('pt-BR'), realizado: d.real.toLocaleString('pt-BR'), efic: e + '%', _efic: e };
+  });
+
+  kpiEl.innerHTML = kpiHtml;
+  const tabelaId = 'grp-body-gerencial-tabela';
+  kpiEl.insertAdjacentHTML('beforeend', `<div id="${tabelaId}"></div>`);
+  _grpTabela(tabelaId, [
+    { key:'maquina',    label:'Máquina',     mono:true, cor:()=>'var(--cyan)' },
+    { key:'programado', label:'Programado',  right:true, mono:true },
+    { key:'realizado',  label:'Realizado',   right:true, mono:true, cor:(v,r)=>r._efic>=85?'#2ec97a':r._efic>=70?'#f5c518':'#e8321a' },
+    { key:'efic',       label:'Eficiência',  right:true, mono:true, cor:(v,r)=>r._efic>=85?'#2ec97a':r._efic>=70?'#f5c518':'#e8321a' },
+  ], linhas, null);
+}
+
+// ── grpClear — botão Limpar ───────────────────────────────────────
+function grpClear() {
+  ['grp-dt-ini','grp-dt-fim','grp-maq','grp-prod','grp-func'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.value = '';
+  });
+  grpRender();
+}
+
+// ── grpExport — botão Excel ───────────────────────────────────────
 function grpExport() {
-  if (window.relatorios) window.relatorios.exportXLSX();
+  if (window.relatorios && typeof window.relatorios.exportXLSX === 'function') {
+    window.relatorios.exportXLSX();
+    return;
+  }
+  // Fallback: exportar os dados da aba ativa
+  const recs = _grpGetRecords();
+  try {
+    const wb = XLSX.utils.book_new();
+    const rows = [['Produto','Máquina','Programado','Realizado','Data']];
+    recs.forEach(r => rows.push([r.produto||'', r.maquina||'', r.qntCaixas||0, _grpRealizado(r), r.dtDesejada||r.dtSolicitacao||'']));
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), 'Relatório');
+    XLSX.writeFile(wb, 'Relatorio_' + _grpTabAtivo + '_' + new Date().toLocaleDateString('pt-BR').replace(/\//g,'-') + '.xlsx');
+  } catch(e) { alert('Erro ao exportar: ' + e.message); }
 }
 
-window.grpRender    = grpRender;
-window.grpSwitchTab = grpSwitchTab;
-window.grpClear     = grpClear;
-window.grpExport    = grpExport;
+window.grpRender         = grpRender;
+window.grpSwitchTab      = grpSwitchTab;
+window.grpClear          = grpClear;
+window.grpExport         = grpExport;
