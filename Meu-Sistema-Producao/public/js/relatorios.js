@@ -1543,6 +1543,99 @@ function today_dayOfWeek() {
   return d === 0 ? 6 : d - 1;
 }
 
+// ═════════════════════════════════════════════════════════════════
+// FUNÇÕES GRP* — handlers chamados diretamente pelo index.html
+// Vivem no relatorios.js (IIFE clássico, não-módulo) para garantir
+// que estejam disponíveis em window ANTES do app.js (ES module) carregar.
+// ═════════════════════════════════════════════════════════════════
+
+let _grpTabAtivo = 'producao';
+
+// ── Ler filtros do index.html (IDs externos ao rel2-root) ─────────
+function _grpGetFiltros() {
+  const _val = (...ids) => {
+    for (const id of ids) {
+      const el = document.getElementById(id);
+      if (el && el.value !== undefined) return el.value;
+    }
+    return '';
+  };
+  return {
+    dataInicio: _val('grp-data-ini','grp-inicio','rpt-data-ini','rpt-inicio','rel-data-ini'),
+    dataFim:    _val('grp-data-fim','grp-fim','rpt-data-fim','rpt-fim','rel-data-fim'),
+    maquina:    _val('grp-maq','grp-maquina','rpt-maq-filter','rpt-maq','rel-maq'),
+    produto:    _val('grp-prod','grp-produto','rpt-prod','rpt-produto','rel-prod'),
+    operador:   _val('grp-op','grp-operador','rpt-op','rpt-operador','rel-op'),
+  };
+}
+
+// ── Sincronizar filtros externos → inputs internos do rel2-root ───
+function _grpSyncFiltros() {
+  const f = _grpGetFiltros();
+  const _set = (id, val) => { const el = document.getElementById(id); if (el && val) el.value = val; };
+  if (f.dataInicio) _set('rel2-data-inicio', f.dataInicio);
+  if (f.dataFim)    _set('rel2-data-fim',    f.dataFim);
+  if (f.maquina)    _set('rel2-maquina',     f.maquina);
+  if (f.produto)    _set('rel2-produto',     f.produto);
+}
+
+// ── grpRender — oninput/onchange dos filtros de data, máquina, etc. ─
+function grpRender() {
+  const rel2root = document.getElementById('rel2-root');
+  if (!rel2root) {
+    // Painel ainda não inicializado — inicializar primeiro
+    initRelatorios();
+    setTimeout(() => { _grpSyncFiltros(); renderRelatorios(); }, 80);
+    return;
+  }
+  _grpSyncFiltros();
+  renderRelatorios();
+}
+
+// ── grpSwitchTab — onclick dos sub-tabs ──────────────────────────
+function grpSwitchTab(id) {
+  _grpTabAtivo = id;
+
+  // Atualizar visual dos botões de sub-tab
+  document.querySelectorAll('[onclick*="grpSwitchTab"], .rpt-grp-btn, .grp-tab-btn, [data-grp-tab]')
+    .forEach(btn => {
+      const oc = btn.getAttribute('onclick') || '';
+      const active = oc.includes("'" + id + "'") || oc.includes('"' + id + '"')
+                  || btn.getAttribute('data-grp-tab') === id;
+      btn.classList.toggle('active', active);
+    });
+
+  const rel2root = document.getElementById('rel2-root');
+  if (!rel2root) {
+    initRelatorios();
+    setTimeout(() => { _grpSyncFiltros(); renderRelatorios(); }, 80);
+    return;
+  }
+  _grpSyncFiltros();
+  renderRelatorios();
+}
+
+// ── grpClear — botão Limpar ───────────────────────────────────────
+function grpClear() {
+  ['grp-data-ini','grp-data-fim','grp-inicio','grp-fim','rpt-data-ini','rpt-data-fim']
+    .forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+  ['grp-maq','grp-maquina','grp-prod','grp-produto','grp-op','grp-operador',
+   'rpt-maq-filter','rpt-prod','rpt-op']
+    .forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+  relatorios.limparFiltros();
+}
+
+// ── grpExport — botão Excel ───────────────────────────────────────
+function grpExport() {
+  relatorios.exportXLSX();
+}
+
+// ── Expor tudo globalmente (disponível imediatamente, antes do ES module) ─
+window.grpRender    = grpRender;
+window.grpSwitchTab = grpSwitchTab;
+window.grpClear     = grpClear;
+window.grpExport    = grpExport;
+
 // Expor globalmente
 window.relatorios = relatorios;
 window.renderRelatorios = renderRelatorios;
