@@ -6608,6 +6608,7 @@ function settingsNav(section){
   if(section==='gestao-lojas') setTimeout(()=>renderGestaoLojas(), 50);
   if(section==='ficha-tecnica-cfg') setTimeout(()=>renderFichaTecnicaCfg(), 50);
   if(section==='produtos') setTimeout(()=>renderProdutosCfg(), 50);
+  if(section==='processos') setTimeout(()=>renderProcessos(), 50);
 }
 
 function handleImportZip(file){
@@ -14676,17 +14677,17 @@ function grpSwitchTab(id) {
   document.querySelectorAll('.grp-tab-btn, [onclick*="grpSwitchTab"]').forEach(btn => {
     const oc = btn.getAttribute('onclick') || '';
     const on = oc.includes("'" + id + "'") || oc.includes('"' + id + '"');
-    btn.classList.toggle('active', on);
+    btn.classList.toggle('on', on);
   });
 
   // Esconder todos os painéis grp
   document.querySelectorAll('.grp-panel, [id^="grp-panel-"]').forEach(p => {
-    p.style.display = 'none';
+    p.classList.remove('on');
   });
 
   // Mostrar painel correspondente
   const alvo = document.getElementById('grp-panel-' + id);
-  if (alvo) alvo.style.display = '';
+  if (alvo) alvo.classList.add('on');
 
   // Renderizar conteúdo do painel
   grpRender();
@@ -14772,7 +14773,7 @@ function _grpTabela(containerId, colunas, linhas, totais) {
 
 // ── PRODUÇÃO ──────────────────────────────────────────────────────
 function _grpRenderProducao() {
-  const body = document.getElementById('grp-body-producao');
+  const body = document.getElementById('grp-panel-producao');
   if (!body) return;
   const recs = _grpGetRecords();
   if (!recs.length) {
@@ -14796,7 +14797,7 @@ function _grpRenderProducao() {
   const totP = Object.values(porDia).reduce((a,d) => a + d.programado, 0);
   const totR = Object.values(porDia).reduce((a,d) => a + d.realizado, 0);
   const totE = totP > 0 ? Math.round(totR / totP * 100) : 0;
-  _grpTabela('grp-body-producao', [
+  _grpTabela('grp-panel-producao', [
     { key:'data',       label:'Data',        mono:true },
     { key:'programado', label:'Programado',  right:true, mono:true },
     { key:'realizado',  label:'Realizado',   right:true, mono:true, cor:(v,r) => r._efic >= 85 ? '#2ec97a' : r._efic >= 70 ? '#f5c518' : '#e8321a' },
@@ -14821,7 +14822,7 @@ function _grpRenderMaquinas() {
   });
   const totP = Object.values(porMaq).reduce((a,d) => a + d.programado, 0);
   const totR = Object.values(porMaq).reduce((a,d) => a + d.realizado, 0);
-  _grpTabela('grp-body-maquinas', [
+  _grpTabela('grp-panel-maquinas', [
     { key:'maquina',    label:'Máquina',     mono:true, cor:()=>'var(--cyan)' },
     { key:'ordens',     label:'Ordens',      right:true, mono:true },
     { key:'programado', label:'Programado',  right:true, mono:true },
@@ -14846,7 +14847,7 @@ function _grpRenderProdutos() {
       const efic = d.programado > 0 ? Math.round(d.realizado / d.programado * 100) : 0;
       return { produto: prod, maquina: d.maquina || '—', programado: d.programado.toLocaleString('pt-BR'), realizado: d.realizado.toLocaleString('pt-BR'), efic: efic + '%', _efic: efic };
     });
-  _grpTabela('grp-body-produtos', [
+  _grpTabela('grp-panel-produtos', [
     { key:'produto',    label:'Produto' },
     { key:'maquina',    label:'Máquina',     mono:true, cor:()=>'var(--cyan)' },
     { key:'programado', label:'Programado',  right:true, mono:true },
@@ -14857,7 +14858,7 @@ function _grpRenderProdutos() {
 
 // ── FUNCIONÁRIOS ──────────────────────────────────────────────────
 function _grpRenderFuncionarios() {
-  const body = document.getElementById('grp-body-funcionarios');
+  const body = document.getElementById('grp-panel-funcionarios');
   if (!body) return;
   const f = _grpFiltros();
   // Agrupar apontamentos por funcionário
@@ -14892,7 +14893,7 @@ function _grpRenderFuncionarios() {
     body.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text3);font-size:12px">Sem apontamentos no período — verifique os filtros de data</div>';
     return;
   }
-  _grpTabela('grp-body-funcionarios', [
+  _grpTabela('grp-panel-funcionarios', [
     { key:'funcionario', label:'Funcionário' },
     { key:'dias',        label:'Dias',         right:true, mono:true },
     { key:'total',       label:'Total Prod.',  right:true, mono:true, cor:()=>'var(--cyan)' },
@@ -14902,7 +14903,7 @@ function _grpRenderFuncionarios() {
 
 // ── INSUMOS ───────────────────────────────────────────────────────
 function _grpRenderInsumos() {
-  const body = document.getElementById('grp-body-insumos');
+  const body = document.getElementById('grp-panel-insumos');
   if (!body) return;
   try {
     const pc = window.projecaoCalculada || [];
@@ -14964,7 +14965,7 @@ function _grpRenderGerencial() {
   let rupturas = 0;
   try { rupturas = (window.projecaoCalculada||[]).filter(p => p.risco==='critico'||p.risco==='alto').length; } catch(e) {}
 
-  const kpiEl = document.getElementById('grp-body-gerencial');
+  const kpiEl = document.getElementById('grp-panel-gerencial');
   if (!kpiEl) return;
 
   const kpiHtml = `
@@ -14990,7 +14991,7 @@ function _grpRenderGerencial() {
   });
 
   kpiEl.innerHTML = kpiHtml;
-  const tabelaId = 'grp-body-gerencial-tabela';
+  const tabelaId = 'grp-panel-gerencial-tabela';
   kpiEl.insertAdjacentHTML('beforeend', `<div id="${tabelaId}"></div>`);
   _grpTabela(tabelaId, [
     { key:'maquina',    label:'Máquina',     mono:true, cor:()=>'var(--cyan)' },
@@ -15029,3 +15030,113 @@ window.grpRender         = grpRender;
 window.grpSwitchTab      = grpSwitchTab;
 window.grpClear          = grpClear;
 window.grpExport         = grpExport;
+
+// ═══════════════════════════════════════════════════════════════════
+// PROCESSOS DE PRODUÇÃO
+// ═══════════════════════════════════════════════════════════════════
+
+let _processosList = [];
+
+async function _loadProcessos() {
+  try {
+    const snap = await getDocs(lojaCol('processos'));
+    _processosList = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  } catch(e) {
+    _processosList = [];
+  }
+}
+
+async function renderProcessos() {
+  await _loadProcessos();
+  const container = document.getElementById('processos-list');
+  if (!container) return;
+
+  if (!_processosList.length) {
+    container.innerHTML = `
+      <div style="padding:32px;text-align:center;color:var(--text3);font-size:12px">
+        <div style="font-size:28px;margin-bottom:8px">⚙️</div>
+        Nenhum processo cadastrado ainda.<br>Clique em <strong>Novo Processo</strong> para adicionar.
+      </div>`;
+    return;
+  }
+
+  container.innerHTML = _processosList.map(p => `
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--border);gap:12px">
+      <div style="flex:1;min-width:0">
+        <div style="font-size:13px;font-weight:600;color:var(--text)">${p.nome || '—'}</div>
+        ${p.descricao ? `<div style="font-size:11px;color:var(--text3);margin-top:2px">${p.descricao}</div>` : ''}
+      </div>
+      <div style="display:flex;gap:6px;flex-shrink:0">
+        <button onclick="openModalProcesso('${p.id}')" style="background:none;border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:11px;color:var(--text2);cursor:pointer;font-family:'Space Grotesk',sans-serif">✏️ Editar</button>
+        <button onclick="deleteProcesso('${p.id}')" style="background:none;border:1px solid rgba(232,50,26,.3);border-radius:6px;padding:5px 10px;font-size:11px;color:#e8321a;cursor:pointer;font-family:'Space Grotesk',sans-serif">🗑️</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+function openModalProcesso(id) {
+  const modal = document.getElementById('modal-processo');
+  if (!modal) return;
+
+  document.getElementById('processo-edit-id').value = id || '';
+  document.getElementById('processo-nome').value = '';
+  document.getElementById('processo-desc').value = '';
+  document.getElementById('processo-modal-title').textContent = id ? 'Editar Processo' : 'Novo Processo';
+
+  if (id) {
+    const p = _processosList.find(x => x.id === id);
+    if (p) {
+      document.getElementById('processo-nome').value = p.nome || '';
+      document.getElementById('processo-desc').value = p.descricao || '';
+    }
+  }
+
+  modal.style.display = 'flex';
+  setTimeout(() => document.getElementById('processo-nome')?.focus(), 80);
+}
+
+function closeModalProcesso() {
+  const modal = document.getElementById('modal-processo');
+  if (modal) modal.style.display = 'none';
+}
+
+async function salvarProcesso() {
+  const nome = (document.getElementById('processo-nome')?.value || '').trim();
+  if (!nome) { toast('Informe o nome do processo', 'err'); return; }
+
+  const descricao = (document.getElementById('processo-desc')?.value || '').trim();
+  const editId    = document.getElementById('processo-edit-id')?.value || '';
+  const payload   = { nome, descricao, atualizadoEm: new Date().toISOString() };
+
+  try {
+    if (editId) {
+      await setDoc(lojaDoc('processos', editId), payload, { merge: true });
+      toast('Processo atualizado!');
+    } else {
+      payload.criadoEm = new Date().toISOString();
+      await addDoc(lojaCol('processos'), payload);
+      toast('Processo criado!');
+    }
+    closeModalProcesso();
+    await renderProcessos();
+  } catch(e) {
+    toast('Erro ao salvar processo: ' + e.message, 'err');
+  }
+}
+
+async function deleteProcesso(id) {
+  if (!confirm('Excluir este processo?')) return;
+  try {
+    await deleteDoc(lojaDoc('processos', id));
+    toast('Processo excluído');
+    await renderProcessos();
+  } catch(e) {
+    toast('Erro ao excluir: ' + e.message, 'err');
+  }
+}
+
+window.openModalProcesso  = openModalProcesso;
+window.closeModalProcesso = closeModalProcesso;
+window.salvarProcesso     = salvarProcesso;
+window.deleteProcesso     = deleteProcesso;
+window.renderProcessos    = renderProcessos;
