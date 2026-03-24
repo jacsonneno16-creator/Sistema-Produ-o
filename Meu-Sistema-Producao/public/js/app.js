@@ -1640,13 +1640,23 @@ function renderProdGrid(maq, filter){
   
   // Se não achou no catálogo mas a máquina tem produtos compatíveis, constrói lista a partir deles
   if (!prods.length && maqProds.length) {
+    const todosProds = getAllProdutos();
     prods = maqProds
       .filter(p => !filter || p.produto.toLowerCase().includes(filter.toLowerCase()))
-      .map(p => ({
-        descricao: p.produto, cod: 0, unid: 1,
-        pc_min: p.velocidade || (maqData && maqData.pcMin) || 0,
-        maquina: maq, kg_fd: 0
-      }));
+      .map(p => {
+        // Busca no catálogo pelo nome para pegar unid e cod reais
+        const catalogo = todosProds.find(x =>
+          x.descricao?.trim().toLowerCase() === p.produto?.trim().toLowerCase()
+        );
+        return {
+          descricao: p.produto,
+          cod: catalogo ? (catalogo.cod || 0) : 0,
+          unid: catalogo ? (catalogo.unid || 1) : 1,
+          pc_min: p.velocidade || (catalogo && catalogo.pc_min) || (maqData && maqData.pcMin) || 0,
+          maquina: maq,
+          kg_fd: 0
+        };
+      });
   }
   const grid=document.getElementById('prod-grid');
   if(!prods.length){
