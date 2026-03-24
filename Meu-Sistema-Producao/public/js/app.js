@@ -2039,6 +2039,8 @@ function buildSchedule(monday){
 
   const ativos=records.filter(r=>{
     if(r.status==='Concluído') return false;
+    // Produto marcado como finalizado no Realizado → nunca aparece como overflow
+    if(typeof pdIsFin==='function' && pdIsFin(r.id)) return false;
     const startDate=r.dtDesejada||r.dtSolicitacao;
     if(!startDate) return false;
     if(startDate>=mondayStr && startDate<=sundayStr) return true;
@@ -2330,6 +2332,23 @@ function renderGanttSemanal(){
       );
     }
   }
+  // Garante que _aponFS reflete a semana exibida no Gantt.
+  // Sem isso calcularTotalProduzido usa dados da semana do boot,
+  // fazendo produtos já concluídos reaparecerem como overflow.
+  const _ganttWkKey = dateStr(ganttBaseMonday);
+  if(typeof _loadAponFSSemana==='function' && window._ganttAponWeek!==_ganttWkKey){
+    window._ganttAponWeek = _ganttWkKey;
+    _loadAponFSSemana(ganttBaseMonday).then(function(){
+      _renderGanttSemanalCore(ganttBaseMonday);
+    }).catch(function(){
+      _renderGanttSemanalCore(ganttBaseMonday);
+    });
+    return;
+  }
+  _renderGanttSemanalCore(ganttBaseMonday);
+}
+
+function _renderGanttSemanalCore(ganttBaseMonday){
   const {schedule,days}=buildSchedule(ganttBaseMonday);
   const today=dateStr(new Date());
 
@@ -13212,6 +13231,7 @@ window.fteAddRow = fteAddRow;
 window.pmAddInsumoRow = pmAddInsumoRow;
 window.ganttToday = ganttToday;
 window.ganttWeek = ganttWeek;
+window._renderGanttSemanalCore = _renderGanttSemanalCore;
 window.ganttGoDate = ganttGoDate;
 window.setGanttMode         = setGanttMode;
 window.ganttMesNav          = ganttMesNav;
