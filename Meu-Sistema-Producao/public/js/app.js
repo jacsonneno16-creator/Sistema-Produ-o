@@ -2937,8 +2937,10 @@ function renderGanttSemanal(){
     for(const prodEntry of prodEntries){
       const { produto, obs, maquina: recMaq, color, qntCaixas, setupMin, segments, setupSegments: prodSetupSegs, recs } = prodEntry;
 
-      // Calcular horas de produção totais (soma de todos os segmentos)
+      // ── Não renderizar produtos sem nenhuma produção nesta semana
+      // (máquina cheia — não cabe na capacidade disponível)
       const prodHrs = segments.reduce((a, sg) => a + (sg.hrsNoDia || 0), 0);
+      if(prodHrs <= 0 && setupMin <= 0) continue;
       const prodHrsStr = fmtHrs(prodHrs);
 
       html+=`<div class="gantt-row" style="grid-template-columns:${gridCols}">`;
@@ -11295,25 +11297,35 @@ function gerarProgAutomarica(){
 
         let cxRestante = cxNecessario;
 
-        // FIX 2 — validar capacidade real antes de confirmar alocação.
-        // Tentar alocar na máquina principal primeiro. Se não couber tudo,
-        // só divide em uma segunda máquina. O que ainda sobrar (excedente)
-        // é marcado em c._carryover para ser considerado na próxima semana.
-        const maqPrinc = maqsOrdenadas[0];
-        const hrsNecPrinc = (cxRestante * c.unid) / (maqPrinc.pc_min * 60);
-        // maxHrsPrinc = hrsRestantes já incorpora maxPctMaq (aplicado na inicialização)
-        const maxHrsPrinc = maqHrsRestantes[sem][maqPrinc.maquina];
-        const hrsJaAlocPrinc = 0; // redundante: maqHrsRestantes já desconta alocações via registrarAlocacao
-        const hrsPermitPrinc   = maxHrsPrinc;
-        const hrsAlocarPrinc   = Math.min(hrsNecPrinc, hrsPermitPrinc);
-        const cxAlocarPrinc    = Math.floor(hrsAlocarPrinc * 60 * maqPrinc.pc_min / c.unid);
+        // ── CONCENTRAÇÃO: preferir SEMPRE uma única máquina que absorva tudo.
+        // Só divide em 2 máquinas se NENHUMA consegue produzir a quantidade
+        // inteira sozinha nesta semana.
+        //
+        // Buscar a máquina com maior score que cabe o produto inteiro.
+        // Se não existir nenhuma, usar a principal com split mínimo.
+        const maqQueAbsorve = maqsOrdenadas.find(mc => {
+          const hrsNec = (cxRestante * c.unid) / (mc.pc_min * 60);
+          return maqHrsRestantes[sem][mc.maquina] >= hrsNec - 0.01;
+        });
+
+        // Reordenar: se existe máquina que absorve tudo, colocá-la na frente
+        const maqsParaAlocar = maqQueAbsorve
+          ? [maqQueAbsorve, ...maqsOrdenadas.filter(mc => mc.maquina !== maqQueAbsorve.maquina)]
+          : maqsOrdenadas;
+
+        const maqPrinc       = maqsParaAlocar[0];
+        const hrsNecPrinc    = (cxRestante * c.unid) / (maqPrinc.pc_min * 60);
+        const maxHrsPrinc    = maqHrsRestantes[sem][maqPrinc.maquina];
+        const hrsAlocarPrinc = Math.min(hrsNecPrinc, maxHrsPrinc);
+        const cxAlocarPrinc  = Math.floor(hrsAlocarPrinc * 60 * maqPrinc.pc_min / c.unid);
         const principalAbsorve = cxAlocarPrinc >= cxRestante;
 
-        const maxMaquinas = principalAbsorve ? 1 : Math.min(2, maqsOrdenadas.length);
+        // Só divide se NENHUMA máquina absorve o produto inteiro esta semana
+        const maxMaquinas = (principalAbsorve || maqQueAbsorve) ? 1 : Math.min(2, maqsParaAlocar.length);
 
         let cxEfetivamenteAlocado = 0;
         for(let mi = 0; mi < maxMaquinas && cxRestante > 0; mi++){
-          const mc        = maqsOrdenadas[mi];
+          const mc        = maqsParaAlocar[mi];
           const hrsNec    = (cxRestante * c.unid) / (mc.pc_min * 60);
           // maqHrsRestantes já inclui o cap de maxPctMaq
           const hrsAlocar = Math.min(hrsNec, maqHrsRestantes[sem][mc.maquina]);
@@ -11487,7 +11499,11 @@ function gerarProgAutomarica(){
           if(!maqAlts.length) continue;
 
           for(const maqAlt of maqAlts){
-            // Tentar mover o lote inteiro primeiro
+            // ── Não mover parcial se isso gera o mesmo produto em 2 máquinas
+            // (já existe alocação deste produto na máquina alternativa)
+            const jaExisteNaAlt = allocations[c.prod].detalhes[sem].some(d => d.maq === maqAlt.maquina);
+
+            // Tentar mover o lote inteiro primeiro (sem criar split)
             const redistTotal = calcRedistribuicao(c, det, maqAlt, sem, det.cx);
             if(redistTotal){
               removerAlocacao(c.prod, sem, det);
@@ -11497,10 +11513,11 @@ function gerarProgAutomarica(){
             }
 
             // Se o lote inteiro não cabe, tentar mover metade (split entre máquinas)
+            // Só permitido se: volume grande (> 1 dia) E produto ainda não está na outra máquina
             const cxMetade = Math.floor(det.cx / 2);
             // ── Fix 2: não dividir se o produto cabe em ≤ 1 dia — volume pequeno não merece split
             const hrsUmDiaA = (maqCapPorSemana[sem]?.[maqSrc] || maqCapacidades[maqSrc] || 44) / 5;
-            if(cxMetade > 0 && det.hrs > hrsUmDiaA + 0.5){
+            if(cxMetade > 0 && det.hrs > hrsUmDiaA + 0.5 && !jaExisteNaAlt){
               const redistMetade = calcRedistribuicao(c, det, maqAlt, sem, cxMetade);
               if(redistMetade){
                 // Atualizar alocação na máquina original com a metade restante
@@ -11670,9 +11687,12 @@ function gerarProgAutomarica(){
           });
           if(!detSrc || detSrc.cx < 2) continue;
 
+          // ── Não mover se o produto já está na máquina ociosa (evita duplicar)
+          const jaExisteNaOciosa = allocations[c.prod].detalhes[sem].some(d => d.maq === maqOciosa.maq);
+          if(jaExisteNaOciosa) continue;
+
           // ── Fix 2: não dividir se o produto cabe em menos de 1 dia útil na
           // máquina de origem — é pouco volume e dividir gera 2 registros desnecessários.
-          // Um dia útil típico = capacidade_semanal / 5 dias.
           const hrsUmDiaSrc = (maqCapPorSemana[sem]?.[detSrc.maq] || maqCapacidades[detSrc.maq] || 44) / 5;
           if(detSrc.hrs <= hrsUmDiaSrc + 0.5) continue; // cabe em ~1 dia, não divide
 
