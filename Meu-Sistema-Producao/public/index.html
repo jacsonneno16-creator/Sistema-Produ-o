@@ -130,6 +130,7 @@
         <option>Carregando...</option>
       </select>
     </div>
+    <button id="btn-tema" title="Alternar tema claro/escuro"></button>
     <div style="position:relative">
       <button id="hd-menu-btn" onclick="toggleHdMenu()" style="background:var(--s1);border:1px solid var(--border);border-radius:8px;width:36px;height:36px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--text2);transition:all .18s;flex-direction:column;gap:3px" title="Menu">
         <span style="display:block;width:4px;height:4px;border-radius:50%;background:currentColor"></span>
@@ -1930,6 +1931,32 @@ window.irParaLogin = irParaLogin;
     </div>
   </div>
 </div>
+
+<script>
+  /* ── ALTERNADOR DE TEMA ───────────────────────────────── */
+  (function() {
+    var btn = document.getElementById('btn-tema');
+    var body = document.body;
+
+    function updateBtn() {
+      var isLight = body.classList.contains('light');
+      btn.textContent = isLight ? '🌙' : '☀️';
+      btn.title = isLight ? 'Mudar para tema escuro' : 'Mudar para tema claro';
+    }
+
+    // Carrega preferência salva (padrão: escuro)
+    if (localStorage.getItem('tema') === 'light') {
+      body.classList.add('light');
+    }
+    updateBtn();
+
+    btn.addEventListener('click', function() {
+      var isLight = body.classList.toggle('light');
+      localStorage.setItem('tema', isLight ? 'light' : 'dark');
+      updateBtn();
+    });
+  })();
+</script>
 
 </body>
 
