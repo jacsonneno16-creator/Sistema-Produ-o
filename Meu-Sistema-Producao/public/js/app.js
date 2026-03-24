@@ -574,18 +574,33 @@ async function salvarSetupFirestore(maquina, prodOrigem, prodDestino, tempoMinut
   } catch(e) { toast('Erro ao salvar setup: ' + e.message, 'err'); }
 }
 
-// Normaliza nome de produto para chave de lookup
+// Normaliza nome de produto para chave de lookup de setup.
+// Remove o sufixo de embalagem (ex: "- CX 12", "- UN 6") que não faz parte
+// da identidade do produto para fins de troca de setup.
 function normProd(s){
   return (s||'').toUpperCase().trim()
-    .replace(/\s+/g,' ')
-    .replace(/[_\-]+/g,' ')
-    .replace(/\bDA\s+TERRINHA\b/g,'TERRINHA')
-    .replace(/\bDE\s+TERRINHA\b/g,'TERRINHA')
-    .replace(/\bDATERRINHA\b/g,'TERRINHA')
-    .replace(/\bDO\s+RANCHO\b/g,'RANCHO')
-    .replace(/\bCOOP\b/g,'COOP')
-    .replace(/\bMERCADAO\b/g,'MERCADAO')
-    .replace(/\bOBA\b/g,'OBA');
+    // Remover sufixo de embalagem antes de qualquer outra coisa:
+    //   "PRODUTO X - CX 12"  → "PRODUTO X"
+    //   "PRODUTO X CX 12"    → "PRODUTO X"   (sem travessão)
+    //   "PRODUTO X - UN 6"   → "PRODUTO X"
+    //   "PRODUTO X - PCT 24" → "PRODUTO X"
+    .replace(/\s*[-–]\s*(CX|UN|PCT|FD|SC|BD|KG|KIT)\s*\d+.*$/i, '')
+    .replace(/\s+(CX|UN|PCT|FD|SC|BD|KG|KIT)\s+\d+.*$/i, '')
+    // Normalizar pontuação e espaços
+    .replace(/[_\-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    // Variantes de marca / localização
+    .replace(/\bDA\s+TERRINHA\b/g,  'TERRINHA')
+    .replace(/\bDE\s+TERRINHA\b/g,  'TERRINHA')
+    .replace(/\bDATERRINHA\b/g,     'TERRINHA')
+    .replace(/\bDO\s+RANCHO\b/g,    'RANCHO')
+    .replace(/\bCOOP\b/g,           'COOP')
+    .replace(/\bMERCADAO\b/g,       'MERCADAO')
+    .replace(/\bOBA\b/g,            'OBA')
+    // Colapsar espaços finais novamente após substituições
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 // Matriz de setup: agora vem exclusivamente do Firestore (coleção setup_maquinas).
@@ -1033,7 +1048,11 @@ function renderDashboard(){
   document.getElementById('d-and').textContent=and;
   document.getElementById('d-ok').textContent=ok;
 
-  // (relatório legado removido — use a aba Relatórios para análises)
+  renderRelatorio();
+
+  // Atualiza relatório se estiver visível
+  setTimeout(renderRelatorio, 0);
+
   const recent=[...records].sort((a,b)=>b.id-a.id).slice(0,8);
   const el=document.getElementById('dash-recent');
   if(!recent.length){
@@ -1055,7 +1074,414 @@ function renderDashboard(){
 }
 
 
+// ════════════════════════════════════════════════════════════════
+// RELATÓRIO DE PRODUÇÃO — Dashboard
+// Modos: 'semana' | 'mes' | 'mes-sem'
+// ════════════════════════════════════════════════════════════════
+let rptMode = 'semana';          // modo atual
+let rptAnchor = new Date();      // data âncora (qualquer dia do período)
 
+function rptSetMode(m) {
+  rptMode = m;
+  // Atualiza visual dos botões
+  ['semana','mes','mes-sem'].forEach(function(k) {
+    const btn = document.getElementById('rpt-btn-'+k);
+    if (!btn) return;
+    const on = k === m;
+    btn.style.background = on ? 'var(--cyan)' : 'transparent';
+    btn.style.color = on ? '#000' : 'var(--text2)';
+  });
+  renderRelatorio();
+}
+
+
+
+function rptGoToday() {
+  rptAnchor = new Date();
+  renderRelatorio();
+}
+
+// Retorna total realizado (caixas) para um record num intervalo de datas
+function rptGetRealizado(recId, datesList) {
+  let total = 0;
+  const suffix = '_' + recId;
+  datesList.forEach(function(ds) {
+    const d = aponStorageGet('apon_' + ds + '_' + recId);
+    if (d) {
+      (typeof APON_HOURS !== 'undefined' ? APON_HOURS : ['h1','h2','h3','h4','h5','h6','h7','h8','h9','h10','h11','h12']).forEach(function(h) {
+        total += parseInt(d[h]) || 0;
+      });
+    }
+  });
+  return total;
+}
+
+// Constrói lista de datas de uma semana (Mon–Sun) como strings YYYY-MM-DD
+function rptWeekDates(monday) {
+  const out = [];
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(monday);
+    d.setDate(d.getDate() + i);
+    out.push(dateStr(d));
+  }
+  return out;
+}
+
+// Semanas de um mês
+function rptMonthWeeks(year, month) {
+  // month 0-based
+  const weeks = [];
+  const firstDay = new Date(year, month, 1);
+  let mon = getWeekMonday(firstDay);
+  // Se segunda anterior ao mês, começar do próximo
+  while (mon.getMonth() < month && mon.getFullYear() <= year) {
+    const tmp = new Date(mon); tmp.setDate(tmp.getDate() + 7);
+    if (tmp.getMonth() === month || (tmp.getMonth() < month && tmp.getFullYear() > year)) { mon = tmp; break; }
+    mon = tmp;
+  }
+  // Volta até a segunda que cobre o início do mês
+  const start = getWeekMonday(firstDay);
+  let cur = start;
+  const lastDay = new Date(year, month + 1, 0);
+  while (cur <= lastDay) {
+    weeks.push(new Date(cur));
+    cur = new Date(cur);
+    cur.setDate(cur.getDate() + 7);
+  }
+  return weeks;
+}
+
+function renderRelatorio__OLD_REMOVED() {
+  const wrap = document.getElementById('rpt-table-wrap');
+  if (!wrap) return;
+  return; // OLD VERSION - removed to avoid duplicate declaration
+
+  const y = rptAnchor.getFullYear();
+  const mo = rptAnchor.getMonth();
+  const fmt2 = function(d) { return d.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'}); };
+  const fmtWk = function(mon) {
+    const sun = new Date(mon); sun.setDate(sun.getDate()+6);
+    return fmt2(mon)+' – '+fmt2(sun);
+  };
+  const MONTH_NAMES = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+
+  // ── Constrói colunas (períodos) ──
+  let cols = []; // [{label, dates:[YYYY-MM-DD,...], monday?}]
+
+  if (rptMode === 'semana') {
+    // Duas semanas: anterior e atual
+    const mon = getWeekMonday(rptAnchor);
+    const prevMon = new Date(mon); prevMon.setDate(prevMon.getDate()-7);
+    cols = [
+      { label: fmtWk(prevMon)+' (sem ant.)', dates: rptWeekDates(prevMon) },
+      { label: fmtWk(mon)+' (sem atual)', dates: rptWeekDates(mon) },
+    ];
+    if (label) label.textContent = fmtWk(mon);
+
+  } else if (rptMode === 'mes') {
+    // Dois meses: anterior e atual
+    const prevMo = mo === 0 ? 11 : mo-1;
+    const prevY = mo === 0 ? y-1 : y;
+    const allDaysOf = function(yr, m) {
+      const out = []; const last = new Date(yr, m+1, 0).getDate();
+      for (let d = 1; d <= last; d++) {
+        const dt = new Date(yr, m, d);
+        out.push(dateStr(dt));
+      }
+      return out;
+    };
+    cols = [
+      { label: MONTH_NAMES[prevMo]+'/'+prevY, dates: allDaysOf(prevY, prevMo) },
+      { label: MONTH_NAMES[mo]+'/'+y+' (atual)', dates: allDaysOf(y, mo) },
+    ];
+    if (label) label.textContent = MONTH_NAMES[mo]+' '+y;
+
+  } else { // mes-sem
+    // Semanas dentro do mês atual
+    const weeks = rptMonthWeeks(y, mo);
+    cols = weeks.map(function(mon, i) {
+      return { label: 'Sem '+(i+1)+'\n'+fmtWk(mon), dates: rptWeekDates(mon) };
+    });
+    if (label) label.textContent = MONTH_NAMES[mo]+' '+y+' (por semana)';
+  }
+
+  // ── Agrupa por máquina ──
+  const maqs = [...new Set(recs.map(r => r.maquina))].sort();
+
+  if (!maqs.length) {
+    wrap.innerHTML = '<div style="text-align:center;padding:32px;color:var(--text3);font-size:13px">Nenhum dado para o período</div>';
+    return;
+  }
+
+  // ── Monta tabela HTML ──
+  let totalProg = cols.map(() => 0);
+  let totalReal = cols.map(() => 0);
+
+  let rows = '';
+  maqs.forEach(function(maq) {
+    const maqRecs = recs.filter(r => r.maquina === maq);
+    let progByCol = cols.map(function(col) {
+      return maqRecs.filter(function(r) {
+        const dt = r.dtDesejada || r.dtSolicitacao || '';
+        return col.dates.includes(dt);
+      }).reduce((s, r) => s + (parseInt(r.qntCaixas) || 0), 0);
+    });
+    let realByCol = cols.map(function(col) {
+      return maqRecs.reduce(function(s, r) {
+        return s + rptGetRealizado(r.id, col.dates);
+      }, 0);
+    });
+
+    // Soma nos totais gerais
+    cols.forEach(function(_, i) {
+      totalProg[i] += progByCol[i];
+      totalReal[i] += realByCol[i];
+    });
+
+    // Linha máquina
+    rows += '<tr style="border-top:2px solid var(--border2)">';
+    rows += '<td style="padding:8px 12px;font-family:JetBrains Mono,monospace;font-size:10px;font-weight:700;color:var(--purple);white-space:nowrap;background:var(--s2)" rowspan="2">'+maq+'</td>';
+    rows += '<td style="padding:6px 10px;font-size:10px;color:var(--cyan);font-family:JetBrains Mono,monospace;font-weight:700;background:rgba(0,229,204,.04)">PROG</td>';
+    progByCol.forEach(function(v) {
+      rows += '<td style="padding:6px 12px;text-align:right;font-family:JetBrains Mono,monospace;font-size:13px;font-weight:700;color:'+(v>0?'var(--cyan)':'var(--text4)')+';background:rgba(0,229,204,.04)">'+v+'</td>';
+    });
+    rows += '</tr><tr>';
+    rows += '<td style="padding:6px 10px;font-size:10px;color:var(--green);font-family:JetBrains Mono,monospace;font-weight:700">REAL</td>';
+    realByCol.forEach(function(v, i) {
+      const prog = progByCol[i];
+      const perc = prog > 0 ? Math.round(v/prog*100) : (v>0?100:0);
+      const col2 = v >= prog && prog > 0 ? 'var(--green)' : v > 0 ? 'var(--amber)' : 'var(--text4)';
+      const percTag = prog > 0 || v > 0 ? '<span style="font-size:9px;margin-left:4px;opacity:.7">('+perc+'%)</span>' : '';
+      rows += '<td style="padding:6px 12px;text-align:right;font-family:JetBrains Mono,monospace;font-size:13px;font-weight:700;color:'+col2+'">'+v+percTag+'</td>';
+    });
+    rows += '</tr>';
+  });
+
+  // Linha totais
+  rows += '<tr style="border-top:2px solid var(--cyan);background:rgba(0,229,204,.06)">';
+  rows += '<td style="padding:8px 12px;font-family:JetBrains Mono,monospace;font-size:10px;font-weight:700;color:var(--text)" rowspan="2">TOTAL GERAL</td>';
+  rows += '<td style="padding:6px 10px;font-size:10px;color:var(--cyan);font-family:JetBrains Mono,monospace;font-weight:700">PROG</td>';
+  totalProg.forEach(function(v) {
+    rows += '<td style="padding:6px 12px;text-align:right;font-family:JetBrains Mono,monospace;font-size:14px;font-weight:700;color:var(--cyan)">'+v+'</td>';
+  });
+  rows += '</tr><tr style="background:rgba(0,229,204,.04)">';
+  rows += '<td style="padding:6px 10px;font-size:10px;color:var(--green);font-family:JetBrains Mono,monospace;font-weight:700">REAL</td>';
+  totalReal.forEach(function(v, i) {
+    const prog = totalProg[i];
+    const perc = prog > 0 ? Math.round(v/prog*100) : (v>0?100:0);
+    const col2 = v >= prog && prog > 0 ? 'var(--green)' : v > 0 ? 'var(--amber)' : 'var(--text4)';
+    const percTag = prog > 0 || v > 0 ? '<span style="font-size:9px;margin-left:4px;opacity:.7">('+perc+'%)</span>' : '';
+    rows += '<td style="padding:6px 12px;text-align:right;font-family:JetBrains Mono,monospace;font-size:14px;font-weight:700;color:'+col2+'">'+v+percTag+'</td>';
+  });
+  rows += '</tr>';
+
+  // Cabeçalho de colunas
+  let thCols = cols.map(function(c) {
+    return '<th style="padding:10px 12px;text-align:right;font-family:JetBrains Mono,monospace;font-size:10px;font-weight:700;color:var(--text3);white-space:pre-line;min-width:110px">'+c.label+'</th>';
+  }).join('');
+
+  wrap.innerHTML =
+    '<table style="width:100%;border-collapse:collapse;font-size:12px">'+
+      '<thead><tr style="background:var(--s2);border-bottom:2px solid var(--border2)">'+
+        '<th style="padding:10px 12px;text-align:left;font-family:JetBrains Mono,monospace;font-size:10px;font-weight:700;color:var(--text3);min-width:120px">Máquina</th>'+
+        '<th style="padding:10px 12px;text-align:left;font-family:JetBrains Mono,monospace;font-size:10px;font-weight:700;color:var(--text3);width:60px">Tipo</th>'+
+        thCols+
+      '</tr></thead>'+
+      '<tbody>'+rows+'</tbody>'+
+    '</table>';
+}
+
+// Expõe globais
+window.rptSetTipo = rptSetTipo;
+window.rptNav = rptNav;
+window.renderRelatorio = renderRelatorio;
+
+
+// ===== RELATÓRIO DE PRODUÇÃO PROGRAMADA =====
+let rptTipo = 'semana';
+let rptRef  = new Date();
+
+function rptSetTipo(tipo){
+  rptTipo=tipo;
+  ['semana','mes','mes-semanas'].forEach(t=>{
+    const btn=document.getElementById('rpt-btn-'+t);
+    if(!btn) return;
+    if(t===tipo){btn.style.background='var(--cyan)';btn.style.color='#000';btn.style.fontWeight='700';}
+    else{btn.style.background='none';btn.style.color='var(--text2)';btn.style.fontWeight='400';}
+  });
+  renderRelatorio();
+}
+
+function rptNav(dir){
+  const d=new Date(rptRef);
+  if(rptTipo==='semana') d.setDate(d.getDate()+dir*7);
+  else d.setMonth(d.getMonth()+dir);
+  rptRef=d;
+  renderRelatorio();
+}
+
+function rptGetPeriodLabel(){
+  if(rptTipo==='semana'){
+    const mon=getWeekMonday(rptRef);
+    const sun=new Date(mon);sun.setDate(sun.getDate()+6);
+    return mon.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'})+' – '+sun.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit',year:'numeric'});
+  }
+  return rptRef.toLocaleDateString('pt-BR',{month:'long',year:'numeric'});
+}
+
+function rptGetSlots(){
+  if(rptTipo==='semana'){
+    const mon=getWeekMonday(rptRef);
+    const sun=new Date(mon);sun.setDate(sun.getDate()+6);
+    return [{label:'Semana',start:mon,end:sun}];
+  } else if(rptTipo==='mes'){
+    const start=new Date(rptRef.getFullYear(),rptRef.getMonth(),1);
+    const end  =new Date(rptRef.getFullYear(),rptRef.getMonth()+1,0);
+    const lbl  =rptRef.toLocaleDateString('pt-BR',{month:'short',year:'numeric'});
+    return [{label:lbl,start,end}];
+  } else {
+    // mes-semanas
+    const mStart=new Date(rptRef.getFullYear(),rptRef.getMonth(),1);
+    const mEnd  =new Date(rptRef.getFullYear(),rptRef.getMonth()+1,0);
+    const slots=[];
+    let cur=getWeekMonday(mStart);
+    let wn=1;
+    while(cur<=mEnd){
+      const sun=new Date(cur);sun.setDate(sun.getDate()+6);
+      slots.push({label:'Sem '+wn,start:new Date(cur),end:new Date(sun)});
+      cur=new Date(sun);cur.setDate(cur.getDate()+1);
+      wn++;
+    }
+    return slots;
+  }
+}
+
+function rptAggregate(slot,maqFilter){
+  const sStr=dateStr(slot.start);
+  const eStr=dateStr(slot.end);
+  const recs=records.filter(r=>{
+    const dt=r.dtDesejada||r.dtSolicitacao||'';
+    if(!dt||dt<sStr||dt>eStr) return false;
+    if(maqFilter&&r.maquina!==maqFilter) return false;
+    return true;
+  });
+  const caixas=recs.reduce((a,r)=>a+(r.qntCaixas||0),0);
+  const unids =recs.reduce((a,r)=>a+(r.qntUnid||0),0);
+  // realizado: sum apon data across slot dates
+  let realCaixas=0;
+  recs.forEach(r=>{
+    const d=new Date(slot.start);
+    while(dateStr(d)<=eStr){
+      const ds=dateStr(d);
+      try{
+        const key=aponKey(ds,r.id);
+        const raw=localStorage.getItem('apon_'+key);
+        if(raw){const data=JSON.parse(raw);realCaixas+=Object.values(data).reduce((a,v)=>a+(parseInt(v)||0),0);}
+      }catch(e){}
+      d.setDate(d.getDate()+1);
+    }
+  });
+  const byMaq={};
+  recs.forEach(r=>{
+    if(!byMaq[r.maquina]) byMaq[r.maquina]={caixas:0,unids:0,qtd:0};
+    byMaq[r.maquina].caixas+=r.qntCaixas||0;
+    byMaq[r.maquina].unids +=r.qntUnid||0;
+    byMaq[r.maquina].qtd++;
+  });
+  return{recs:recs.length,caixas,unids,realCaixas,byMaq};
+}
+
+function renderRelatorio(){
+  const lbl=document.getElementById('rpt-period-label');
+  if(lbl) lbl.textContent=rptGetPeriodLabel();
+
+  // Populate machine filter
+  const maqSel=document.getElementById('rpt-maq-filter');
+  const savedMaq=maqSel?maqSel.value:'';
+  if(maqSel){
+    const maqs=[...new Set(records.map(r=>r.maquina).filter(Boolean))].sort();
+    maqSel.innerHTML='<option value="">Todas as máquinas</option>'+maqs.map(m=>`<option value="${m}"${m===savedMaq?' selected':''}>${m}</option>`).join('');
+  }
+  const maqFilter=maqSel?maqSel.value:'';
+
+  const slots=rptGetSlots();
+  const aggs=slots.map(sl=>({slot:sl,data:rptAggregate(sl,maqFilter)}));
+  const body=document.getElementById('rpt-body');
+  if(!body) return;
+
+  if(!records.length){
+    body.innerHTML='<div style="padding:28px;text-align:center;color:var(--text3);font-size:13px">📋 Nenhuma solicitação cadastrada ainda.</div>';
+    return;
+  }
+
+  const cols=Math.min(slots.length,4);
+  let html=`<div style="display:grid;grid-template-columns:repeat(${cols},1fr);gap:10px;margin-bottom:18px">`;
+  aggs.forEach(({slot,data})=>{
+    const pct=data.caixas>0?Math.min(100,Math.round(data.realCaixas/data.caixas*100)):0;
+    const pctColor=pct>=100?'var(--green)':pct>=50?'var(--cyan)':'var(--amber)';
+    const s=slot.start.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'});
+    const e=slot.end.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'});
+    html+=`<div style="background:var(--s2);border:1px solid var(--border);border-radius:12px;padding:16px 14px;overflow:hidden">
+      <div style="font-family:'JetBrains Mono',monospace;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--text3);margin-bottom:10px">${slot.label} <span style="color:var(--text4)">${s}–${e}</span></div>
+      <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:6px">
+        <div>
+          <div style="font-size:10px;color:var(--text3);margin-bottom:2px">Programado</div>
+          <div style="font-family:'JetBrains Mono',monospace;font-size:24px;font-weight:700;color:var(--cyan);line-height:1">${data.caixas.toLocaleString('pt-BR')}</div>
+          <div style="font-size:10px;color:var(--text3);margin-top:3px">caixas · ${data.recs} solic.</div>
+        </div>
+        <div style="text-align:right">
+          <div style="font-size:10px;color:var(--text3);margin-bottom:2px">Realizado</div>
+          <div style="font-family:'JetBrains Mono',monospace;font-size:22px;font-weight:700;color:${pctColor};line-height:1">${data.realCaixas.toLocaleString('pt-BR')}</div>
+          <div style="font-size:10px;color:${pctColor};margin-top:3px;font-weight:700">${pct}%</div>
+        </div>
+      </div>
+      <div style="margin-top:10px;height:5px;background:var(--s3);border-radius:3px;overflow:hidden">
+        <div style="height:100%;background:${pctColor};width:${pct}%;border-radius:3px;transition:width .6s ease"></div>
+      </div>
+    </div>`;
+  });
+  html+='</div>';
+
+  // Detail table
+  const allMaqs=[...new Set(aggs.flatMap(({data})=>Object.keys(data.byMaq)))].sort();
+  if(allMaqs.length===0){
+    html+='<div style="padding:20px;text-align:center;color:var(--text3);font-size:12px">Nenhuma solicitação no período selecionado.</div>';
+    body.innerHTML=html; return;
+  }
+
+  html+=`<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px;min-width:480px">
+    <thead style="background:var(--s2);border-bottom:1px solid var(--border)"><tr>
+      <th style="padding:9px 12px;text-align:left;font-family:'JetBrains Mono',monospace;font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--text3)">Máquina</th>`;
+  aggs.forEach(({slot})=>{
+    const s=slot.start.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'});
+    const e=slot.end.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'});
+    html+=`<th style="padding:9px 12px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--cyan)">${slot.label}<br><span style="color:var(--text4);font-size:8px">${s}–${e}</span></th>`;
+  });
+  html+=`<th style="padding:9px 12px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--text3)">Total</th></tr></thead><tbody>`;
+
+  allMaqs.forEach((maq,mi)=>{
+    const rowBg=mi%2===1?'background:rgba(255,255,255,.01)':'';
+    html+=`<tr style="${rowBg}"><td style="padding:9px 12px;color:var(--purple);font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:700">${maq}</td>`;
+    let tot=0;
+    aggs.forEach(({data})=>{
+      const m=data.byMaq[maq]||{caixas:0,qtd:0};
+      tot+=m.caixas;
+      html+=`<td style="padding:9px 12px;text-align:center"><span style="color:var(--cyan);font-family:'JetBrains Mono',monospace;font-weight:600">${m.caixas.toLocaleString('pt-BR')}</span> <span style="font-size:10px;color:var(--text3)">(${m.qtd})</span></td>`;
+    });
+    html+=`<td style="padding:9px 12px;text-align:center;color:var(--text);font-family:'JetBrains Mono',monospace;font-weight:700">${tot.toLocaleString('pt-BR')}</td></tr>`;
+  });
+
+  let gTotal=0; aggs.forEach(({data})=>gTotal+=data.caixas);
+  html+=`<tr style="background:rgba(0,229,204,.04);border-top:1px solid rgba(0,229,204,.2)">
+    <td style="padding:10px 12px;font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--text3)">TOTAL</td>`;
+  aggs.forEach(({data})=>{
+    html+=`<td style="padding:10px 12px;text-align:center;color:var(--cyan);font-family:'JetBrains Mono',monospace;font-size:14px;font-weight:700">${data.caixas.toLocaleString('pt-BR')}</td>`;
+  });
+  html+=`<td style="padding:10px 12px;text-align:center;color:var(--cyan);font-family:'JetBrains Mono',monospace;font-size:16px;font-weight:700">${gTotal.toLocaleString('pt-BR')}</td></tr>
+  </tbody></table></div>`;
+
+  body.innerHTML=html;
+}
 
 // ===== TABLE WEEK FILTER =====
 let tableWeekMonday=null; // null = show all
@@ -1639,24 +2065,26 @@ function renderProdGrid(maq, filter){
   ));
   
   // Se não achou no catálogo mas a máquina tem produtos compatíveis, constrói lista a partir deles
+  // Só exibe produtos que existem de fato no catálogo (evita mostrar produtos não cadastrados)
   if (!prods.length && maqProds.length) {
     const todosProds = getAllProdutos();
     prods = maqProds
       .filter(p => !filter || p.produto.toLowerCase().includes(filter.toLowerCase()))
       .map(p => {
-        // Busca no catálogo pelo nome para pegar unid e cod reais
         const catalogo = todosProds.find(x =>
           x.descricao?.trim().toLowerCase() === p.produto?.trim().toLowerCase()
         );
+        if (!catalogo) return null; // ignora produto não cadastrado
         return {
-          descricao: p.produto,
-          cod: catalogo ? (catalogo.cod || 0) : 0,
-          unid: catalogo ? (catalogo.unid || 1) : 1,
-          pc_min: p.velocidade || (catalogo && catalogo.pc_min) || (maqData && maqData.pcMin) || 0,
+          descricao: catalogo.descricao,
+          cod: catalogo.cod || 0,
+          unid: catalogo.unid || 1,
+          pc_min: p.velocidade || catalogo.pc_min || (maqData && maqData.pcMin) || 0,
           maquina: maq,
-          kg_fd: 0
+          kg_fd: catalogo.kg_fd || 0
         };
-      });
+      })
+      .filter(Boolean); // remove os nulls
   }
   const grid=document.getElementById('prod-grid');
   if(!prods.length){
@@ -2085,17 +2513,20 @@ function buildSchedule(monday){
 
   const ativos=records.filter(r=>{
     if(r.status==='Concluído') return false;
-    // Produto marcado como finalizado no Realizado → nunca aparece como overflow
-    if(typeof pdIsFin==='function' && pdIsFin(r.id)) return false;
     const startDate=r.dtDesejada||r.dtSolicitacao;
     if(!startDate) return false;
     if(startDate>=mondayStr && startDate<=sundayStr) return true;
     if(startDate<mondayStr){
-      // Verificar se ainda há produção restante (overflow real)
+      // Overflow real: só registros que foram INICIADOS mas não concluídos.
+      // Registros Pendentes (totalProduzido = 0) de semanas anteriores NÃO
+      // devem aparecer em semanas futuras — eles ficam visíveis apenas na
+      // sua semana original até o usuário os reprogramar ou produzi-los.
+      // Isso evita acúmulo de quantidades e repetição infinita no Gantt.
       const totalProd = (typeof calcularTotalProduzido==='function')
         ? calcularTotalProduzido(r.id) : 0;
+      if(totalProd <= 0) return false; // pendente puro — não overflow
       const remaining = (r.qntCaixas||0) - totalProd;
-      return remaining > 0; // só overflow real
+      return remaining > 0; // só overflow real: iniciado mas não concluído
     }
     return false;
   });
@@ -2111,6 +2542,12 @@ function buildSchedule(monday){
     byMaq[m].sort((a,b)=>{
       const sa=a.sortOrder!=null?a.sortOrder:a.id;
       const sb=b.sortOrder!=null?b.sortOrder:b.id;
+      // Não-alergênico sempre antes de alergênico na mesma máquina
+      const pA = getAllProdutos().find(p => p.descricao === a.produto || p.descricao?.trim() === a.produto?.trim());
+      const pB = getAllProdutos().find(p => p.descricao === b.produto || p.descricao?.trim() === b.produto?.trim());
+      const aAlerg = pA?.alergenico === true ? 1 : 0;
+      const bAlerg = pB?.alergenico === true ? 1 : 0;
+      if(aAlerg !== bAlerg) return aAlerg - bAlerg; // não-alerg (0) vem antes de alerg (1)
       return sa-sb;
     });
   }
@@ -2219,8 +2656,16 @@ function buildSchedule(monday){
         const blkAvailMin=blkTotalMin-snap.usedMin;
         if(blkAvailMin<=0.001){snap.blkIdx++;snap.usedMin=0;continue;}
         const useMin=Math.min(remainSetupMin,blkAvailMin);
+        // Calcular startPct/endPct para renderizar como barra visual laranja no Gantt
+        const dayCapMinSetup=(hoursOnDayMaq(days[snap.dayIdx],maq))*60;
+        const allBlocksSetup=getBlocks(days[snap.dayIdx],maq);
+        let blkOffMinSetup=0;
+        for(let bi2=0;bi2<snap.blkIdx;bi2++) blkOffMinSetup+=(allBlocksSetup[bi2].fimMin-allBlocksSetup[bi2].inicioMin);
+        const absStartSetup=blkOffMinSetup+snap.usedMin;
         setupSegments.push({date:dateStr(days[snap.dayIdx]),dayIdx:snap.dayIdx,
-          turnoIdx:blk.turnoIdx,turnoLabel:blk.label,setupMin:useMin});
+          turnoIdx:blk.turnoIdx,turnoLabel:blk.label,setupMin:useMin,
+          startPct:dayCapMinSetup>0?(absStartSetup/dayCapMinSetup)*100:0,
+          endPct:dayCapMinSetup>0?((absStartSetup+useMin)/dayCapMinSetup)*100:0});
         remainSetupMin-=useMin;
         snap.usedMin+=useMin;
         if(snap.usedMin>=blkTotalMin-0.001){snap.blkIdx++;snap.usedMin=0;}
@@ -2378,23 +2823,6 @@ function renderGanttSemanal(){
       );
     }
   }
-  // Garante que _aponFS reflete a semana exibida no Gantt.
-  // Sem isso calcularTotalProduzido usa dados da semana do boot,
-  // fazendo produtos já concluídos reaparecerem como overflow.
-  const _ganttWkKey = dateStr(ganttBaseMonday);
-  if(typeof _loadAponFSSemana==='function' && window._ganttAponWeek!==_ganttWkKey){
-    window._ganttAponWeek = _ganttWkKey;
-    _loadAponFSSemana(ganttBaseMonday).then(function(){
-      _renderGanttSemanalCore(ganttBaseMonday);
-    }).catch(function(){
-      _renderGanttSemanalCore(ganttBaseMonday);
-    });
-    return;
-  }
-  _renderGanttSemanalCore(ganttBaseMonday);
-}
-
-function _renderGanttSemanalCore(ganttBaseMonday){
   const {schedule,days}=buildSchedule(ganttBaseMonday);
   const today=dateStr(new Date());
 
@@ -2427,17 +2855,11 @@ function _renderGanttSemanalCore(ganttBaseMonday){
       <span style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block">${r.produto.substring(0,30)}</span>
     </div>`).join('');
 
-  // COL WIDTHS — LABEL_W e OBS_W ajustáveis pelo usuário (salvos no localStorage)
+  // COL WIDTHS — LABEL_W e OBS_W são ajustáveis pelo usuário (salvo no localStorage)
   const MAQ_W=72, QTY_W=48, TEMPO_W=52, SETUP_W=52, TOTMAQ_W=68, DQTY_W=36;
   const LABEL_W = parseInt(localStorage.getItem('gantt-label-width') || '280');
-  // Coluna OBS: só aparece se algum registro ativo tiver obs preenchida
-  const hasAnyObs = activeRecs.some(r => r.obs && r.obs.trim());
-  const OBS_W = hasAnyObs ? parseInt(localStorage.getItem('gantt-obs-width') || '140') : 0;
-  function buildGridCols(lw, ow){
-    if(ow>0) return `${MAQ_W}px ${lw}px ${QTY_W}px ${TEMPO_W}px ${SETUP_W}px ${TOTMAQ_W}px ${ow}px repeat(7,1fr) repeat(7,${DQTY_W}px)`;
-    return `${MAQ_W}px ${lw}px ${QTY_W}px ${TEMPO_W}px ${SETUP_W}px ${TOTMAQ_W}px repeat(7,1fr) repeat(7,${DQTY_W}px)`;
-  }
-  const gridCols = buildGridCols(LABEL_W, OBS_W);
+  const OBS_W   = parseInt(localStorage.getItem('gantt-obs-width')   || '140');
+  const gridCols=`${MAQ_W}px ${LABEL_W}px ${QTY_W}px ${TEMPO_W}px ${SETUP_W}px ${TOTMAQ_W}px ${OBS_W}px repeat(7,1fr) repeat(7,${DQTY_W}px)`;
 
   // Pre-calculate total SCHEDULED hours per machine for THIS WEEK only
   // Uses the segments from buildSchedule which already distribute by shift block
@@ -2476,7 +2898,11 @@ function _renderGanttSemanalCore(ganttBaseMonday){
     <div class="g-head-label" style="font-size:9px">Tempo<br>h</div>
     <div class="g-head-label" style="font-size:9px">Set Up<br>h</div>
     <div class="g-head-label" style="font-size:9px">H.<br>Prog.</div>
-    ${hasAnyObs ? `<div class="g-head-label" style="font-size:9px;position:relative" id="gantt-col-obs">Obser-<br>vação<div id="gantt-obs-resizer" style="position:absolute;right:0;top:0;width:6px;height:100%;cursor:col-resize;display:flex;align-items:center;justify-content:center;z-index:10" title="Arraste para redimensionar"><div style="width:2px;height:60%;background:var(--border);border-radius:2px"></div></div></div>` : ''}`;
+    <div class="g-head-label" style="font-size:9px;white-space:nowrap;position:relative" id="gantt-col-obs">Observação
+      <div id="gantt-obs-resizer" style="position:absolute;right:0;top:0;width:6px;height:100%;cursor:col-resize;display:flex;align-items:center;justify-content:center;z-index:10" title="Arraste para redimensionar">
+        <div style="width:2px;height:60%;background:var(--border);border-radius:2px"></div>
+      </div>
+    </div>`;
   days.forEach(d=>{
     const isToday=dateStr(d)===today;
     const isWknd=hoursOnDay(d)===0;
@@ -2546,19 +2972,21 @@ function _renderGanttSemanalCore(ganttBaseMonday){
           color:      colorMap[entry.rec.id],
           qntCaixas:  0,
           setupMin:   0,
-          segments:   [],       // todos os segmentos de todos os registros
+          segments:      [],   // segmentos de produção
+          setupSegments: [],   // segmentos de setup (para barra laranja)
           recs:       []
         };
       }
-      prodMap[pk].qntCaixas += (entry.rec.qntCaixas || 0);
-      prodMap[pk].setupMin  += (entry.setupMin || 0);   // somar setup total
-      prodMap[pk].segments  = prodMap[pk].segments.concat(entry.segments || []);
+      prodMap[pk].qntCaixas     += (entry.rec.qntCaixas || 0);
+      prodMap[pk].setupMin      += (entry.setupMin || 0);
+      prodMap[pk].segments       = prodMap[pk].segments.concat(entry.segments || []);
+      prodMap[pk].setupSegments  = prodMap[pk].setupSegments.concat(entry.setupSegments || []);
       prodMap[pk].recs.push(entry.rec);
     }
     const prodEntries = Object.values(prodMap);
 
     for(const prodEntry of prodEntries){
-      const { produto, obs, maquina: recMaq, color, qntCaixas, setupMin, segments, recs } = prodEntry;
+      const { produto, obs, maquina: recMaq, color, qntCaixas, setupMin, segments, setupSegments, recs } = prodEntry;
 
       // Calcular horas de produção totais (soma de todos os segmentos)
       const prodHrs = segments.reduce((a, sg) => a + (sg.hrsNoDia || 0), 0);
@@ -2569,8 +2997,10 @@ function _renderGanttSemanalCore(ganttBaseMonday){
       // Máquina col
       html+=`<div class="g-col-maq"><span class="g-col-maq-txt">${recMaq}</span></div>`;
 
-      // Produto label col
-      html+=`<div class="g-label"><strong title="${produto}${obs?' — '+obs:''}">${produto}</strong></div>`;
+      // Produto label col — inclui badge de alergênico se aplicável
+      const prodAlerg = getAllProdutos().find(p => p.descricao === produto || p.descricao?.trim() === produto?.trim());
+      const isAlerg = prodAlerg?.alergenico === true;
+      html+=`<div class="g-label"><strong title="${produto}${obs?' — '+obs:''}">${produto}</strong>${isAlerg?'<span style="font-size:9px;font-weight:700;color:#ff9900;background:rgba(255,153,0,.15);border:1px solid rgba(255,153,0,.35);padding:1px 5px;border-radius:6px;margin-left:5px;white-space:nowrap">⚠️ Alerg.</span>':''}</div>`;
 
       // Qtd cx col — soma de todos os registros
       html+=`<div class="g-col-qty"><div class="g-col-qty-txt">${qntCaixas}<br><span style="font-size:9px;color:var(--text3);font-weight:400">cx</span></div></div>`;
@@ -2591,12 +3021,10 @@ function _renderGanttSemanalCore(ganttBaseMonday){
       html+=`<div style="display:flex;align-items:center;justify-content:center;border-left:2px solid var(--border2);background:var(--s1);font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:700;color:${firstRowOfMaq?weekCapColor:'var(--text4)'};padding:4px 2px;text-align:center" title="${weekProgTitle}">${weekProgStr}</div>`;
       firstRowOfMaq=false;
 
-      // Obs / Destino col — só renderiza se há alguma obs na semana
-      if(hasAnyObs){
-        html+=`<div style="display:flex;align-items:center;border-left:1px solid var(--border);background:var(--s1);padding:4px 6px;overflow:hidden">
-          ${obs ? `<span style="font-size:10px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;width:100%;display:block" title="${obs}">${obs}</span>` : ''}
-        </div>`;
-      }
+      // Obs / Destino col
+      html+=`<div style="display:flex;align-items:center;border-left:1px solid var(--border);background:var(--s1);padding:4px 6px;overflow:hidden">
+        ${obs ? `<span style="font-size:10px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;width:100%;display:block" title="${obs}">${obs}</span>` : ''}
+      </div>`;
 
       // ── Day bar cells: render per-shift bars ──
       for(let di=0;di<7;di++){
@@ -2624,9 +3052,37 @@ function _renderGanttSemanalCore(ganttBaseMonday){
             html+=`<div style="position:absolute;left:${blkLeft.toFixed(1)}%;width:${blkW.toFixed(1)}%;top:0;bottom:0;background:${blkColors[blk.turnoIdx]||''};border-left:1px dashed rgba(255,255,255,.06)"></div>`;
           });
 
-          daySeg.forEach(seg=>{
-            const leftPct=seg.startPct.toFixed(1);
-            const widthPct=(seg.endPct-seg.startPct).toFixed(1);
+          // ── Barras de Setup (laranja, acima da barra de produção) ────────
+          const daySetupSegs = (setupSegments||[]).filter(s=>s.dayIdx===di && s.startPct!=null);
+          daySetupSegs.forEach(ss=>{
+            const sLeft  = Math.max(0, ss.startPct).toFixed(1);
+            const sWidth = Math.max(0.3, ss.endPct - ss.startPct).toFixed(1);
+            html+=`<div style="position:absolute;left:${sLeft}%;width:${sWidth}%;top:0;height:28%;background:rgba(255,153,0,0.75);border-radius:2px 2px 0 0;z-index:1"
+              title="Setup: ${fmtHrs(ss.setupMin/60)}${ss.turnoLabel?' · '+ss.turnoLabel:''}"></div>`;
+          });
+
+          // Mesclar segmentos contíguos do mesmo dia para evitar barra partida.
+          // Dois segmentos são contíguos quando endPct de um ≈ startPct do próximo
+          // (diferença ≤ 0.5 pp). Segmentos de turnos diferentes mas consecutivos
+          // também são fundidos — a barra única vai do início do primeiro ao fim do último.
+          const segsMerged = [];
+          const segsOrdered = [...daySeg].sort((a,b) => a.startPct - b.startPct);
+          segsOrdered.forEach(seg => {
+            const last = segsMerged[segsMerged.length - 1];
+            if(last && Math.abs(seg.startPct - last.endPct) <= 0.5){
+              // Fundir: estender o último segmento
+              last.endPct      = Math.max(last.endPct, seg.endPct);
+              last.caixasNoDia += seg.caixasNoDia;
+              last.hrsNoDia    += seg.hrsNoDia;
+              last.turnoLabel   = ''; // multi-turno: não exibir label de turno
+            } else {
+              segsMerged.push({ ...seg });
+            }
+          });
+
+          segsMerged.forEach(seg=>{
+            const leftPct  = Math.max(0, seg.startPct).toFixed(1);
+            const widthPct = Math.max(0.5, seg.endPct - seg.startPct).toFixed(1);
             const cx=seg.caixasNoDia;
             const hrsLabel=fmtHrs(seg.hrsNoDia);
             const turnoTip=seg.turnoLabel?` · ${seg.turnoLabel}`:'';
@@ -2665,6 +3121,14 @@ function _renderGanttSemanalCore(ganttBaseMonday){
   document.getElementById('gantt-table').innerHTML=html;
   document.getElementById('gantt-summary').innerHTML='';
 
+  // ── Helper local: reconstruir grid com larguras salvas ──
+  function _ganttRebuildGrid(){
+    const MAQ_W=72, QTY_W=48, TEMPO_W=52, SETUP_W=52, TOTMAQ_W=68, DQTY_W=36;
+    const lW = parseInt(localStorage.getItem('gantt-label-width') || '280');
+    const oW = parseInt(localStorage.getItem('gantt-obs-width')   || '140');
+    return `${MAQ_W}px ${lW}px ${QTY_W}px ${TEMPO_W}px ${SETUP_W}px ${TOTMAQ_W}px ${oW}px repeat(7,1fr) repeat(7,${DQTY_W}px)`;
+  }
+
   // ── Resize da coluna Produto do Gantt ──
   (function initGanttLabelResizer(){
     const resizer = document.getElementById('gantt-label-resizer');
@@ -2675,12 +3139,10 @@ function _renderGanttSemanalCore(ganttBaseMonday){
       const startW = parseInt(localStorage.getItem('gantt-label-width') || '280');
       resizer.querySelector('div').style.background = 'var(--cyan)';
       function onMove(ev){
-        const delta = ev.clientX - startX;
-        const newW = Math.max(120, Math.min(520, startW + delta));
+        const newW = Math.max(120, Math.min(520, startW + (ev.clientX - startX)));
         localStorage.setItem('gantt-label-width', newW);
-        const curObsW = hasAnyObs ? parseInt(localStorage.getItem('gantt-obs-width') || '140') : 0;
-        const newGrid = buildGridCols(newW, curObsW);
-        document.querySelectorAll('.gantt-row, .gantt-head-row').forEach(el=>{ el.style.gridTemplateColumns = newGrid; });
+        const g = _ganttRebuildGrid();
+        document.querySelectorAll('.gantt-row, .gantt-head-row').forEach(el=>{ el.style.gridTemplateColumns = g; });
       }
       function onUp(){
         resizer.querySelector('div').style.background = 'var(--border)';
@@ -2694,23 +3156,21 @@ function _renderGanttSemanalCore(ganttBaseMonday){
 
   // ── Resize da coluna Observação do Gantt ──
   (function initGanttObsResizer(){
-    const resizer = document.getElementById('gantt-obs-resizer');
-    if(!resizer) return;
-    resizer.addEventListener('mousedown', function(e){
+    const obsResizer = document.getElementById('gantt-obs-resizer');
+    if(!obsResizer) return;
+    obsResizer.addEventListener('mousedown', function(e){
       e.preventDefault();
       const startX = e.clientX;
       const startW = parseInt(localStorage.getItem('gantt-obs-width') || '140');
-      resizer.querySelector('div').style.background = 'var(--cyan)';
+      obsResizer.querySelector('div').style.background = 'var(--cyan)';
       function onMove(ev){
-        const delta = ev.clientX - startX;
-        const newW = Math.max(60, Math.min(360, startW + delta));
+        const newW = Math.max(60, Math.min(400, startW + (ev.clientX - startX)));
         localStorage.setItem('gantt-obs-width', newW);
-        const curLabelW = parseInt(localStorage.getItem('gantt-label-width') || '280');
-        const newGrid = buildGridCols(curLabelW, newW);
-        document.querySelectorAll('.gantt-row, .gantt-head-row').forEach(el=>{ el.style.gridTemplateColumns = newGrid; });
+        const g = _ganttRebuildGrid();
+        document.querySelectorAll('.gantt-row, .gantt-head-row').forEach(el=>{ el.style.gridTemplateColumns = g; });
       }
       function onUp(){
-        resizer.querySelector('div').style.background = 'var(--border)';
+        obsResizer.querySelector('div').style.background = 'var(--border)';
         document.removeEventListener('mousemove', onMove);
         document.removeEventListener('mouseup', onUp);
       }
@@ -4371,19 +4831,6 @@ function renderProdDayTabs(){
     + '<span style="font-size:10px">Total da Semana</span>'
     + '</button>';
 
-  // Aba "Processos" — só aparece se há processos cadastrados
-  const processosExistem = _getProcessos().length > 0;
-  if(processosExistem){
-    const isProcSelected = prodSelectedDate === 'processos';
-    const procBorder = isProcSelected ? 'var(--green)' : 'var(--border)';
-    const procBg = isProcSelected ? 'var(--green)' : 'var(--s1)';
-    const procColor = isProcSelected ? '#fff' : 'var(--text2)';
-    html += '<button onclick="prodSelectDay(\'processos\')" style="padding:8px 16px;border-radius:8px;cursor:pointer;font-family:\'Space Grotesk\',sans-serif;font-weight:600;font-size:12px;border:1px solid '+procBorder+';background:'+procBg+';color:'+procColor+';transition:all .18s;position:relative;display:inline-flex;flex-direction:column;align-items:center;gap:2px;min-width:100px;margin-left:8px">'
-      + '<span style="font-size:13px">⚙️</span>'
-      + '<span style="font-size:10px">Processos</span>'
-      + '</button>';
-  }
-
   const el = document.getElementById('prod-day-tabs');
   if(el) el.innerHTML = html;
 }
@@ -4468,12 +4915,6 @@ function renderApontamento(){
       console.error('Erro renderWeeklySummary:', e);
       body.innerHTML = '<div class="empty"><div class="ei">⚠️</div>Erro ao carregar resumo da semana.</div>';
     });
-    return;
-  }
-
-  // Se a aba "Processos" estiver selecionada
-  if(dateVal === 'processos'){
-    renderProcessosDia(body);
     return;
   }
 
@@ -5436,11 +5877,11 @@ function renderProducaoDiaControlado() {
           .join('');
         if (!funcOpts) return;
         html += `
-          <div style="padding:4px 8px;border-top:1px solid var(--border);background:rgba(139,92,246,.05);display:flex;align-items:center;gap:6px">
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-            <span style="font-size:9px;color:var(--purple);white-space:nowrap">${maq.length>10?maq.substring(0,10)+'…':maq}</span>
+          <div style="padding:5px 8px;border-top:1px solid var(--border);background:rgba(139,92,246,.05);display:flex;align-items:center;gap:6px">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" stroke-width="2" style="flex-shrink:0"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+            <span style="font-size:9px;color:var(--purple);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;width:90px;min-width:90px;flex-shrink:0" title="${maq}">${maq}</span>
             <select onchange="pdSelecionarFunc(this,'${ds}','${maq}')"
-                    style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:10px;padding:2px 4px">
+                    style="flex:1;min-width:0;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:10px;padding:2px 4px">
               <option value="">— operador —</option>
               ${funcOpts}
             </select>
@@ -6305,7 +6746,6 @@ function settingsNav(section){
   if(section==='gestao-lojas') setTimeout(()=>renderGestaoLojas(), 50);
   if(section==='ficha-tecnica-cfg') setTimeout(()=>renderFichaTecnicaCfg(), 50);
   if(section==='produtos') setTimeout(()=>renderProdutosCfg(), 50);
-  if(section==='processos') setTimeout(()=>renderProcessosCfg(), 50);
 }
 
 function handleImportZip(file){
@@ -7119,6 +7559,7 @@ function renderProdutosCfg() {
           <span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:${desativado?'var(--text4)':'var(--cyan)'};flex-shrink:0">${p.cod}</span>
           <span style="font-size:12px;color:${desativado?'var(--text3)':'var(--text)'}">${p.descricao}</span>
           ${desativado ? '<span style="font-size:9px;font-weight:700;color:var(--red);background:rgba(255,71,87,.12);border:1px solid rgba(255,71,87,.3);padding:1px 7px;border-radius:10px;letter-spacing:.5px">DESATIVADO</span>' : ''}
+          ${p.alergenico ? '<span style="font-size:9px;font-weight:700;color:#ff9900;background:rgba(255,153,0,.12);border:1px solid rgba(255,153,0,.3);padding:1px 7px;border-radius:10px;letter-spacing:.5px">⚠️ ALERGÊNICO</span>' : ''}
         </div>
         <div style="display:flex;align-items:center;gap:6px;margin-top:5px;flex-wrap:wrap">
           <span style="font-size:10px;color:${desativado?'var(--text4)':'var(--warn)'};font-family:'JetBrains Mono',monospace">${p.pc_min} und/min</span>
@@ -7204,6 +7645,7 @@ function openAddProduto() {
   ['pm-cobertura','pm-prod-min','pm-multiplo','pm-prioridade'].forEach(id => { const el = document.getElementById(id); if(el) el.value = ''; });
   const tipoMin = document.getElementById('pm-tipo-min'); if(tipoMin) tipoMin.value = '';
   const pmAtivo = document.getElementById('pm-ativo'); if(pmAtivo) pmAtivo.value = 'true';
+  const pmAlerg = document.getElementById('pm-alergenico'); if(pmAlerg) pmAlerg.value = 'false';
   const pmInsumos = document.getElementById('pm-insumos-list'); if(pmInsumos) pmInsumos.innerHTML = '';
   const titleEl = document.getElementById('prod-modal-title') || document.getElementById('maq-modal-title');
   if(titleEl) titleEl.textContent = 'Novo Produto';
@@ -7235,6 +7677,7 @@ function editarProduto(cod, maquina, descricao) {
   const elTipo = document.getElementById('pm-tipo-min');   if(elTipo) elTipo.value  = produto.tipoMinimo          || '';
   const elPrio = document.getElementById('pm-prioridade'); if(elPrio) elPrio.value  = produto.prioridadeProducao  || '';
   const elAtivo= document.getElementById('pm-ativo');      if(elAtivo) elAtivo.value = (produto.produtoAtivo !== false) ? 'true' : 'false';
+  const elAlerg= document.getElementById('pm-alergenico'); if(elAlerg) elAlerg.value = produto.alergenico ? 'true' : 'false';
   
   // Popular máquinas no select
   const sel = document.getElementById('pm-maq');
@@ -7360,10 +7803,11 @@ async function saveProdModal() {
   const tipoMinimo         = document.getElementById('pm-tipo-min')?.value             || '';
   const prioridadeProducao = parseInt(document.getElementById('pm-prioridade')?.value) || 2;
   const produtoAtivo       = document.getElementById('pm-ativo')?.value !== 'false';
+  const alergenico         = document.getElementById('pm-alergenico')?.value === 'true';
 
   const dados = {
     cod, descricao: desc, unid, kg_fd: 0, pc_min: pcmin, maquina: maq,
-    metaCoberturaDias, producaoMinima, multiploProducao, tipoMinimo, prioridadeProducao, produtoAtivo
+    metaCoberturaDias, producaoMinima, multiploProducao, tipoMinimo, prioridadeProducao, produtoAtivo, alergenico
   };
 
   const eraNovoProduto = !_produtoEditando;
@@ -8402,290 +8846,6 @@ function reactivateFuncionario(){ }
 function deleteFuncionario(){ }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// PROCESSOS DE PRODUÇÃO (cadastro de processos que ocorrem na produção)
-// ══════════════════════════════════════════════════════════════════════════════
-function _getProcessos(){
-  try{ return JSON.parse(localStorage.getItem('cfg_processos')||'[]'); }catch(e){ return []; }
-}
-function _saveProcessos(arr){
-  localStorage.setItem('cfg_processos', JSON.stringify(arr));
-}
-
-function renderProcessosCfg(){
-  const el = document.getElementById('processos-list');
-  if(!el) return;
-  const processos = _getProcessos();
-  if(!processos.length){
-    el.innerHTML='<div style="padding:20px 22px;color:var(--text3);font-size:13px">Nenhum processo cadastrado.</div>';
-    return;
-  }
-  el.innerHTML = processos.map((p,i)=>`
-    <div style="display:flex;align-items:center;justify-content:space-between;padding:13px 22px;border-bottom:1px solid var(--border)">
-      <div style="display:flex;align-items:center;gap:12px">
-        <div style="width:34px;height:34px;border-radius:8px;background:rgba(224,112,32,.15);border:1px solid rgba(224,112,32,.3);display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0">⚙️</div>
-        <div>
-          <div style="font-weight:600;font-size:13px;color:var(--text)">${p.nome}</div>
-          ${p.desc?`<div style="font-size:11px;color:var(--text3);margin-top:1px">${p.desc}</div>`:''}
-        </div>
-      </div>
-      <div style="display:flex;gap:6px;flex-shrink:0">
-        <button onclick="openModalProcesso(${i})" style="background:var(--s2);border:1px solid var(--border);border-radius:7px;padding:6px 11px;font-size:12px;color:var(--text2);cursor:pointer" title="Editar">✏️</button>
-        <button onclick="excluirProcesso(${i})" style="background:rgba(204,40,0,.08);border:1px solid rgba(204,40,0,.2);border-radius:7px;padding:6px 11px;font-size:12px;color:var(--red);cursor:pointer" title="Excluir">🗑</button>
-      </div>
-    </div>`).join('');
-}
-
-function openModalProcesso(idx){
-  const modal = document.getElementById('modal-processo');
-  const processos = _getProcessos();
-  document.getElementById('processo-edit-id').value = idx !== undefined ? idx : '';
-  document.getElementById('processo-modal-title').textContent = idx !== undefined ? 'Editar Processo' : 'Novo Processo';
-  document.getElementById('processo-nome').value = idx !== undefined ? (processos[idx]?.nome||'') : '';
-  document.getElementById('processo-desc').value = idx !== undefined ? (processos[idx]?.desc||'') : '';
-  modal.style.display = 'flex';
-  setTimeout(()=>document.getElementById('processo-nome').focus(), 80);
-}
-function closeModalProcesso(){
-  document.getElementById('modal-processo').style.display = 'none';
-}
-function salvarProcesso(){
-  const nome = document.getElementById('processo-nome').value.trim();
-  if(!nome){ toast('Informe o nome do processo.','err'); return; }
-  const desc = document.getElementById('processo-desc').value.trim();
-  const idxStr = document.getElementById('processo-edit-id').value;
-  const processos = _getProcessos();
-  if(idxStr !== ''){
-    processos[parseInt(idxStr)] = { nome, desc };
-    toast('Processo atualizado.','ok');
-  } else {
-    processos.push({ nome, desc });
-    toast('Processo cadastrado.','ok');
-  }
-  _saveProcessos(processos);
-  closeModalProcesso();
-  renderProcessosCfg();
-}
-function excluirProcesso(idx){
-  const processos = _getProcessos();
-  if(!confirm('Excluir "'+processos[idx]?.nome+'"?')) return;
-  processos.splice(idx,1);
-  _saveProcessos(processos);
-  renderProcessosCfg();
-  toast('Processo excluído.','ok');
-}
-
-// ── Storage de processos do dia ──────────────────────────────────────────────
-function _procDayKey(weekMonday){ return 'proc_dia_'+dateStr(weekMonday); }
-function _getProcDayData(weekMonday){
-  try{ return JSON.parse(localStorage.getItem(_procDayKey(weekMonday))||'{}'); }catch(e){ return {}; }
-}
-function _saveProcDayData(weekMonday, data){
-  localStorage.setItem(_procDayKey(weekMonday), JSON.stringify(data));
-}
-
-// ── Render principal da aba Processos no Realizado ───────────────────────────
-function renderProcessosDia(body){
-  if(!prodBaseMonday){ body.innerHTML='<div class="empty"><div class="ei">📅</div>Carregue uma semana primeiro</div>'; return; }
-  const processos = _getProcessos();
-  if(!processos.length){ body.innerHTML='<div class="empty"><div class="ei">⚙️</div>Nenhum processo cadastrado.<br><small style="color:var(--text3)">Vá em Configurações → Processos para cadastrar.</small></div>'; return; }
-
-  const days = getWeekDays(prodBaseMonday).filter(d => hoursOnDay(d) > 0);
-  const data  = _getProcDayData(prodBaseMonday);
-  const funcs = (_funcProd && _funcProd.length) ? _funcProd : [];
-
-  let html = `<div style="display:flex;flex-direction:column;gap:10px">`;
-
-  days.forEach(function(d){
-    const ds = dateStr(d);
-    const dayName = DAY_NAMES[d.getDay()];
-    const dayLabel = dayName + ' · ' + fmtDate(d);
-    const dayData  = data[ds] || [];   // array de { processoIdx, funcionarios:[] }
-    const isOpen   = !!body._openDays && body._openDays[ds];
-    const totalProc = dayData.length;
-
-    html += `<div style="background:var(--s1);border:1px solid var(--border);border-radius:10px;overflow:hidden">
-      <div onclick="procToggleDay(this,'${ds}')" style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;cursor:pointer;user-select:none;transition:background .15s" onmouseover="this.style.background='var(--s2)'" onmouseout="this.style.background=''">
-        <div style="display:flex;align-items:center;gap:10px">
-          <span style="font-size:14px">📅</span>
-          <span style="font-weight:600;font-size:13px;color:var(--text)">${dayLabel}</span>
-          ${totalProc>0?`<span style="background:rgba(90,184,72,.15);color:var(--green);border:1px solid rgba(90,184,72,.3);border-radius:10px;padding:1px 9px;font-size:10px;font-weight:700;font-family:'JetBrains Mono',monospace">${totalProc} processo${totalProc>1?'s':''}</span>`:'<span style="font-size:11px;color:var(--text3)">Nenhum processo</span>'}
-        </div>
-        <svg style="transform:rotate(${isOpen?'180':'0'}deg);transition:transform .2s;color:var(--text3)" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>
-      </div>
-      <div id="proc-day-${ds}" style="display:${isOpen?'block':'none'};border-top:1px solid var(--border)">
-        <div id="proc-items-${ds}" style="padding:8px 12px;display:flex;flex-direction:column;gap:6px">
-          ${_renderProcItems(dayData, processos, funcs, ds)}
-        </div>
-        <div style="padding:8px 12px 12px;border-top:1px solid var(--border)">
-          <button onclick="procAddItem('${ds}')" style="display:flex;align-items:center;gap:7px;background:rgba(224,112,32,.1);border:1px solid rgba(224,112,32,.3);border-radius:8px;padding:8px 14px;color:var(--cyan);font-family:'Space Grotesk',sans-serif;font-size:12px;font-weight:600;cursor:pointer;transition:all .15s" onmouseover="this.style.background='rgba(224,112,32,.18)'" onmouseout="this.style.background='rgba(224,112,32,.1)'">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-            Adicionar Processo
-          </button>
-        </div>
-      </div>
-    </div>`;
-  });
-
-  html += `</div>`;
-  body.innerHTML = html;
-  if(!body._openDays) body._openDays = {};
-}
-
-function _renderProcItems(dayData, processos, funcs, ds){
-  if(!dayData.length) return '<div style="padding:4px 0 6px;font-size:12px;color:var(--text3)">Nenhum processo adicionado. Clique em + para adicionar.</div>';
-  return dayData.map(function(item, itemIdx){
-    const proc = processos[item.processoIdx];
-    const procNome = proc ? proc.nome : '(removido)';
-    const funcNames = (item.funcionarios||[]).join(', ') || '<span style="color:var(--text3);font-style:italic">Nenhum funcionário</span>';
-    return `<div style="background:var(--s2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;display:flex;align-items:flex-start;justify-content:space-between;gap:10px">
-      <div style="flex:1;min-width:0">
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:5px">
-          <span style="background:rgba(224,112,32,.15);color:var(--cyan);border:1px solid rgba(224,112,32,.3);border-radius:6px;padding:2px 9px;font-size:10px;font-weight:700;font-family:'JetBrains Mono',monospace">${procNome}</span>
-        </div>
-        <div style="font-size:11px;color:var(--text2)">👷 ${funcNames}</div>
-      </div>
-      <div style="display:flex;gap:5px;flex-shrink:0">
-        <button onclick="procEditItem('${ds}',${itemIdx})" style="background:var(--s1);border:1px solid var(--border);border-radius:6px;padding:5px 9px;font-size:11px;color:var(--text2);cursor:pointer" title="Editar">✏️</button>
-        <button onclick="procRemoveItem('${ds}',${itemIdx})" style="background:rgba(204,40,0,.08);border:1px solid rgba(204,40,0,.2);border-radius:6px;padding:5px 9px;font-size:11px;color:var(--red);cursor:pointer" title="Remover">🗑</button>
-      </div>
-    </div>`;
-  }).join('');
-}
-
-function procToggleDay(headerEl, ds){
-  const content = document.getElementById('proc-day-'+ds);
-  if(!content) return;
-  const body = document.getElementById('apon-body');
-  if(!body._openDays) body._openDays = {};
-  const isOpen = content.style.display !== 'none';
-  content.style.display = isOpen ? 'none' : 'block';
-  body._openDays[ds] = !isOpen;
-  const svg = headerEl.querySelector('svg');
-  if(svg) svg.style.transform = isOpen ? 'rotate(0deg)' : 'rotate(180deg)';
-}
-
-function procAddItem(ds){
-  _procOpenItemModal(ds, null);
-}
-function procEditItem(ds, itemIdx){
-  _procOpenItemModal(ds, itemIdx);
-}
-
-function _procOpenItemModal(ds, itemIdx){
-  const processos = _getProcessos();
-  const funcs = (_funcProd && _funcProd.length) ? _funcProd : [];
-  const data = _getProcDayData(prodBaseMonday);
-  const dayData = data[ds] || [];
-  const item = itemIdx !== null ? dayData[itemIdx] : null;
-
-  // Cria modal dinamicamente
-  let existingModal = document.getElementById('proc-item-modal');
-  if(existingModal) existingModal.remove();
-
-  const procOpts = processos.map((p,i)=>`<option value="${i}" ${item&&item.processoIdx===i?'selected':''}>${p.nome}</option>`).join('');
-  const funcChecks = funcs.map(f=>{
-    const checked = item && (item.funcionarios||[]).includes(f.nome) ? 'checked' : '';
-    return `<label style="display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:6px;cursor:pointer;transition:background .12s" onmouseover="this.style.background='var(--s3)'" onmouseout="this.style.background=''">
-      <input type="checkbox" value="${f.nome}" ${checked} style="width:14px;height:14px;accent-color:var(--cyan);cursor:pointer">
-      <span style="font-size:13px;color:var(--text)">${f.nome}</span>
-      ${f.funcao?`<span style="font-size:10px;color:var(--text3)">${f.funcao}</span>`:''}
-    </label>`;
-  }).join('');
-
-  const modal = document.createElement('div');
-  modal.id = 'proc-item-modal';
-  modal.className = 'overlay';
-  modal.style.cssText = 'display:flex;position:fixed;inset:0;z-index:900;align-items:center;justify-content:center';
-  modal.innerHTML = `
-    <div class="modal-box" style="max-width:460px">
-      <div class="modal-hd">
-        <h2>${itemIdx!==null?'Editar Processo':'Adicionar Processo'}</h2>
-        <button onclick="document.getElementById('proc-item-modal').remove()" style="background:none;border:none;color:var(--text2);cursor:pointer;font-size:18px;line-height:1">✕</button>
-      </div>
-      <div class="modal-bd" style="display:flex;flex-direction:column;gap:16px">
-        <div>
-          <label style="font-size:11px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.8px;display:block;margin-bottom:6px">Processo</label>
-          <select id="proc-sel-processo" style="width:100%;background:var(--s2);border:1px solid var(--border);color:var(--text);padding:9px 12px;border-radius:8px;font-family:'Space Grotesk',sans-serif;font-size:13px;outline:none">
-            ${procOpts}
-          </select>
-        </div>
-        <div>
-          <label style="font-size:11px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.8px;display:block;margin-bottom:6px">Funcionários responsáveis</label>
-          ${funcs.length
-            ? `<div style="background:var(--s2);border:1px solid var(--border);border-radius:8px;max-height:220px;overflow-y:auto;padding:4px 6px">${funcChecks}</div>`
-            : `<div style="padding:12px;color:var(--text3);font-size:12px;border:1px solid var(--border);border-radius:8px;text-align:center">Nenhum funcionário cadastrado.<br><small>Vá em Configurações → Funcionários.</small></div>`
-          }
-        </div>
-      </div>
-      <div class="modal-ft">
-        <button class="btn btn-ghost" onclick="document.getElementById('proc-item-modal').remove()">Cancelar</button>
-        <button class="btn btn-primary" onclick="procSalvarItem('${ds}',${itemIdx})">Salvar</button>
-      </div>
-    </div>`;
-  document.body.appendChild(modal);
-}
-
-function procSalvarItem(ds, itemIdx){
-  const processoIdx = parseInt(document.getElementById('proc-sel-processo').value);
-  const checkboxes  = document.querySelectorAll('#proc-item-modal input[type=checkbox]:checked');
-  const funcionarios = Array.from(checkboxes).map(cb => cb.value);
-
-  const data    = _getProcDayData(prodBaseMonday);
-  if(!data[ds]) data[ds] = [];
-
-  if(itemIdx !== null){
-    data[ds][itemIdx] = { processoIdx, funcionarios };
-  } else {
-    data[ds].push({ processoIdx, funcionarios });
-  }
-  _saveProcDayData(prodBaseMonday, data);
-
-  document.getElementById('proc-item-modal').remove();
-
-  // Re-render apenas os items do dia sem recriar tudo
-  const processos = _getProcessos();
-  const funcs = (_funcProd && _funcProd.length) ? _funcProd : [];
-  const itemsEl = document.getElementById('proc-items-'+ds);
-  if(itemsEl) itemsEl.innerHTML = _renderProcItems(data[ds], processos, funcs, ds);
-
-  // Atualiza badge no cabeçalho do dia
-  _procUpdateDayBadge(ds, data[ds].length);
-  toast('Processo salvo.','ok');
-}
-
-function procRemoveItem(ds, itemIdx){
-  const data = _getProcDayData(prodBaseMonday);
-  if(!data[ds]) return;
-  data[ds].splice(itemIdx,1);
-  _saveProcDayData(prodBaseMonday, data);
-
-  const processos = _getProcessos();
-  const funcs = (_funcProd && _funcProd.length) ? _funcProd : [];
-  const itemsEl = document.getElementById('proc-items-'+ds);
-  if(itemsEl) itemsEl.innerHTML = _renderProcItems(data[ds], processos, funcs, ds);
-  _procUpdateDayBadge(ds, data[ds].length);
-  toast('Processo removido.','ok');
-}
-
-function _procUpdateDayBadge(ds, count){
-  // Atualiza o badge de contagem no cabeçalho do accordion do dia
-  const dayDiv = document.getElementById('proc-day-'+ds);
-  if(!dayDiv) return;
-  const header = dayDiv.previousElementSibling;
-  if(!header) return;
-  const badgeWrap = header.querySelector('[data-proc-badge]');
-  const newBadge = count>0
-    ? `<span data-proc-badge style="background:rgba(90,184,72,.15);color:var(--green);border:1px solid rgba(90,184,72,.3);border-radius:10px;padding:1px 9px;font-size:10px;font-weight:700;font-family:'JetBrains Mono',monospace">${count} processo${count>1?'s':''}</span>`
-    : `<span data-proc-badge style="font-size:11px;color:var(--text3)">Nenhum processo</span>`;
-  if(badgeWrap){
-    badgeWrap.outerHTML = newBadge;
-  } else {
-    // fallback: re-renderizar tudo
-    renderProcessosDia(document.getElementById('apon-body'));
-  }
-}
-
-// ══════════════════════════════════════════════════════════════════════════════
 // USUÁRIOS DO SISTEMA (com login Firebase Auth)
 // ══════════════════════════════════════════════════════════════════════════════
 let _usuariosSistema = [];
@@ -9408,7 +9568,6 @@ function switchTabSidebar(name) {
   if(name==='api-sync') renderApiSync();
   if(name==='calculos'||name==='prog-auto') renderCalculos();
   if(name==='projecao') renderProjecao();
-  if(name==='relatorios') grpInit();
   if(name==='usuarios') { openSettings(); setTimeout(()=>settingsNav('usuarios'), 80); }
 }
 
@@ -9424,6 +9583,12 @@ function toggleTopbarMenu() {
   const menu = document.getElementById('topbar-menu');
   if(menu) menu.classList.toggle('on');
 }
+
+// ── Alternar tema claro / escuro (definido em index.html como script global) ──
+// A função toggleTema() está no script inline do index.html para garantir
+// que esteja no escopo global e possa ser chamada por onclick="toggleTema()".
+// Este alias registra a função no window caso o módulo seja carregado antes.
+
 
 // ===== LOGIN HANDLING =====
 function handleLogin() {
@@ -9591,1032 +9756,6 @@ document.addEventListener('DOMContentLoaded', () => {
 // Expose globals for onclick handlers
 window.switchTab = switchTab;
 window.switchTabSidebar = switchTabSidebar;
-
-// ══════════════════════════════════════════════════════════════════════════════
-// RELATÓRIOS GERENCIAIS v2 — corrigido e expandido
-// ══════════════════════════════════════════════════════════════════════════════
-
-let _grpTab       = 'producao';
-let _grpAponCache = null;  // { key: 'INI_FIM', docs: [{data,hora,recordId,quantidade,operador,produto,maquina}] }
-let _grpAgrupamento = 'total'; // 'dia' | 'semana' | 'mes' | 'total'
-
-// ── Leitores de filtros ──────────────────────────────────────────────────────
-function _grpIni()  { return document.getElementById('grp-dt-ini')?.value||''; }
-function _grpFim()  { return document.getElementById('grp-dt-fim')?.value||''; }
-function _grpMaq()  { return document.getElementById('grp-maq')?.value||''; }
-function _grpProd() { return document.getElementById('grp-prod')?.value||''; }
-function _grpFunc() { return document.getElementById('grp-func')?.value||''; }
-
-// ── Cache de apontamentos reais do Firestore ─────────────────────────────────
-// Uma única leitura por período; reaproveita entre abas.
-async function _grpCarregarApon(ini, fim){
-  const cacheKey = ini+'_'+fim;
-  if(_grpAponCache && _grpAponCache.key === cacheKey) return _grpAponCache.docs;
-  try{
-    const docs = await carregarApontamentosFirestore(ini, fim);
-    _grpAponCache = { key: cacheKey, docs: docs };
-    return docs;
-  }catch(e){
-    console.warn('[grp] Firestore indisponível, usando localStorage:', e.message);
-    // Fallback: reconstruir do localStorage
-    const fallback = [];
-    const d = new Date(ini+'T12:00:00');
-    while(dateStr(d)<=fim){
-      const ds=dateStr(d);
-      records.forEach(function(r){
-        try{
-          const raw=localStorage.getItem('apon_'+ds+'_'+r.id);
-          if(raw){
-            const obj=JSON.parse(raw);
-            APON_HOURS.forEach(function(h){
-              const q=parseInt(obj[h])||0;
-              if(q>0) fallback.push({data:ds,hora:h,recordId:r.id,quantidade:q,produto:r.produto,maquina:r.maquina,operador:'N/A'});
-            });
-          }
-        }catch(e2){}
-      });
-      d.setDate(d.getDate()+1);
-    }
-    _grpAponCache = { key: cacheKey, docs: fallback };
-    return fallback;
-  }
-}
-
-// Aplica filtros de máquina, produto e funcionário aos docs de apontamento
-function _grpFiltrarDocs(docs, maqF, prodF, funcF){
-  return docs.filter(function(d){
-    if(maqF  && d.maquina   !== maqF)  return false;
-    if(prodF && d.produto   !== prodF) return false;
-    if(funcF && (d.operador||'N/A') !== funcF) return false;
-    return true;
-  });
-}
-
-// Filtra records por período + máquina + produto
-function _grpFiltrarRecords(ini, fim, maqF, prodF){
-  return records.filter(function(r){
-    const dt=r.dtDesejada||r.dtSolicitacao||'';
-    if(!dt||dt<ini||dt>fim) return false;
-    if(maqF && r.maquina!==maqF) return false;
-    if(prodF && r.produto!==prodF) return false;
-    return true;
-  });
-}
-
-// Agrega docs de apontamento por chave (recId) → {totalCaixas, byDate}
-function _grpAgregarPorRec(docs){
-  const map = {};
-  docs.forEach(function(d){
-    const k = d.recordId;
-    if(!map[k]) map[k]={totalCaixas:0,byDate:{}};
-    map[k].totalCaixas += d.quantidade||0;
-    map[k].byDate[d.data] = (map[k].byDate[d.data]||0)+(d.quantidade||0);
-  });
-  return map;
-}
-
-// Agrega por chave de agrupamento temporal
-// Retorna chave de agrupamento para uma data string
-function _grpKeyDeData(dataStr, agrup){
-  if(agrup==='dia') return dataStr;
-  if(agrup==='semana'){
-    const mon=getWeekMonday(new Date(dataStr+'T12:00:00'));
-    const sun=new Date(mon); sun.setDate(sun.getDate()+6);
-    return dateStr(mon)+' – '+dateStr(sun);
-  }
-  if(agrup==='mes') return dataStr.slice(0,7);
-  return 'Total';
-}
-
-function _grpAgruparDocs(docs, agrup, recsParam, ini, fim){
-  // groups: label → { realCaixas, progCaixas, maquinas, produtos, operadores }
-  const groups = {};
-
-  // 1. Realizado — via documentos de apontamento
-  docs.forEach(function(d){
-    const key=_grpKeyDeData(d.data, agrup);
-    if(!groups[key]) groups[key]={label:key,realCaixas:0,progCaixas:0,maquinas:new Set(),produtos:new Set(),operadores:new Set()};
-    groups[key].realCaixas += d.quantidade||0;
-    if(d.maquina) groups[key].maquinas.add(d.maquina);
-    if(d.produto) groups[key].produtos.add(d.produto);
-    if(d.operador&&d.operador!=='N/A') groups[key].operadores.add(d.operador);
-  });
-
-  // 2. Programado — via records (dtDesejada como data de referência do agrupamento)
-  if(recsParam && ini && fim){
-    recsParam.forEach(function(r){
-      const dt=r.dtDesejada||r.dtSolicitacao||'';
-      if(!dt||dt<ini||dt>fim) return;
-      const key=_grpKeyDeData(dt, agrup);
-      if(!groups[key]) groups[key]={label:key,realCaixas:0,progCaixas:0,maquinas:new Set(),produtos:new Set(),operadores:new Set()};
-      groups[key].progCaixas += r.qntCaixas||0;
-      if(r.maquina) groups[key].maquinas.add(r.maquina);
-      if(r.produto) groups[key].produtos.add(r.produto);
-    });
-  }
-
-  return Object.values(groups).sort((a,b)=>a.label<b.label?-1:1).map(g=>({
-    label:g.label,
-    realCaixas:g.realCaixas,
-    progCaixas:g.progCaixas,
-    pct:g.progCaixas>0?Math.round(g.realCaixas/g.progCaixas*100):null,
-    maquinas:g.maquinas.size, produtos:g.produtos.size, operadores:g.operadores.size
-  }));
-}
-
-// ── Widgets visuais ──────────────────────────────────────────────────────────
-function _grpKpi(label, val, color, sub){
-  return `<div class="grp-kpi">
-    <div class="grp-kpi-lbl">${label}</div>
-    <div class="grp-kpi-val" style="color:${color||'var(--cyan)'}">${val}</div>
-    ${sub?`<div style="font-size:10px;color:var(--text3);margin-top:4px">${sub}</div>`:''}
-  </div>`;
-}
-function _grpBarChart(rows, maxVal, colorFn){
-  if(!rows||!rows.length) return '<div class="grp-empty">Sem dados para exibir.</div>';
-  const max = maxVal||Math.max(...rows.map(r=>r.val),1);
-  return '<div class="grp-bar-wrap">'+rows.map(function(row){
-    const pct=Math.min(100,Math.round((row.val/max)*100));
-    const pct2=row.val2!=null?Math.min(100,Math.round((row.val2/max)*100)):-1;
-    const color=colorFn?colorFn(row):'var(--cyan)';
-    let b=`<div class="grp-bar-row"><div class="grp-bar-lbl" title="${row.label}">${row.label}</div><div class="grp-bar-track">`;
-    if(pct2>=0){
-      b+=`<div style="position:relative;height:100%">
-        <div class="grp-bar-fill" style="width:${pct2}%;background:var(--s3);position:absolute;top:0;left:0"></div>
-        <div class="grp-bar-fill" style="width:${pct}%;background:${color};position:absolute;top:0;left:0"></div>
-      </div>`;
-    } else {
-      b+=`<div class="grp-bar-fill" style="width:${pct}%;background:${color}"></div>`;
-    }
-    b+=`</div><div class="grp-bar-val">${row.valLabel||row.val.toLocaleString('pt-BR')}</div></div>`;
-    return b;
-  }).join('')+'</div>';
-}
-function _grpTblWrap(html){ return `<div style="overflow-x:auto"><table class="grp-tbl">${html}</table></div>`; }
-function _grpTh(...cols){ return '<thead><tr>'+cols.map(c=>`<th>${c}</th>`).join('')+'</tr></thead>'; }
-function _grpCard(title, icon, bodyHtml, extraHd){
-  return `<div class="grp-card">
-    <div class="grp-card-hd"><div class="grp-card-title">${icon} ${title}</div>${extraHd||''}</div>
-    <div class="grp-card-body">${bodyHtml}</div>
-  </div>`;
-}
-function _grpAgrupBtns(){
-  const opts=[['total','Total'],['dia','Por Dia'],['semana','Por Semana'],['mes','Por Mês']];
-  return '<div style="display:flex;gap:4px">'+opts.map(([v,l])=>`<button onclick="grpSetAgrup('${v}')" id="grp-agrup-${v}" style="padding:4px 10px;border-radius:6px;border:1px solid var(--border);font-size:11px;cursor:pointer;transition:all .15s;background:${_grpAgrupamento===v?'var(--cyan)':'var(--s2)'};color:${_grpAgrupamento===v?'#fff':'var(--text2)'}">${l}</button>`).join('')+'</div>';
-}
-
-// ── Init ─────────────────────────────────────────────────────────────────────
-function grpInit(){
-  const today=new Date();
-  const ini=new Date(today.getFullYear(),today.getMonth(),1);
-  const fim=new Date(today.getFullYear(),today.getMonth()+1,0);
-  const iniEl=document.getElementById('grp-dt-ini');
-  const fimEl=document.getElementById('grp-dt-fim');
-  if(iniEl&&!iniEl.value) iniEl.value=dateStr(ini);
-  if(fimEl&&!fimEl.value) fimEl.value=dateStr(fim);
-  _grpAponCache=null; // invalida cache ao abrir
-
-  const maqs=[...new Set(records.map(r=>r.maquina).filter(Boolean))].sort();
-  const prods=[...new Set(records.map(r=>r.produto).filter(Boolean))].sort();
-  const funcs=(_funcProd||[]).map(f=>f.nome).filter(Boolean).sort();
-
-  const maqEl=document.getElementById('grp-maq');
-  if(maqEl){const c=maqEl.value;maqEl.innerHTML='<option value="">Todas as máquinas</option>'+maqs.map(m=>`<option value="${m}"${m===c?' selected':''}>${m}</option>`).join('');}
-  const prodEl=document.getElementById('grp-prod');
-  if(prodEl){const c=prodEl.value;prodEl.innerHTML='<option value="">Todos os produtos</option>'+prods.map(p=>`<option value="${p}"${p===c?' selected':''}>${p}</option>`).join('');}
-  const funcEl=document.getElementById('grp-func');
-  if(funcEl){const c=funcEl.value;funcEl.innerHTML='<option value="">Todos os operadores</option>'+funcs.map(f=>`<option value="${f}"${f===c?' selected':''}>${f}</option>`).join('');}
-
-  grpRender();
-}
-
-function grpSetAgrup(v){
-  _grpAgrupamento=v;
-  grpRender();
-}
-
-function grpSwitchTab(tab,btn){
-  _grpTab=tab;
-  document.querySelectorAll('.grp-tab-btn').forEach(b=>b.classList.remove('on'));
-  if(btn) btn.classList.add('on');
-  document.querySelectorAll('.grp-panel').forEach(p=>{p.classList.remove('on');p.classList.add('off');});
-  const panel=document.getElementById('grp-panel-'+tab);
-  if(panel){panel.classList.remove('off');panel.classList.add('on');}
-  grpRender();
-}
-
-function grpResetFiltros(){
-  const today=new Date();
-  const ini=new Date(today.getFullYear(),today.getMonth(),1);
-  const fim=new Date(today.getFullYear(),today.getMonth()+1,0);
-  const iniEl=document.getElementById('grp-dt-ini');
-  const fimEl=document.getElementById('grp-dt-fim');
-  if(iniEl) iniEl.value=dateStr(ini);
-  if(fimEl) fimEl.value=dateStr(fim);
-  ['grp-maq','grp-prod','grp-func'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
-  _grpAponCache=null;
-  _grpAgrupamento='total';
-  grpRender();
-}
-
-function grpRender(){
-  const tab=_grpTab;
-  if(tab==='producao')     _grpRenderProducao();
-  else if(tab==='maquinas')     _grpRenderMaquinas();
-  else if(tab==='produtos')     _grpRenderProdutos();
-  else if(tab==='funcionarios') _grpRenderFuncionarios();
-  else if(tab==='insumos')      _grpRenderInsumos();
-  else if(tab==='gerencial')    _grpRenderGerencial();
-}
-
-// ── Loading helper ────────────────────────────────────────────────────────────
-function _grpSetLoading(panelEl){
-  panelEl.innerHTML=`<div class="grp-card"><div class="grp-card-body"><div class="grp-empty">⏳ Carregando dados do servidor...</div></div></div>`;
-}
-function _grpCheckPeriod(panelEl, ini, fim){
-  if(!ini||!fim){panelEl.innerHTML=`<div class="grp-empty">Selecione o período nos filtros.</div>`;return false;}
-  return true;
-}
-
-// ════════════════════════════════════════════════════════════════════════════
-// ABA 1 — PRODUÇÃO
-// ════════════════════════════════════════════════════════════════════════════
-function _grpRenderProducao(){
-  const panel=document.getElementById('grp-panel-producao');
-  if(!panel) return;
-  const ini=_grpIni(),fim=_grpFim(),maqF=_grpMaq(),prodF=_grpProd(),funcF=_grpFunc();
-  if(!_grpCheckPeriod(panel,ini,fim)) return;
-  _grpSetLoading(panel);
-
-  _grpCarregarApon(ini,fim).then(function(allDocs){
-    const docs=_grpFiltrarDocs(allDocs,maqF,prodF,funcF);
-    const recs=_grpFiltrarRecords(ini,fim,maqF,prodF);
-    const aponMap=_grpAgregarPorRec(docs);
-
-    const totalProg=recs.reduce((a,r)=>a+(r.qntCaixas||0),0);
-    const totalReal=docs.reduce((a,d)=>a+(d.quantidade||0),0);
-    const saldo=Math.max(0,totalProg-totalReal);
-    const pct=totalProg>0?Math.round(totalReal/totalProg*100):0;
-    const pctColor=pct>=100?'var(--green)':pct>=70?'var(--cyan)':pct>=40?'var(--warn)':'var(--red)';
-    // Ordens concluídas: usa TODOS os apontamentos já feitos (não só do período)
-    // para refletir corretamente o status real de cada ordem
-    const conc=recs.filter(r=>aponGetTotalProduced(String(r.id))>=(r.qntCaixas||0)&&(r.qntCaixas||0)>0).length;
-    const excesso=Math.max(0,totalReal-totalProg);
-
-    const kpis=`<div class="grp-kpi-row">
-      ${_grpKpi('Programado',totalProg.toLocaleString('pt-BR'),'var(--cyan)',recs.length+' ordens')}
-      ${_grpKpi('Realizado',totalReal.toLocaleString('pt-BR'),'var(--green)','')}
-      ${_grpKpi('% Atendimento',pct+'%',pctColor,'')}
-      ${_grpKpi('Saldo Pendente',saldo.toLocaleString('pt-BR'),'var(--warn)',excesso>0?'Excesso: '+excesso.toLocaleString('pt-BR'):'')}
-      ${_grpKpi('Ordens Concluídas',conc+'/'+recs.length,'var(--purple)','')}
-    </div>`;
-
-    // Tabela por produto
-    // real = apontamentos do período filtrado (reflete filtro de operador/máquina)
-    // concluido = baseado no total geral de todos os apontamentos da ordem
-    const byProd={};
-    recs.forEach(function(r){
-      if(!byProd[r.produto]) byProd[r.produto]={produto:r.produto,maquina:r.maquina||'—',prog:0,real:0,realTotal:0,ordens:0,conc:0};
-      byProd[r.produto].prog+=r.qntCaixas||0;
-      byProd[r.produto].real+=aponMap[r.id]?.totalCaixas||0;
-      byProd[r.produto].realTotal+=aponGetTotalProduced(String(r.id));
-      byProd[r.produto].ordens++;
-      if(aponGetTotalProduced(String(r.id))>=(r.qntCaixas||0)&&(r.qntCaixas||0)>0) byProd[r.produto].conc++;
-    });
-    const prodRows=Object.values(byProd).sort((a,b)=>b.prog-a.prog);
-    const tblRows=prodRows.map(function(p){
-      // % atendimento = realTotal (todos os apontamentos) / prog para refletir status real
-      const pt=p.prog>0?Math.min(100,Math.round(p.realTotal/p.prog*100)):0;
-      const pc=pt>=100?'var(--green)':pt>=60?'var(--cyan)':pt>=30?'var(--warn)':'var(--red)';
-      const sl=Math.max(0,p.prog-p.realTotal);
-      const concBadge=p.conc>0?`<span style="font-size:9px;padding:1px 6px;border-radius:8px;background:rgba(90,184,72,.15);color:var(--green);font-weight:700;margin-left:4px">${p.conc} ✓</span>`:'';
-      return `<tr>
-        <td style="font-weight:600">${p.produto}${concBadge}</td>
-        <td style="color:var(--purple);font-family:'JetBrains Mono',monospace;font-size:11px">${p.maquina}</td>
-        <td style="font-family:'JetBrains Mono',monospace;color:var(--cyan)">${p.prog.toLocaleString('pt-BR')}</td>
-        <td style="font-family:'JetBrains Mono',monospace;color:var(--green)" title="No período: ${p.real.toLocaleString('pt-BR')} cx">${p.realTotal.toLocaleString('pt-BR')}</td>
-        <td style="font-family:'JetBrains Mono',monospace;color:${sl>0?'var(--warn)':'var(--text3)'}">${sl>0?sl.toLocaleString('pt-BR'):'—'}</td>
-        <td><div style="display:flex;align-items:center;gap:6px">
-          <div style="flex:1;height:6px;background:var(--s3);border-radius:3px;overflow:hidden;min-width:40px">
-            <div style="width:${pt}%;height:100%;background:${pc};border-radius:3px"></div>
-          </div>
-          <span style="font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:700;color:${pc}">${pt}%</span>
-        </div></td>
-        <td style="text-align:center;color:var(--text3)">${p.ordens}</td>
-      </tr>`;
-    });
-    tblRows.push(`<tr class="tot-row"><td colspan="2">TOTAL</td>
-      <td>${totalProg.toLocaleString('pt-BR')}</td><td>${totalReal.toLocaleString('pt-BR')}</td>
-      <td>${saldo.toLocaleString('pt-BR')}</td><td>${pct}%</td><td style="text-align:center">${recs.length}</td></tr>`);
-    const tblHtml=_grpTblWrap(_grpTh('Produto','Máquina','Programado','Realizado','Saldo','% Atend.','Ordens')+'<tbody>'+tblRows.join('')+'</tbody>');
-
-    // Agrupamento temporal — programado × realizado por período
-    const agrupRows=_grpAgruparDocs(docs,_grpAgrupamento,recs,ini,fim);
-    const agrupTable=_grpTblWrap(
-      _grpTh('Período','Programado cx','Realizado cx','Saldo','% Atend.','Operadores')+
-      '<tbody>'+agrupRows.map(g=>{
-        const sl=Math.max(0,g.progCaixas-g.realCaixas);
-        const pc=g.pct!=null?(g.pct>=100?'var(--green)':g.pct>=70?'var(--cyan)':g.pct>=40?'var(--warn)':'var(--red)'):'var(--text3)';
-        return `<tr>
-          <td style="font-weight:600;font-family:'JetBrains Mono',monospace;font-size:11px">${g.label}</td>
-          <td style="font-family:'JetBrains Mono',monospace;color:var(--cyan)">${g.progCaixas.toLocaleString('pt-BR')}</td>
-          <td style="font-family:'JetBrains Mono',monospace;color:var(--green)">${g.realCaixas.toLocaleString('pt-BR')}</td>
-          <td style="font-family:'JetBrains Mono',monospace;color:${sl>0?'var(--warn)':'var(--text3)'}">${sl>0?sl.toLocaleString('pt-BR'):'—'}</td>
-          <td><span style="font-weight:700;color:${pc}">${g.pct!=null?g.pct+'%':'—'}</span></td>
-          <td style="text-align:center;color:var(--text3)">${g.operadores}</td>
-        </tr>`;
-      }).join('')+'</tbody>'
-    );
-
-    const chartRows=prodRows.slice(0,12).map(p=>({label:p.produto,val:p.real,val2:p.prog,valLabel:p.real.toLocaleString('pt-BR')+' cx'}));
-    const chartHtml=_grpBarChart(chartRows,null,()=>'var(--green)');
-
-    panel.innerHTML=kpis+
-      _grpCard('Agrupamento Temporal','📅',agrupTable,_grpAgrupBtns())+
-      _grpCard('Programado × Realizado por Produto','📊',tblHtml)+
-      _grpCard('Gráfico — Top 12 Produtos','📊',chartHtml);
-  });
-}
-
-// ════════════════════════════════════════════════════════════════════════════
-// ABA 2 — MÁQUINAS
-// ════════════════════════════════════════════════════════════════════════════
-function _grpRenderMaquinas(){
-  const panel=document.getElementById('grp-panel-maquinas');
-  if(!panel) return;
-  const ini=_grpIni(),fim=_grpFim(),maqF=_grpMaq(),funcF=_grpFunc();
-  if(!_grpCheckPeriod(panel,ini,fim)) return;
-  _grpSetLoading(panel);
-
-  _grpCarregarApon(ini,fim).then(function(allDocs){
-    const docs=_grpFiltrarDocs(allDocs,maqF,'',funcF);
-    const diasUteis=[];
-    const cur=new Date(ini+'T12:00:00');
-    while(dateStr(cur)<=fim){if(hoursOnDay(cur)>0) diasUteis.push(new Date(cur));cur.setDate(cur.getDate()+1);}
-
-    const maqs=maqF?[maqF]:[...new Set(records.map(r=>r.maquina).filter(Boolean))].sort();
-    const maqStats=maqs.map(function(maq){
-      // hrsDisp: soma real de horas disponíveis por dia no período (respeitando turnos por máquina)
-      const hrsDisp=diasUteis.reduce((a,d)=>a+hoursOnDayMaq(d,maq),0);
-
-      const recsM=records.filter(r=>r.maquina===maq&&(r.dtDesejada||r.dtSolicitacao||'')>=ini&&(r.dtDesejada||r.dtSolicitacao||'')<=fim);
-
-      // hrsProg: usa buildSchedule semana a semana (mesma lógica do Gantt)
-      // Conta horas de segmentos que caem dentro do período ini-fim
-      let hrsProg=0;
-      if(typeof buildSchedule==='function'){
-        // Itera pelas semanas dentro do período
-        const iniMon=getWeekMonday(new Date(ini+'T12:00:00'));
-        const fimDate=new Date(fim+'T12:00:00');
-        const semCur=new Date(iniMon);
-        while(semCur<=fimDate){
-          try{
-            const {schedule,days}=buildSchedule(semCur);
-            const entries=schedule[maq];
-            if(entries&&entries.length){
-              entries.forEach(function(e){
-                e.segments.forEach(function(seg){
-                  if(seg.date>=ini&&seg.date<=fim) hrsProg+=seg.hrsNoDia||0;
-                });
-                e.setupSegments.forEach(function(seg){
-                  if(seg.date>=ini&&seg.date<=fim) hrsProg+=seg.setupMin/60||0;
-                });
-              });
-            }
-          }catch(e2){}
-          semCur.setDate(semCur.getDate()+7);
-        }
-        hrsProg=Math.round(hrsProg*10)/10;
-      } else {
-        // Fallback: fórmula simples se buildSchedule não disponível
-        hrsProg=Math.round(recsM.reduce((a,r)=>a+(r.qntCaixas||0)/Math.max(0.001,r.pcMin||0.001)/60,0)*10)/10;
-      }
-      const realCx=docs.filter(d=>d.maquina===maq).reduce((a,d)=>a+(d.quantidade||0),0);
-      // setup
-      let setupMin=0;
-      const ro=[...recsM].sort((a,b)=>((a.dtDesejada||a.dtSolicitacao||'')<(b.dtDesejada||b.dtSolicitacao||''))?-1:1);
-      for(let i=1;i<ro.length;i++) setupMin+=getSetupMin(maq,ro[i-1].produto,ro[i].produto);
-      const setupH=Math.round(setupMin/60*10)/10;
-      const ocioso=Math.max(0,hrsDisp-hrsProg);
-      const util=hrsDisp>0?Math.min(100,Math.round(hrsProg/hrsDisp*100)):0;
-      const setupPct=hrsProg>0?Math.round(setupH/hrsProg*100):0;
-      // operadores que operaram esta máquina no período
-      const opSet=new Set(docs.filter(d=>d.maquina===maq&&d.operador&&d.operador!=='N/A').map(d=>d.operador));
-      return {maq,hrsDisp:Math.round(hrsDisp*10)/10,hrsProg:Math.round(hrsProg*10)/10,ocioso:Math.round(ocioso*10)/10,util,realCx,setupH,setupPct,nTrocas:Math.max(0,ro.length-1),operadores:[...opSet]};
-    }).filter(m=>m.hrsDisp>0||m.realCx>0);
-
-    if(!maqStats.length){panel.innerHTML='<div class="grp-empty">Nenhum dado de máquina no período.</div>';return;}
-
-    const totDisp=maqStats.reduce((a,m)=>a+m.hrsDisp,0);
-    const totProg=maqStats.reduce((a,m)=>a+m.hrsProg,0);
-    const totReal=maqStats.reduce((a,m)=>a+m.realCx,0);
-    const totOcioso=maqStats.reduce((a,m)=>a+m.ocioso,0);
-    const avgUtil=totDisp>0?Math.round(totProg/totDisp*100):0;
-
-    const kpis=`<div class="grp-kpi-row">
-      ${_grpKpi('H. Disponíveis',Math.round(totDisp*10)/10+'h','var(--text2)',maqs.length+' máquinas')}
-      ${_grpKpi('H. Programadas',Math.round(totProg*10)/10+'h','var(--cyan)','')}
-      ${_grpKpi('H. Ociosas',Math.round(totOcioso*10)/10+'h','var(--warn)','')}
-      ${_grpKpi('% Utilização',avgUtil+'%',avgUtil>=75?'var(--green)':avgUtil>=50?'var(--warn)':'var(--red)','')}
-      ${_grpKpi('Total Realizado',totReal.toLocaleString('pt-BR'),'var(--green)','caixas')}
-    </div>`;
-
-    const tblHtml=_grpTblWrap(
-      _grpTh('Máquina','H. Disp.','H. Prog.','H. Ociosas','% Util.','Realizado cx','Setup h','% Setup','Trocas','Operadores')+
-      '<tbody>'+maqStats.map(function(m){
-        const uc=m.util>=75?'var(--green)':m.util>=50?'var(--warn)':'var(--red)';
-        return `<tr>
-          <td style="font-weight:700;color:var(--purple);font-family:'JetBrains Mono',monospace">${m.maq}</td>
-          <td style="font-family:'JetBrains Mono',monospace;color:var(--text2)">${m.hrsDisp}h</td>
-          <td style="font-family:'JetBrains Mono',monospace;color:var(--cyan)">${m.hrsProg}h</td>
-          <td style="font-family:'JetBrains Mono',monospace;color:${m.ocioso>0?'var(--warn)':'var(--text3)'}">${m.ocioso}h</td>
-          <td><span style="font-family:'JetBrains Mono',monospace;font-weight:700;color:${uc}">${m.util}%</span></td>
-          <td style="font-family:'JetBrains Mono',monospace;color:var(--green)">${m.realCx.toLocaleString('pt-BR')}</td>
-          <td style="font-family:'JetBrains Mono',monospace;color:${m.setupH>0?'var(--orange)':'var(--text3)'}">${m.setupH}h</td>
-          <td style="font-family:'JetBrains Mono',monospace;color:var(--text3)">${m.setupPct}%</td>
-          <td style="text-align:center;color:var(--text3)">${m.nTrocas}</td>
-          <td style="font-size:10px;color:var(--text2)">${m.operadores.slice(0,3).join(', ')||'—'}${m.operadores.length>3?' +mais...':''}</td>
-        </tr>`;
-      }).join('')+
-      `<tr class="tot-row"><td>TOTAL</td><td>${Math.round(totDisp*10)/10}h</td><td>${Math.round(totProg*10)/10}h</td><td>${Math.round(totOcioso*10)/10}h</td><td>${avgUtil}%</td><td>${totReal.toLocaleString('pt-BR')}</td><td colspan="4">—</td></tr>`+
-      '</tbody>'
-    );
-
-    // Paradas de máquina (estrutura preparada)
-    const paradas=_grpGetParadas(ini,fim,maqF);
-    const paradasHtml=paradas.length?
-      _grpTblWrap(_grpTh('Máquina','Início','Fim','Duração','Motivo','Obs')+
-        '<tbody>'+paradas.map(p=>`<tr>
-          <td style="font-weight:600;color:var(--purple)">${p.maquina}</td>
-          <td style="font-family:'JetBrains Mono',monospace;font-size:11px">${p.inicio}</td>
-          <td style="font-family:'JetBrains Mono',monospace;font-size:11px">${p.fim||'—'}</td>
-          <td style="font-family:'JetBrains Mono',monospace;color:var(--warn)">${p.duracaoH?p.duracaoH+'h':'—'}</td>
-          <td><span style="font-size:10px;padding:2px 8px;border-radius:8px;background:rgba(224,112,32,.12);color:var(--cyan)">${p.motivo}</span></td>
-          <td style="font-size:11px;color:var(--text3)">${p.obs||'—'}</td>
-        </tr>`).join('')+'</tbody>'):
-      `<div class="grp-empty" style="padding:16px">Nenhuma parada registrada no período.
-        <div style="margin-top:8px"><button onclick="grpAbrirModalParada()" style="background:var(--cyan);color:#fff;border:none;border-radius:7px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer">+ Registrar Parada</button></div>
-      </div>`;
-
-    const utilChart=_grpBarChart([...maqStats].sort((a,b)=>b.util-a.util).map(m=>({label:m.maq,val:m.util,valLabel:m.util+'%'})),100,m=>m.val>=75?'var(--green)':m.val>=50?'var(--warn)':'var(--red)');
-    const ocChart=_grpBarChart([...maqStats].sort((a,b)=>b.ocioso-a.ocioso).map(m=>({label:m.maq,val:m.ocioso,valLabel:m.ocioso+'h'})),null,()=>'var(--warn)');
-
-    panel.innerHTML=kpis+
-      _grpCard('Desempenho por Máquina','⚙️',tblHtml)+
-      `<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
-        ${_grpCard('% Utilização','📊',utilChart)}
-        ${_grpCard('Ranking de Ociosidade','😴',ocChart)}
-      </div>`+
-      _grpCard('Paradas de Máquina','🛑',paradasHtml,
-        `<button onclick="grpAbrirModalParada()" style="background:var(--cyan);color:#fff;border:none;border-radius:7px;padding:5px 12px;font-size:11px;font-weight:700;cursor:pointer">+ Registrar</button>`);
-  });
-}
-
-// ════════════════════════════════════════════════════════════════════════════
-// ABA 3 — PRODUTOS (+ Cobertura)
-// ════════════════════════════════════════════════════════════════════════════
-function _grpRenderProdutos(){
-  const panel=document.getElementById('grp-panel-produtos');
-  if(!panel) return;
-  const ini=_grpIni(),fim=_grpFim(),maqF=_grpMaq(),prodF=_grpProd(),funcF=_grpFunc();
-  if(!_grpCheckPeriod(panel,ini,fim)) return;
-  _grpSetLoading(panel);
-
-  _grpCarregarApon(ini,fim).then(function(allDocs){
-    const docs=_grpFiltrarDocs(allDocs,maqF,prodF,funcF);
-    const recs=_grpFiltrarRecords(ini,fim,maqF,prodF);
-    const aponMap=_grpAgregarPorRec(docs);
-
-    const byProd={};
-    recs.forEach(function(r){
-      if(!byProd[r.produto]) byProd[r.produto]={produto:r.produto,prog:0,real:0,ordens:0,maquinas:new Set(),diasProd:new Set()};
-      byProd[r.produto].prog+=r.qntCaixas||0;
-      byProd[r.produto].real+=aponMap[r.id]?.totalCaixas||0;
-      byProd[r.produto].ordens++;
-      if(r.maquina) byProd[r.produto].maquinas.add(r.maquina);
-      if(aponMap[r.id]?.byDate) Object.keys(aponMap[r.id].byDate).forEach(d=>{if(aponMap[r.id].byDate[d]>0) byProd[r.produto].diasProd.add(d);});
-    });
-
-    const prodRows=Object.values(byProd).sort((a,b)=>b.real-a.real).map(p=>({
-      ...p,maquinas:p.maquinas.size,diasProd:p.diasProd.size,pct:p.prog>0?Math.round(p.real/p.prog*100):0
-    }));
-
-    if(!prodRows.length){panel.innerHTML='<div class="grp-empty">Nenhum produto no período.</div>';return;}
-
-    const totProg=prodRows.reduce((a,p)=>a+p.prog,0);
-    const totReal=prodRows.reduce((a,p)=>a+p.real,0);
-
-    const kpis=`<div class="grp-kpi-row">
-      ${_grpKpi('Produtos distintos',prodRows.length,'var(--cyan)','')}
-      ${_grpKpi('Total Programado',totProg.toLocaleString('pt-BR'),'var(--cyan)','caixas')}
-      ${_grpKpi('Total Realizado',totReal.toLocaleString('pt-BR'),'var(--green)','caixas')}
-      ${_grpKpi('Mais produzido',prodRows[0]?.produto||'—','var(--purple)',prodRows[0]?.real.toLocaleString('pt-BR')+' cx')}
-      ${_grpKpi('Menos produzido',prodRows[prodRows.length-1]?.produto||'—','var(--warn)',prodRows[prodRows.length-1]?.real.toLocaleString('pt-BR')+' cx')}
-    </div>`;
-
-    const tblHtml=_grpTblWrap(
-      _grpTh('Produto','Programado','Realizado','% Atend.','Ordens','Dias Prod.','Máquinas')+
-      '<tbody>'+prodRows.map(function(p){
-        const pc=p.pct>=100?'var(--green)':p.pct>=60?'var(--cyan)':p.pct>=30?'var(--warn)':'var(--red)';
-        return `<tr>
-          <td style="font-weight:600">${p.produto}</td>
-          <td style="font-family:'JetBrains Mono',monospace;color:var(--cyan)">${p.prog.toLocaleString('pt-BR')}</td>
-          <td style="font-family:'JetBrains Mono',monospace;color:var(--green)">${p.real.toLocaleString('pt-BR')}</td>
-          <td><span style="font-weight:700;color:${pc}">${p.pct}%</span></td>
-          <td style="text-align:center;color:var(--text3)">${p.ordens}</td>
-          <td style="text-align:center;color:var(--text3)">${p.diasProd}</td>
-          <td style="text-align:center;color:var(--text3)">${p.maquinas}</td>
-        </tr>`;
-      }).join('')+
-      `<tr class="tot-row"><td>TOTAL</td><td>${totProg.toLocaleString('pt-BR')}</td><td>${totReal.toLocaleString('pt-BR')}</td><td colspan="4">—</td></tr>`+
-      '</tbody>'
-    );
-
-    // ── COBERTURA (usando projecaoCalculada já calculado pelo sistema) ──
-    const cobRows=projecaoCalculada.length>0?projecaoCalculada.filter(p=>!prodF||p.produto===prodF):[];
-    let cobHtml;
-    if(!cobRows.length){
-      cobHtml=`<div class="grp-empty">Dados de cobertura indisponíveis. Importe vendas e estoque na aba Importação/API e clique em Recalcular na aba Projeção de Vendas.</div>`;
-    } else {
-      const criticos=cobRows.filter(p=>p.risco==='critico'||p.risco==='alto');
-      const cobKpis=`<div class="grp-kpi-row" style="margin-bottom:12px">
-        ${_grpKpi('Produtos c/ cobertura',cobRows.length,'var(--cyan)','')}
-        ${_grpKpi('Risco crítico (≤3d)',cobRows.filter(p=>p.risco==='critico').length,'var(--red)','')}
-        ${_grpKpi('Risco alto (≤7d)',cobRows.filter(p=>p.risco==='alto').length,'var(--warn)','')}
-        ${_grpKpi('Cobertura média',cobRows.filter(p=>p.coberturaAtual!=null).length>0?(cobRows.filter(p=>p.coberturaAtual!=null).reduce((a,p)=>a+p.coberturaAtual,0)/cobRows.filter(p=>p.coberturaAtual!=null).length).toFixed(1)+'d':'—','var(--text2)','')}
-      </div>`;
-      const cobTbl=_grpTblWrap(
-        _grpTh('Produto','Estoque Atual','Demanda/Sem','Cobertura Atual','Cobertura Proj.','Risco')+
-        '<tbody>'+[...cobRows].sort((a,b)=>(a.coberturaAtual||999)-(b.coberturaAtual||999)).map(function(p){
-          const rCorMap={critico:'var(--red)',alto:'var(--warn)',medio:'var(--cyan)',ok:'var(--green)',nd:'var(--text3)'};
-          const rLab={critico:'🔴 Crítico',alto:'🟠 Alto',medio:'🟡 Médio',ok:'🟢 OK',nd:'—'};
-          const cobProj=p.coberturaAtual!=null&&p.projSemanal>0?(p.coberturaAtual+((p.prog||0)/Math.max(1,p.projSemanal)*7)).toFixed(1):'—';
-          return `<tr style="${p.risco==='critico'?'background:rgba(204,40,0,.04)':''}">
-            <td style="font-weight:600;color:${p.risco==='critico'?'var(--red)':'var(--text)'}">${p.produto}</td>
-            <td style="font-family:'JetBrains Mono',monospace;color:var(--cyan)">${p.estoque!=null?p.estoque.toLocaleString('pt-BR'):'N/D'}</td>
-            <td style="font-family:'JetBrains Mono',monospace;color:var(--text2)">${p.projSemanal>0?p.projSemanal.toFixed(1)+' cx/sem':'—'}</td>
-            <td style="font-family:'JetBrains Mono',monospace;font-weight:700;color:${rCorMap[p.risco]||'var(--text3)'}">${p.coberturaAtual!=null?p.coberturaAtual+'d':'—'}</td>
-            <td style="font-family:'JetBrains Mono',monospace;color:var(--text2)">${cobProj!=='—'?cobProj+'d':'—'}</td>
-            <td><span style="font-size:10px;font-weight:700;color:${rCorMap[p.risco]||'var(--text3)'}">${rLab[p.risco]||'—'}</span></td>
-          </tr>`;
-        }).join('')+'</tbody>'
-      );
-      cobHtml=cobKpis+cobTbl;
-    }
-
-    const top12=prodRows.slice(0,12).map(p=>({label:p.produto,val:p.real,val2:p.prog,valLabel:p.real.toLocaleString('pt-BR')+' cx'}));
-    panel.innerHTML=kpis+
-      _grpCard('Produção por Produto','📦',tblHtml)+
-      _grpCard('Cobertura de Estoque (dados da Projeção)','🛡️',cobHtml)+
-      _grpCard('Gráfico — Top 12 Produtos','📊',_grpBarChart(top12,null,()=>'var(--green)'));
-  });
-}
-
-// ════════════════════════════════════════════════════════════════════════════
-// ABA 4 — FUNCIONÁRIOS (dados reais de apontamentos + distribuição)
-// ════════════════════════════════════════════════════════════════════════════
-function _grpRenderFuncionarios(){
-  const panel=document.getElementById('grp-panel-funcionarios');
-  if(!panel) return;
-  const ini=_grpIni(),fim=_grpFim(),maqF=_grpMaq(),funcF=_grpFunc();
-  if(!_grpCheckPeriod(panel,ini,fim)) return;
-  _grpSetLoading(panel);
-
-  _grpCarregarApon(ini,fim).then(function(allDocs){
-    const docs=_grpFiltrarDocs(allDocs,maqF,'',funcF);
-
-    // Agrega por operador real (campo operador do documento Firestore)
-    const byOp={};
-    docs.forEach(function(d){
-      const op=d.operador||'N/A';
-      if(!byOp[op]) byOp[op]={operador:op,totalCaixas:0,apontamentos:0,maquinas:new Set(),produtos:new Set(),dias:new Set()};
-      byOp[op].totalCaixas+=d.quantidade||0;
-      byOp[op].apontamentos++;
-      if(d.maquina) byOp[op].maquinas.add(d.maquina);
-      if(d.produto) byOp[op].produtos.add(d.produto);
-      if(d.data)    byOp[op].dias.add(d.data);
-    });
-
-    const opRows=Object.values(byOp)
-      .sort((a,b)=>b.totalCaixas-a.totalCaixas)
-      .map(o=>({
-        ...o,maquinas:o.maquinas.size,produtos:o.produtos.size,dias:o.dias.size,
-        media:o.dias.size>0?Math.round(o.totalCaixas/o.dias.size):0
-      }));
-
-    const totReal=opRows.reduce((a,o)=>a+o.totalCaixas,0);
-    const funcs=_funcProd||[];
-    const ativos=funcs.filter(f=>{const now=Date.now();return!(f.deactivatedUntil&&new Date(f.deactivatedUntil).getTime()>now);}).length;
-
-    const kpis=`<div class="grp-kpi-row">
-      ${_grpKpi('Operadores com produção',opRows.filter(o=>o.operador!=='N/A').length,'var(--cyan)','')}
-      ${_grpKpi('Total Realizado',totReal.toLocaleString('pt-BR'),'var(--green)','caixas')}
-      ${_grpKpi('Mais produtivo',opRows[0]?.operador||'—','var(--purple)',opRows[0]?.totalCaixas.toLocaleString('pt-BR')+' cx')}
-      ${_grpKpi('Média/dia',opRows.length>0?Math.round(totReal/Math.max(1,opRows.reduce((a,o)=>a+o.dias,0))).toLocaleString('pt-BR'):'0','var(--warn)','caixas')}
-      ${_grpKpi('Funcionários cadastrados',funcs.length,'var(--text2)',ativos+' ativos')}
-    </div>`;
-
-    // Produção real por operador
-    const tblHtml=_grpTblWrap(
-      _grpTh('Operador','Total cx','Apontamentos','Dias Ativos','Média/dia cx','Máquinas','Produtos')+
-      '<tbody>'+(opRows.length?opRows.map(function(o){
-        return `<tr>
-          <td style="font-weight:600">${o.operador}</td>
-          <td style="font-family:'JetBrains Mono',monospace;color:var(--green)">${o.totalCaixas.toLocaleString('pt-BR')}</td>
-          <td style="text-align:center;color:var(--text3)">${o.apontamentos}</td>
-          <td style="text-align:center;color:var(--text3)">${o.dias}</td>
-          <td style="font-family:'JetBrains Mono',monospace;color:var(--cyan)">${o.media.toLocaleString('pt-BR')}</td>
-          <td style="text-align:center;color:var(--text3)">${o.maquinas}</td>
-          <td style="text-align:center;color:var(--text3)">${o.produtos}</td>
-        </tr>`;
-      }).join(''):'<tr><td colspan="7" class="grp-empty">Nenhum apontamento com operador identificado no período.</td></tr>')+
-      '</tbody>'
-    );
-
-    // ── Distribuição: operadores por máquina ──
-    const byMaqOp={};
-    docs.forEach(function(d){
-      const m=d.maquina||'—';
-      if(!byMaqOp[m]) byMaqOp[m]={maquina:m,operadores:new Set()};
-      if(d.operador&&d.operador!=='N/A') byMaqOp[m].operadores.add(d.operador);
-    });
-    // também incluir funcionários cadastrados vinculados à máquina
-    funcs.forEach(function(f){
-      (f.maquinas||[]).forEach(function(m){
-        if(!byMaqOp[m]) byMaqOp[m]={maquina:m,operadores:new Set()};
-        if(f.nome) byMaqOp[m].operadores.add(f.nome+' (cad.)');
-      });
-    });
-    const distMaqHtml=_grpTblWrap(
-      _grpTh('Máquina','Qtd. Operadores','Operadores')+
-      '<tbody>'+Object.values(byMaqOp).sort((a,b)=>b.operadores.size-a.operadores.size).map(m=>`<tr>
-        <td style="font-weight:700;color:var(--purple)">${m.maquina}</td>
-        <td style="text-align:center;font-family:'JetBrains Mono',monospace;color:var(--cyan)">${m.operadores.size}</td>
-        <td style="font-size:11px;color:var(--text2)">${[...m.operadores].join(', ')||'—'}</td>
-      </tr>`).join('')+'</tbody>'
-    );
-
-    // ── Distribuição: operadores por turno (baseado em cadastro de funcionários) ──
-    const byTurno={};
-    funcs.forEach(function(f){
-      const t=f.turno||'Não definido';
-      if(!byTurno[t]) byTurno[t]={turno:t,operadores:[]};
-      byTurno[t].operadores.push(f.nome);
-    });
-    const distTurnoHtml=_grpTblWrap(
-      _grpTh('Turno','Qtd.','Operadores')+
-      '<tbody>'+(Object.keys(byTurno).length?Object.values(byTurno).sort((a,b)=>a.turno.localeCompare(b.turno)).map(t=>`<tr>
-        <td style="font-weight:700;color:var(--cyan)">${t.turno}</td>
-        <td style="text-align:center;font-family:'JetBrains Mono',monospace">${t.operadores.length}</td>
-        <td style="font-size:11px;color:var(--text2)">${t.operadores.join(', ')}</td>
-      </tr>`).join(''):'<tr><td colspan="3" class="grp-empty">Nenhum turno configurado em Funcionários.</td></tr>')+
-      '</tbody>'
-    );
-
-    const chartRows=opRows.filter(o=>o.operador!=='N/A').slice(0,12).map(o=>({label:o.operador,val:o.totalCaixas,valLabel:o.totalCaixas.toLocaleString('pt-BR')+' cx'}));
-    panel.innerHTML=kpis+
-      _grpCard('Produção Real por Operador (dados de apontamento)','👷',tblHtml)+
-      _grpCard('Gráfico — Ranking de Operadores','📊',_grpBarChart(chartRows,null,()=>'var(--purple)'))+
-      `<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
-        ${_grpCard('Operadores por Máquina','🏭',distMaqHtml)}
-        ${_grpCard('Operadores por Turno','⏰',distTurnoHtml)}
-      </div>`;
-  });
-}
-
-// ════════════════════════════════════════════════════════════════════════════
-// ABA 5 — INSUMOS
-// ════════════════════════════════════════════════════════════════════════════
-function _grpRenderInsumos(){
-  const panel=document.getElementById('grp-panel-insumos');
-  if(!panel) return;
-  const ini=_grpIni(),fim=_grpFim(),maqF=_grpMaq(),prodF=_grpProd(),funcF=_grpFunc();
-  if(!_grpCheckPeriod(panel,ini,fim)) return;
-  _grpSetLoading(panel);
-
-  _grpCarregarApon(ini,fim).then(function(allDocs){
-    const docs=_grpFiltrarDocs(allDocs,maqF,prodF,funcF);
-    const aponMap=_grpAgregarPorRec(docs);
-
-    // Constrói consumo cruzando realizado × ficha técnica
-    const byInsumo={};
-    records.forEach(function(r){
-      const dt=r.dtDesejada||r.dtSolicitacao||'';
-      if(!dt||dt<ini||dt>fim) return;
-      if(maqF&&r.maquina!==maqF) return;
-      if(prodF&&r.produto!==prodF) return;
-      const realCx=aponMap[r.id]?.totalCaixas||0;
-      if(realCx<=0) return;
-      const ficha=FICHA_TECNICA.find(f=>f.produto===r.produto||(r.prodCod&&String(f.cod)===String(r.prodCod)));
-      if(!ficha||!ficha.insumos) return;
-      ficha.insumos.forEach(function(ins){
-        const key=ins.insumo||ins.descricao||'';
-        if(!key) return;
-        if(!byInsumo[key]) byInsumo[key]={insumo:key,unidade:ins.unidade||'',consumo:0,produtos:new Set()};
-        byInsumo[key].consumo+=(ins.quantidade||0)*realCx;
-        byInsumo[key].produtos.add(r.produto);
-      });
-    });
-
-    const estoqueIns=typeof insumosEstoqueData!=='undefined'?insumosEstoqueData:[];
-    const insRows=Object.values(byInsumo).sort((a,b)=>b.consumo-a.consumo).map(function(ins){
-      const est=estoqueIns.find(e=>(e.insumo||'').toLowerCase()===ins.insumo.toLowerCase());
-      const saldo=est?parseFloat(est.quantidade)||0:null;
-      return {...ins,produtos:ins.produtos.size,saldoAtual:saldo,risco:saldo!=null&&ins.consumo>0&&saldo<ins.consumo};
-    });
-
-    if(!insRows.length){panel.innerHTML='<div class="grp-empty">Sem dados de insumos. Verifique se há Ficha Técnica carregada e apontamentos no período.</div>';return;}
-
-    const criticos=insRows.filter(r=>r.risco);
-    const kpis=`<div class="grp-kpi-row">
-      ${_grpKpi('Insumos consumidos',insRows.length,'var(--cyan)','')}
-      ${_grpKpi('Críticos (risco falta)',criticos.length,'var(--red)',criticos.length>0?'⚠️ atenção':'')}
-      ${_grpKpi('Mais consumido',insRows[0]?.insumo||'—','var(--warn)',insRows[0]?Math.round(insRows[0].consumo).toLocaleString('pt-BR')+' '+insRows[0].unidade:'')}
-    </div>`;
-
-    const tblHtml=_grpTblWrap(
-      _grpTh('Insumo','Unid.','Consumo Real','Saldo Atual','Saldo Pós Prog.','Risco','Produtos')+
-      '<tbody>'+insRows.map(function(ins){
-        const sp=ins.saldoAtual!=null?ins.saldoAtual-ins.consumo:null;
-        return `<tr style="${ins.risco?'background:rgba(204,40,0,.04)':''}">
-          <td style="font-weight:600;color:${ins.risco?'var(--red)':'var(--text)'}">${ins.insumo}</td>
-          <td style="color:var(--text3)">${ins.unidade||'—'}</td>
-          <td style="font-family:'JetBrains Mono',monospace;color:var(--warn)">${Math.round(ins.consumo).toLocaleString('pt-BR')}</td>
-          <td style="font-family:'JetBrains Mono',monospace;color:${ins.saldoAtual!=null?'var(--cyan)':'var(--text3)'}">${ins.saldoAtual!=null?Math.round(ins.saldoAtual).toLocaleString('pt-BR'):'N/D'}</td>
-          <td style="font-family:'JetBrains Mono',monospace;color:${sp!=null?(sp<0?'var(--red)':'var(--green)'):'var(--text3)'}">${sp!=null?Math.round(sp).toLocaleString('pt-BR'):'N/D'}</td>
-          <td>${ins.risco?'<span style="background:rgba(204,40,0,.12);color:var(--red);padding:2px 8px;border-radius:8px;font-size:10px;font-weight:700">⚠️ Risco</span>':'<span style="color:var(--text3);font-size:10px">OK</span>'}</td>
-          <td style="text-align:center;color:var(--text3)">${ins.produtos}</td>
-        </tr>`;
-      }).join('')+'</tbody>'
-    );
-    const chartRows=insRows.slice(0,12).map(i=>({label:i.insumo,val:Math.round(i.consumo),valLabel:Math.round(i.consumo).toLocaleString('pt-BR')+' '+i.unidade}));
-    panel.innerHTML=kpis+_grpCard('Consumo de Insumos','🧪',tblHtml)+_grpCard('Top 12 Consumidos','📊',_grpBarChart(chartRows,null,()=>'var(--warn)'));
-  });
-}
-
-// ════════════════════════════════════════════════════════════════════════════
-// ABA 6 — GERENCIAL
-// ════════════════════════════════════════════════════════════════════════════
-function _grpRenderGerencial(){
-  const panel=document.getElementById('grp-panel-gerencial');
-  if(!panel) return;
-  const ini=_grpIni(),fim=_grpFim(),maqF=_grpMaq(),prodF=_grpProd(),funcF=_grpFunc();
-  if(!_grpCheckPeriod(panel,ini,fim)) return;
-  _grpSetLoading(panel);
-
-  _grpCarregarApon(ini,fim).then(function(allDocs){
-    // Aplica TODOS os filtros ativos
-    const docs=_grpFiltrarDocs(allDocs,maqF,prodF,funcF);
-
-    // Ranking máquinas — usa docs filtrados para realizado
-    const maqs=maqF?[maqF]:[...new Set(records.map(r=>r.maquina).filter(Boolean))].sort();
-    const maqRank=maqs.map(function(maq){
-      const recsM=records.filter(r=>r.maquina===maq&&(r.dtDesejada||r.dtSolicitacao||'')>=ini&&(r.dtDesejada||r.dtSolicitacao||'')<=fim&&(!prodF||r.produto===prodF));
-      const realCx=docs.filter(d=>d.maquina===maq).reduce((a,d)=>a+(d.quantidade||0),0);
-      const progCx=recsM.reduce((a,r)=>a+(r.qntCaixas||0),0);
-      // hrsDisp: soma real por dia (respeita turnos por máquina)
-      let hrsDisp=0;
-      const cur2=new Date(ini+'T12:00:00');
-      while(dateStr(cur2)<=fim){hrsDisp+=hoursOnDayMaq(cur2,maq);cur2.setDate(cur2.getDate()+1);}
-      // hrsProg: via buildSchedule semana a semana
-      let hrsProg=0;
-      if(typeof buildSchedule==='function'){
-        const iniMon2=getWeekMonday(new Date(ini+'T12:00:00'));
-        const fimD2=new Date(fim+'T12:00:00');
-        const sc2=new Date(iniMon2);
-        while(sc2<=fimD2){
-          try{
-            const {schedule:sch2}=buildSchedule(sc2);
-            const ents=sch2[maq];
-            if(ents) ents.forEach(function(e){
-              e.segments.forEach(function(s){if(s.date>=ini&&s.date<=fim)hrsProg+=s.hrsNoDia||0;});
-              e.setupSegments.forEach(function(s){if(s.date>=ini&&s.date<=fim)hrsProg+=s.setupMin/60||0;});
-            });
-          }catch(e2){}
-          sc2.setDate(sc2.getDate()+7);
-        }
-        hrsProg=Math.round(hrsProg*10)/10;
-      } else {
-        hrsProg=recsM.reduce((a,r)=>a+(r.qntCaixas||0)/Math.max(0.001,r.pcMin||0.001)/60,0);
-      }
-      const util=hrsDisp>0?Math.min(100,Math.round(hrsProg/hrsDisp*100)):0;
-      return {maq,realCx,progCx,util};
-    }).filter(m=>m.progCx>0||m.realCx>0).sort((a,b)=>b.realCx-a.realCx);
-
-    // Ranking produtos — usa docs filtrados
-    const prodMap={};
-    records.forEach(function(r){
-      const dt=r.dtDesejada||r.dtSolicitacao||'';
-      if(!dt||dt<ini||dt>fim) return;
-      if(maqF&&r.maquina!==maqF) return;
-      if(prodF&&r.produto!==prodF) return;
-      if(!prodMap[r.produto]) prodMap[r.produto]={produto:r.produto,real:0,prog:0};
-      prodMap[r.produto].prog+=r.qntCaixas||0;
-      prodMap[r.produto].real+=docs.filter(d=>d.recordId===r.id).reduce((a,d)=>a+(d.quantidade||0),0);
-    });
-    const prodRank=Object.values(prodMap).sort((a,b)=>b.real-a.real);
-
-    // Cobertura críticos da projecaoCalculada
-    const criticosCob=projecaoCalculada.filter(p=>p.risco==='critico'||p.risco==='alto').sort((a,b)=>(a.coberturaAtual||999)-(b.coberturaAtual||999));
-
-    const totReal=maqRank.reduce((a,m)=>a+m.realCx,0);
-    const totProg=maqRank.reduce((a,m)=>a+m.progCx,0);
-    const pctGeral=totProg>0?Math.round(totReal/totProg*100):0;
-    const gargalos=[...maqRank].sort((a,b)=>b.util-a.util);
-
-    const kpis=`<div class="grp-kpi-row">
-      ${_grpKpi('Realizado Total',totReal.toLocaleString('pt-BR'),'var(--green)','caixas')}
-      ${_grpKpi('% Atendimento',pctGeral+'%',pctGeral>=80?'var(--green)':pctGeral>=50?'var(--warn)':'var(--red)','')}
-      ${_grpKpi('Máq. mais produtiva',maqRank[0]?.maq||'—','var(--cyan)',maqRank[0]?.realCx.toLocaleString('pt-BR')+' cx')}
-      ${_grpKpi('Produto líder',prodRank[0]?.produto||'—','var(--purple)',prodRank[0]?.real.toLocaleString('pt-BR')+' cx')}
-      ${_grpKpi('Gargalo',gargalos[0]?.maq||'—','var(--red)',gargalos[0]?.util+'% carregada')}
-    </div>`;
-
-    // Cobertura críticos
-    const cobHtml=criticosCob.length?
-      _grpTblWrap(_grpTh('Produto','Cobertura Atual','Demanda/Sem','Risco')+
-        '<tbody>'+criticosCob.slice(0,10).map(p=>{
-          const rc=p.risco==='critico'?'var(--red)':'var(--warn)';
-          return `<tr><td style="font-weight:600;color:${rc}">${p.produto}</td>
-            <td style="font-family:'JetBrains Mono',monospace;font-weight:700;color:${rc}">${p.coberturaAtual!=null?p.coberturaAtual+'d':'—'}</td>
-            <td style="font-family:'JetBrains Mono',monospace;color:var(--text2)">${p.projSemanal>0?p.projSemanal.toFixed(1)+' cx/sem':'—'}</td>
-            <td><span style="font-size:10px;font-weight:700;color:${rc}">${p.risco==='critico'?'🔴 Crítico':'🟠 Alto'}</span></td>
-          </tr>`;
-        }).join('')+'</tbody>'):
-      '<div class="grp-empty">Nenhum produto crítico. Calcule a projeção na aba Projeção de Vendas.</div>';
-
-    // Processos (estrutura)
-    const processosHtml=_grpRenderProcessosGerencial();
-
-    panel.innerHTML=kpis+
-      `<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
-        ${_grpCard('🏆 Máquinas mais produtivas','📊',_grpBarChart(maqRank.slice(0,8).map(m=>({label:m.maq,val:m.realCx,valLabel:m.realCx.toLocaleString('pt-BR')+' cx'})),null,()=>'var(--cyan)'))}
-        ${_grpCard('😴 Mais ociosas','📊',_grpBarChart([...maqRank].sort((a,b)=>a.util-b.util).slice(0,8).map(m=>({label:m.maq,val:100-m.util,valLabel:(100-m.util)+'% ociosa'})),100,m=>m.val>50?'var(--red)':'var(--warn)'))}
-        ${_grpCard('📦 Produtos mais produzidos','📊',_grpBarChart(prodRank.slice(0,10).map(p=>({label:p.produto,val:p.real,valLabel:p.real.toLocaleString('pt-BR')+' cx'})),null,()=>'var(--green)'))}
-        ${_grpCard('⚠️ Maior pendência','📊',_grpBarChart([...prodRank].sort((a,b)=>(b.prog-b.real)-(a.prog-a.real)).slice(0,8).filter(p=>p.prog>p.real).map(p=>({label:p.produto,val:p.prog-p.real,valLabel:(p.prog-p.real).toLocaleString('pt-BR')+' cx'})),null,()=>'var(--warn)'))}
-      </div>`+
-      _grpCard('🔴 Gargalos (máquinas mais carregadas)','⚙️',_grpBarChart(gargalos.slice(0,8).map(m=>({label:m.maq,val:m.util,valLabel:m.util+'% carg.'})),100,m=>m.val>=90?'var(--red)':m.val>=70?'var(--warn)':'var(--cyan)'))+
-      _grpCard('🛡️ Produtos críticos — risco de ruptura','📊',cobHtml)+
-      _grpCard('⚙️ Processos (visão geral)','📊',processosHtml);
-  });
-}
-
-// ── Processos no relatório gerencial ─────────────────────────────────────────
-function _grpRenderProcessosGerencial(){
-  const processos=_getProcessos();
-  if(!processos.length) return `<div class="grp-empty">Nenhum processo cadastrado.<br><small style="color:var(--text3)">Cadastre em Configurações → Processos.</small></div>`;
-  const ini=_grpIni(), fim=_grpFim();
-  if(!ini||!fim) return '<div class="grp-empty">Selecione o período.</div>';
-
-  // Agrupa registros de processo_dia no período
-  const totaisPorProcesso={};
-  processos.forEach(function(p){ totaisPorProcesso[p.nome]={processo:p.nome,desc:p.desc||'',dias:0,funcionarios:new Set()}; });
-
-  // Varre todas as semanas do período
-  const cur=getWeekMonday(new Date(ini+'T12:00:00'));
-  const fimDate=new Date(fim+'T12:00:00');
-  while(cur<=fimDate){
-    const wData=_getProcDayData(cur);
-    Object.values(wData).forEach(function(dayItems){
-      dayItems.forEach(function(item){
-        const proc=processos[item.processoIdx];
-        if(!proc) return;
-        const key=proc.nome;
-        if(!totaisPorProcesso[key]) totaisPorProcesso[key]={processo:key,desc:proc.desc||'',dias:0,funcionarios:new Set()};
-        totaisPorProcesso[key].dias++;
-        (item.funcionarios||[]).forEach(f=>totaisPorProcesso[key].funcionarios.add(f));
-      });
-    });
-    cur.setDate(cur.getDate()+7);
-  }
-
-  const rows=Object.values(totaisPorProcesso).sort((a,b)=>b.dias-a.dias);
-  return _grpTblWrap(
-    _grpTh('Processo','Descrição','Dias Registrados','Funcionários envolvidos')+
-    '<tbody>'+rows.map(p=>`<tr>
-      <td style="font-weight:600">${p.processo}</td>
-      <td style="font-size:11px;color:var(--text3)">${p.desc||'—'}</td>
-      <td style="text-align:center;font-family:'JetBrains Mono',monospace;color:var(--cyan)">${p.dias}</td>
-      <td style="font-size:11px;color:var(--text2)">${[...p.funcionarios].join(', ')||'—'}</td>
-    </tr>`).join('')+'</tbody>'
-  );
-}
-
-// ════════════════════════════════════════════════════════════════════════════
-// PARADAS DE MÁQUINA
-// ════════════════════════════════════════════════════════════════════════════
-function _grpGetParadas(ini, fim, maqF){
-  try{
-    const all=JSON.parse(localStorage.getItem('grp_paradas')||'[]');
-    return all.filter(function(p){
-      if(p.inicio<ini||p.inicio>fim) return false;
-      if(maqF&&p.maquina!==maqF) return false;
-      return true;
-    });
-  }catch(e){ return []; }
-}
-function _grpSaveParadas(arr){ localStorage.setItem('grp_paradas',JSON.stringify(arr)); }
-
-function grpAbrirModalParada(){
-  let modal=document.getElementById('grp-modal-parada');
-  if(!modal){
-    const maqs=[...new Set(records.map(r=>r.maquina).filter(Boolean))].sort();
-    const motivos=['Manutenção','Falta de insumo','Setup','Limpeza','Quebra','Outro'];
-    modal=document.createElement('div');
-    modal.id='grp-modal-parada';
-    modal.className='overlay';
-    modal.style.cssText='display:flex;position:fixed;inset:0;z-index:900;align-items:center;justify-content:center';
-    modal.innerHTML=`<div class="modal-box" style="max-width:460px">
-      <div class="modal-hd"><h2>Registrar Parada de Máquina</h2>
-        <button onclick="document.getElementById('grp-modal-parada').remove()" style="background:none;border:none;color:var(--text2);cursor:pointer;font-size:18px;line-height:1">✕</button>
-      </div>
-      <div class="modal-bd" style="display:flex;flex-direction:column;gap:14px">
-        <div><label style="font-size:11px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.8px;display:block;margin-bottom:6px">Máquina</label>
-          <select id="grp-par-maq" class="finp" style="width:100%"><option value="">Selecione...</option>${maqs.map(m=>`<option>${m}</option>`).join('')}</select></div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-          <div><label style="font-size:11px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.8px;display:block;margin-bottom:6px">Início</label>
-            <input type="datetime-local" id="grp-par-ini" class="finp" style="width:100%"></div>
-          <div><label style="font-size:11px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.8px;display:block;margin-bottom:6px">Fim</label>
-            <input type="datetime-local" id="grp-par-fim" class="finp" style="width:100%"></div>
-        </div>
-        <div><label style="font-size:11px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.8px;display:block;margin-bottom:6px">Motivo</label>
-          <select id="grp-par-motivo" class="finp" style="width:100%">${motivos.map(m=>`<option>${m}</option>`).join('')}</select></div>
-        <div><label style="font-size:11px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.8px;display:block;margin-bottom:6px">Observação (opcional)</label>
-          <input type="text" id="grp-par-obs" class="finp" style="width:100%" placeholder="Descreva a parada..."></div>
-      </div>
-      <div class="modal-ft">
-        <button class="btn btn-ghost" onclick="document.getElementById('grp-modal-parada').remove()">Cancelar</button>
-        <button class="btn btn-primary" onclick="grpSalvarParada()">Salvar Parada</button>
-      </div>
-    </div>`;
-    document.body.appendChild(modal);
-    // Pre-fill com data/hora atual
-    const now=new Date();
-    const pad=n=>String(n).padStart(2,'0');
-    const nowStr=`${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
-    document.getElementById('grp-par-ini').value=nowStr;
-  }
-}
-
-function grpSalvarParada(){
-  const maq=document.getElementById('grp-par-maq')?.value;
-  const ini=document.getElementById('grp-par-ini')?.value;
-  const fim=document.getElementById('grp-par-fim')?.value||null;
-  const motivo=document.getElementById('grp-par-motivo')?.value;
-  const obs=document.getElementById('grp-par-obs')?.value||'';
-  if(!maq||!ini||!motivo){ toast('Preencha máquina, início e motivo.','err'); return; }
-  let duracaoH=null;
-  if(fim){
-    const diff=(new Date(fim)-new Date(ini))/3600000;
-    if(diff>0) duracaoH=Math.round(diff*10)/10;
-  }
-  const paradas=_grpGetParadas('2000-01-01','2999-12-31','');
-  paradas.push({maquina:maq,inicio:ini.slice(0,10),inicioFull:ini,fim:fim?fim.slice(0,10):null,fimFull:fim,motivo,obs,duracaoH,criadoEm:new Date().toISOString()});
-  _grpSaveParadas(paradas);
-  document.getElementById('grp-modal-parada')?.remove();
-  toast('Parada registrada!','ok');
-  grpRender();
-}
-
-// ── Export ────────────────────────────────────────────────────────────────────
-function grpExportXLSX(){
-  if(typeof XLSX==='undefined'){ toast('XLSX não disponível.','err'); return; }
-  const ini=_grpIni(),fim=_grpFim(),maqF=_grpMaq(),prodF=_grpProd(),funcF=_grpFunc();
-  if(!ini||!fim){ toast('Selecione o período antes de exportar.','err'); return; }
-  _grpCarregarApon(ini,fim).then(function(allDocs){
-    try{
-      const docs=_grpFiltrarDocs(allDocs,maqF,prodF,funcF);
-      const rows=[['Data','Produto','Máquina','Operador','Quantidade (cx)','Hora']];
-      docs.forEach(function(d){ rows.push([d.data,d.produto||'',d.maquina||'',d.operador||'',d.quantidade||0,d.hora||'']); });
-      const ws=XLSX.utils.aoa_to_sheet(rows);
-      ws['!cols']=[{wch:12},{wch:30},{wch:14},{wch:20},{wch:16},{wch:8}];
-      const wb=XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb,ws,'Apontamentos');
-      // Resumo por produto
-      const byP={};
-      docs.forEach(function(d){
-        if(!byP[d.produto||'']) byP[d.produto||'']={produto:d.produto||'',total:0};
-        byP[d.produto||''].total+=d.quantidade||0;
-      });
-      const rows2=[['Produto','Total Realizado'],...Object.values(byP).sort((a,b)=>b.total-a.total).map(p=>[p.produto,p.total])];
-      const ws2=XLSX.utils.aoa_to_sheet(rows2);
-      ws2['!cols']=[{wch:30},{wch:16}];
-      XLSX.utils.book_append_sheet(wb,ws2,'Por Produto');
-      XLSX.writeFile(wb,'relatorio_'+ini+'_'+fim+'.xlsx');
-      toast('Exportado!','ok');
-    }catch(err){ toast('Erro ao exportar: '+err.message,'err'); }
-  });
-}
-
-// ── Expor globalmente ─────────────────────────────────────────────────────────
-window.grpInit         = grpInit;
-window.grpRender       = grpRender;
-window.grpSwitchTab    = grpSwitchTab;
-window.grpResetFiltros = grpResetFiltros;
-window.grpExportXLSX   = grpExportXLSX;
-window.grpSetAgrup     = grpSetAgrup;
-window.grpAbrirModalParada = grpAbrirModalParada;
-window.grpSalvarParada = grpSalvarParada;
 
 // ===================================================================
 // ===== IMPORTAÇÃO / API ============================================
@@ -11588,10 +10727,33 @@ function gerarProgAutomarica(){
   const cobMin    = parseFloat(document.getElementById('pa-cobertura-min')?.value||'5');
   const cobAlvo   = parseFloat(document.getElementById('pa-cobertura-alvo')?.value||'15');
   const riscoLim  = parseFloat(document.getElementById('pa-risco-critico')?.value||'3');
-  const maxPctMaq = parseFloat(document.getElementById('pa-max-pct-maq')?.value||'90') / 100;
+  const maxPctMaq = parseFloat(document.getElementById('pa-max-pct-maq')?.value||'60') / 100;
 
-  const semanaSel = document.getElementById('pa-semana-sel')?.value;
-  const monday    = semanaSel ? new Date(semanaSel+'T12:00:00') : getWeekMonday(new Date());
+  // ── Calcular monday de referência ─────────────────────────────────
+  // Modo "Mês": usar a primeira segunda-feira do mês alvo selecionado.
+  //             Isso evita que a programação caia no mês atual quando o
+  //             usuário quer programar o mês seguinte.
+  // Modo "Semana": usar a semana selecionada no selector (comportamento original).
+  const modoPeriodo = document.querySelector('input[name="pa-modo-periodo"]:checked')?.value || 'mes';
+  const mesSel      = document.getElementById('pa-mes-sel')?.value;     // "YYYY-MM"
+  const semanaSel   = document.getElementById('pa-semana-sel')?.value;  // "YYYY-MM-DD"
+
+  let monday;
+  if(modoPeriodo === 'mes' && mesSel){
+    // Primeira segunda-feira do mês alvo
+    const [anoAlvo, mesAlvo] = mesSel.split('-').map(Number);
+    const primeiroDiaMes = new Date(anoAlvo, mesAlvo - 1, 1, 12, 0, 0);
+    monday = getWeekMonday(primeiroDiaMes);
+    // Se a segunda caiu no mês anterior, avançar uma semana para ficar dentro do mês alvo
+    if(monday.getMonth() !== primeiroDiaMes.getMonth() && monday < primeiroDiaMes){
+      monday = new Date(monday); monday.setDate(monday.getDate() + 7);
+    }
+  } else if(modoPeriodo === 'semana' && semanaSel){
+    monday = new Date(semanaSel + 'T12:00:00');
+  } else {
+    monday = getWeekMonday(new Date());
+  }
+
   const days      = getWeekDays(monday);
   const alertEl   = document.getElementById('pa-alerta');
 
@@ -11603,9 +10765,10 @@ function gerarProgAutomarica(){
   const anoRef        = monday.getFullYear();
   const ultimoDiaMes  = new Date(anoRef, mesRef + 1, 0); // último dia do mês ref
 
-  // Pré-calcular os 4 Mondays e suas capacidades respeitando a regra de fechamento
+  // Pré-calcular os 4 Mondays (ou 1 se modo semana) respeitando a regra de fechamento
+  const numSemanasPA = (modoPeriodo === 'semana') ? 1 : 4;
   const semanasPA = []; // [{monday, sunday, capPorMaq}]
-  for(let si = 0; si < 4; si++){
+  for(let si = 0; si < numSemanasPA; si++){
     const wMon = new Date(monday); wMon.setDate(monday.getDate() + si * 7);
     const wSun = new Date(wMon);   wSun.setDate(wMon.getDate() + 6);
     // Clip de dias para este mês se modo 'este-mes' e esta semana cruza a virada
@@ -11728,8 +10891,8 @@ function gerarProgAutomarica(){
     // Item 2 — produção programada por semana (entra no estoque na semana certa)
     // si=0: já contabilizado em naoPontadaAtual
     // si>0: entra na simulação quando o loop chegar naquela semana
-    const jaProgPorSemana = [0, 0, 0, 0];
-    for(let si = 0; si < 4; si++){
+    const jaProgPorSemana = Array(numSemanasPA).fill(0);
+    for(let si = 0; si < numSemanasPA; si++){
       const sp      = semanasPA[si];
       const wMonStr = dateStr(sp.monday);
       const wSunStr = dateStr(sp.sunday);
@@ -11841,12 +11004,12 @@ function gerarProgAutomarica(){
   // PROBLEMA 4 FIX: capacidade de cada semana é calculada com base nos
   // dias EFETIVOS da semana (respeitando clip de mês quando 'este-mes').
   const maqCapacidades = {};  // horas efetivas disponíveis/semana (média das 4 semanas)
-  const maqCapPorSemana = Array.from({length:4}, () => { const s={}; MAQUINAS.forEach(m=>s[m]=0); return s; });
+  const maqCapPorSemana = Array.from({length:numSemanasPA}, () => { const s={}; MAQUINAS.forEach(m=>s[m]=0); return s; });
   for(const maq of MAQUINAS){
     const maqData2 = getMaquinaData(maq);
     const efic = (maqData2 && parseFloat(maqData2.eficiencia) > 0)
       ? parseFloat(maqData2.eficiencia) / 100 : 1;
-    for(let si = 0; si < 4; si++){
+    for(let si = 0; si < numSemanasPA; si++){
       const sp = semanasPA[si];
       let hrsEfetivas = weekHrsForMachine(maq, sp.monday);
       if(!hrsEfetivas || hrsEfetivas <= 0){
@@ -11909,20 +11072,55 @@ function gerarProgAutomarica(){
   candidates.forEach(c => {
     allocations[c.prod] = {
       hrsTotal: 0, cxTotal: 0,
-      semanas: [0,0,0,0],
+      semanas: Array(numSemanasPA).fill(0),
       maquinas: {},
-      detalhes: Array.from({length:4}, () => ([]))
+      detalhes: Array.from({length:numSemanasPA}, () => ([]))
     };
   });
 
-  const maqHrsUsadas    = Array.from({length:4}, () => {
+  const maqHrsUsadas    = Array.from({length:numSemanasPA}, () => {
     const s = {}; MAQUINAS.forEach(m => { s[m] = 0; }); return s;
   });
-  // PROBLEMA 4 FIX: usar capacidade efetiva por semana (com clip de mês)
-  // maxPctMaq aplicado já aqui para que scoreMaquina e todos os checks downstream
-  // respeitem o limite configurado (ex: 90%) desde o início da alocação.
-  const maqHrsRestantes = Array.from({length:4}, (_, si) => {
+  const maqHrsRestantes = Array.from({length:numSemanasPA}, (_, si) => {
     const s = {}; MAQUINAS.forEach(m => { s[m] = (maqCapPorSemana[si][m] || 0) * maxPctMaq; }); return s;
+  });
+
+  // ── FIX 5: descontar horas de registros já existentes no Gantt ────
+  // Sem esse desconto, a programação automática ignora o que já está
+  // programado e aloca até 100% da capacidade, ultrapassando o limite
+  // configurado pelo usuário (ex: 90%).
+  // Para cada registro já existente (não-Concluído), calculamos as horas
+  // que ele ocupa em cada uma das 4 semanas e descontamos de maqHrsRestantes.
+  records.forEach(r => {
+    if(r.status === 'Concluído') return;
+    const maqNome = r.maquina;
+    if(!maqNome || !MAQUINAS.includes(maqNome)) return;
+    const pcMinRec = (function(){
+      const maqD = getMaquinaData(maqNome);
+      const prodEntry = Array.isArray(maqD?.produtosCompativeis)
+        ? maqD.produtosCompativeis.find(p => p.produto === r.produto) : null;
+      return parseFloat(prodEntry?.velocidade || maqD?.pcMin || 1) || 1;
+    })();
+    const unidRec = (function(){
+      const ficha = getAllProdutos().find(p => String(p.cod) === String(r.prodCod) || p.descricao === r.produto);
+      return parseFloat(ficha?.unid || 1) || 1;
+    })();
+    const hrsRec = ((r.qntCaixas || 0) * unidRec) / (pcMinRec * 60);
+    if(hrsRec <= 0) return;
+    const dtRec = r.dtDesejada || r.dtSolicitacao || '';
+    for(let si = 0; si < numSemanasPA; si++){
+      const sp = semanasPA[si];
+      const wSun = dateStr(sp.sunday);
+      if(dtRec >= wMon && dtRec <= wSun){
+        if(maqHrsRestantes[si][maqNome] != null){
+          maqHrsRestantes[si][maqNome] = Math.max(0, maqHrsRestantes[si][maqNome] - hrsRec);
+        }
+        if(maqHrsUsadas[si][maqNome] != null){
+          maqHrsUsadas[si][maqNome] += hrsRec;
+        }
+        break;
+      }
+    }
   });
 
   // ── Helper: score de máquina ────────────────────────────────────
@@ -12030,8 +11228,7 @@ function gerarProgAutomarica(){
     // recommending production that is already covered by scheduled records.
     const path = [];
     let estoq = c.estoqueSim; // = estoque + naoPontadaAtual
-    for(let s = 0; s < 4; s++){
-      // Inject already-programmed production for this week (Item 2)
+    for(let s = 0; s < numSemanasPA; s++){
       estoq += (c.jaProgPorSemana && c.jaProgPorSemana[s] > 0 && s > 0)
         ? c.jaProgPorSemana[s] : 0;
       const ini = estoq;
@@ -12045,13 +11242,13 @@ function gerarProgAutomarica(){
     }
     c._trajetoria = path;
 
-    // Regra 3: não precisa produzir se o mês fecha bem sem nova produção
-    if(path[3].cobFin >= cobTeto){
+    // Regra 3: não precisa produzir se o período fecha bem sem nova produção
+    if(path[numSemanasPA-1].cobFin >= cobTeto){
       c._semanaEntry = -1;
       return;
     }
 
-    // Regra 1: já crítico no início do mês → entrar imediatamente
+    // Regra 1: já crítico no início → entrar imediatamente
     if(path[0].cobIni < cobMin){
       c._semanaEntry = 0;
       return;
@@ -12059,7 +11256,7 @@ function gerarProgAutomarica(){
 
     // Regra 2: encontrar a semana onde cobFim cai abaixo de cobMin
     let semRuptura = -1;
-    for(let s = 0; s < 4; s++){
+    for(let s = 0; s < numSemanasPA; s++){
       if(path[s].cobFin < cobMin){
         semRuptura = s;
         break;
@@ -12069,18 +11266,17 @@ function gerarProgAutomarica(){
     if(semRuptura >= 0){
       c._semanaEntry = semRuptura;
     } else {
-      // Regra 4: sem ruptura no mês mas fechamento abaixo de cobTeto
-      // Encontrar a semana mais TARDIA onde cobFin < cobTeto
-      let entry = 3;
-      for(let s = 3; s >= 0; s--){
+      // Regra 4: sem ruptura no período mas fechamento abaixo de cobTeto
+      let entry = numSemanasPA - 1;
+      for(let s = numSemanasPA - 1; s >= 0; s--){
         if(path[s].cobFin < cobTeto) entry = s;
         else break;
       }
       c._semanaEntry = entry;
     }
 
-    // Regra 5: ajuste por carga estimada de máquina (antecipação defensiva)
-    if(c._semanaEntry > 0){
+    // Regra 5: ajuste por carga estimada (só aplicável com > 1 semana)
+    if(numSemanasPA > 1 && c._semanaEntry > 0){
       const semAlvo  = c._semanaEntry;
       const semAntes = semAlvo - 1;
 
@@ -12101,7 +11297,6 @@ function gerarProgAutomarica(){
 
       if(occEstimada > 0.80){
         const cobFinSemAntes = path[semAntes].cobFin;
-        // Só antecipa se ainda há necessidade E não vai ultrapassar o teto
         if(cobFinSemAntes < cobTeto){
           c._semanaEntry = semAntes;
         }
@@ -12109,8 +11304,8 @@ function gerarProgAutomarica(){
     }
   });
 
-  // ── LOOP PRINCIPAL: 4 semanas, guiado por _semanaEntry ───────────
-  for(let sem = 0; sem < 4; sem++){
+  // ── LOOP PRINCIPAL: semanas, guiado por _semanaEntry ─────────────
+  for(let sem = 0; sem < numSemanasPA; sem++){
 
     // ITEM 2 FIX — injetar produção já programada desta semana no estoque simulado
     // jaProgPorSemana[0] já está em estoqueSimInicial; semanas 1-3 entram aqui.
@@ -12198,7 +11393,7 @@ function gerarProgAutomarica(){
           // Simular restante do mês SEM nova produção, mas COM jaProgPorSemana futuro
           let estoqSemProd = c.estoqueSim;
           let cobreSemp = true;
-          for(let fs = sem; fs < 4; fs++){
+          for(let fs = sem; fs < numSemanasPA; fs++){
             // Injetar produção já programada desta semana futura (não duplicar sem=0)
             if(fs > 0) estoqSemProd += (c.jaProgPorSemana && c.jaProgPorSemana[fs]) || 0;
             // Injetar nova alocação desta semana se já foi registrada
@@ -12256,7 +11451,7 @@ function gerarProgAutomarica(){
         // FIX 2 — carryover: se ainda sobrou quantidade não alocada por falta
         // de capacidade, guardar para que a próxima semana absorva o deficit.
         // Isso evita "blocos fantasma" — o Gantt só mostrará o que realmente cabe.
-        if(cxRestante > 0 && sem < 3){
+        if(cxRestante > 0 && sem < numSemanasPA - 1){
           c._carryover = (c._carryover || 0) + cxRestante;
         }
       }
@@ -12294,7 +11489,7 @@ function gerarProgAutomarica(){
   // ── Recalcular prioridade com estado pós-simulação ───────────────
   candidates.forEach(c => {
     let estoq = c.estoque + (c.naoPontadaAtual || 0);
-    for(let s = 0; s < 4; s++){
+    for(let s = 0; s < numSemanasPA; s++){
       if(s > 0) estoq += (c.jaProgPorSemana && c.jaProgPorSemana[s]) || 0;
       estoq = Math.max(0, estoq + (allocations[c.prod].semanas[s] || 0) - c.demandaSemanal);
     }
@@ -12311,7 +11506,7 @@ function gerarProgAutomarica(){
   function recalcPath(c){
     const path = [];
     let estoq = c.estoque + (c.naoPontadaAtual || 0); // igual a estoqueSimInicial
-    for(let s = 0; s < 4; s++){
+    for(let s = 0; s < numSemanasPA; s++){
       // Injetar produção já programada nesta semana (s>0; s=0 já está em estoq)
       if(s > 0) estoq += (c.jaProgPorSemana && c.jaProgPorSemana[s]) || 0;
       const ini = estoq + (allocations[c.prod].semanas[s] || 0);
@@ -12367,7 +11562,7 @@ function gerarProgAutomarica(){
   for(let pass = 0; pass < 3; pass++){
     let algumaTroca = false;
 
-    for(let sem = 0; sem < 4; sem++){
+    for(let sem = 0; sem < numSemanasPA; sem++){
       for(const maqSrc of MAQUINAS){
         const capSrc = (maqCapPorSemana[sem]?.[maqSrc] || maqCapacidades[maqSrc] || 1);
         const occSrc = maqHrsUsadas[sem][maqSrc] / capSrc;
@@ -12450,7 +11645,7 @@ function gerarProgAutomarica(){
 
     for(const maq of MAQUINAS){
       // Use per-semana capacity (calculated per week for FASE B loop)
-      for(let semOrig = 0; semOrig < 4; semOrig++){
+      for(let semOrig = 0; semOrig < numSemanasPA; semOrig++){
         const cap = (maqCapPorSemana[semOrig]?.[maq] || maqCapacidades[maq] || 1);
         const occ = maqHrsUsadas[semOrig][maq] / cap;
 
@@ -12467,7 +11662,7 @@ function gerarProgAutomarica(){
             if(!det) continue;
 
             const candidatosDst = [];
-            for(let s = semOrig + 1; s < 4; s++) candidatosDst.push(s);
+            for(let s = semOrig + 1; s < numSemanasPA; s++) candidatosDst.push(s);
             for(let s = semOrig - 1; s >= 0; s--) candidatosDst.push(s);
 
             for(const semDst of candidatosDst){
@@ -12478,7 +11673,7 @@ function gerarProgAutomarica(){
               // Verificar que remoção em semOrig não causa ruptura
               let estoqCheck = c.estoque;
               let ruptura = false;
-              for(let s = 0; s < 4; s++){
+              for(let s = 0; s < numSemanasPA; s++){
                 const cxS = s === semOrig ? (allocations[c.prod].semanas[s] - det.cx) : allocations[c.prod].semanas[s];
                 estoqCheck = Math.max(0, estoqCheck + cxS - c.demandaSemanal);
                 if(s <= semOrig && c.demandaDiaria > 0 && estoqCheck / c.demandaDiaria < cobMin){
@@ -12489,7 +11684,7 @@ function gerarProgAutomarica(){
 
               // Verificar teto no destino
               let estoqDst = c.estoque;
-              for(let s = 0; s < 4; s++){
+              for(let s = 0; s < numSemanasPA; s++){
                 const cxS = (s === semOrig ? (allocations[c.prod].semanas[s] - det.cx) : allocations[c.prod].semanas[s])
                           + (s === semDst ? det.cx : 0);
                 estoqDst = Math.max(0, estoqDst + cxS - c.demandaSemanal);
@@ -12506,7 +11701,7 @@ function gerarProgAutomarica(){
 
         // ── Semana leve: antecipar de semana futura mais cheia ───────
         if(occ < ALVO_MIN_OCC){
-          for(let semSrc = semOrig + 1; semSrc < 4; semSrc++){
+          for(let semSrc = semOrig + 1; semSrc < numSemanasPA; semSrc++){
             const occSrc = maqHrsUsadas[semSrc][maq] / cap;
             if(occSrc <= ALVO_MIN_OCC) continue;
 
@@ -12525,7 +11720,7 @@ function gerarProgAutomarica(){
 
               // Verificar teto após antecipação
               let estoqCheck = c.estoque;
-              for(let s = 0; s < 4; s++){
+              for(let s = 0; s < numSemanasPA; s++){
                 const cxS = (s === semSrc ? (allocations[c.prod].semanas[s] - det.cx) : allocations[c.prod].semanas[s])
                           + (s === semOrig ? det.cx : 0);
                 estoqCheck = Math.max(0, estoqCheck + cxS - c.demandaSemanal);
@@ -12551,7 +11746,7 @@ function gerarProgAutomarica(){
   for(let pass = 0; pass < 2; pass++){
     let algumFill = false;
 
-    for(let sem = 0; sem < 4; sem++){
+    for(let sem = 0; sem < numSemanasPA; sem++){
       // Máquinas ociosas: <30% e não são 0% apenas porque nada foi programado
       const maqsOciosas = MAQUINAS.filter(m => {
         const cap = maqCapacidades[m] || 1;
@@ -12776,7 +11971,7 @@ function gerarProgAutomarica(){
   renderProgAutomaticaResultado();
   renderProgAutomaticaStats();
   document.getElementById('pa-apply-btn').style.display = paResultados.length ? 'flex' : 'none';
-  toast(`✅ Programação equilibrada: ${paResultados.length} produtos em 4 semanas`, 'ok');
+  toast(`✅ Programação equilibrada: ${paResultados.length} produtos em ${numSemanasPA} semana${numSemanasPA > 1 ? 's' : ''}`, 'ok');
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -13145,10 +12340,19 @@ async function aplicarProgAutomaticaNoGantt(){
     `O Gantt refletirá exatamente a divisão calculada.`
   )) return;
 
-  const ficha0    = null; // será buscado por produto abaixo
+  // Ordenar sugestões: não-alergênico antes de alergênico por dia×máquina
+  // Isso garante que ao criar os registros, o sortOrder coloca não-alerg primeiro.
+  const sugsOrdenadas = [...paResultados].sort((a, b) => {
+    const fA = getAllProdutos().find(p => String(p.cod)===String(a.cod) || p.descricao===a.prod);
+    const fB = getAllProdutos().find(p => String(p.cod)===String(b.cod) || p.descricao===b.prod);
+    const aA = fA?.alergenico === true ? 1 : 0;
+    const bA = fB?.alergenico === true ? 1 : 0;
+    return aA - bA; // não-alerg (0) antes de alerg (1)
+  });
+
   let criados = 0;
 
-  for(const sug of paResultados){
+  for(const sug of sugsOrdenadas){
     const plano    = planosMap.get(sug) || [];
     const ficha    = getAllProdutos().find(p => String(p.cod)===String(sug.cod) || p.descricao===sug.prod);
     const unidUsar = (ficha && ficha.unid) || sug.unid || 1;
@@ -13254,6 +12458,7 @@ function renderCalculos(){
 
 window.toggleSidebar = toggleSidebar;
 window.toggleTopbarMenu = toggleTopbarMenu;
+window.toggleTema = toggleTema;
 window.handleLogin = handleLogin;
 window.logout = () => import('./auth.js').then(m => m.logout());
 
@@ -13291,7 +12496,6 @@ window.fteAddRow = fteAddRow;
 window.pmAddInsumoRow = pmAddInsumoRow;
 window.ganttToday = ganttToday;
 window.ganttWeek = ganttWeek;
-window._renderGanttSemanalCore = _renderGanttSemanalCore;
 window.ganttGoDate = ganttGoDate;
 window.setGanttMode         = setGanttMode;
 window.ganttMesNav          = ganttMesNav;
@@ -13319,19 +12523,6 @@ window.saveUsuarioModal = saveUsuarioModal;
 window.toggleUsuarioAtivo = toggleUsuarioAtivo;
 window.renderUsuariosSistema = renderUsuariosSistema;
 window.confirmarExcluirUsuario = confirmarExcluirUsuario;
-
-// ── Processos ────────────────────────────────────────────────────────
-window.renderProcessosCfg    = renderProcessosCfg;
-window.openModalProcesso     = openModalProcesso;
-window.closeModalProcesso    = closeModalProcesso;
-window.salvarProcesso        = salvarProcesso;
-window.excluirProcesso       = excluirProcesso;
-window.renderProcessosDia    = renderProcessosDia;
-window.procToggleDay         = procToggleDay;
-window.procAddItem           = procAddItem;
-window.procEditItem          = procEditItem;
-window.procSalvarItem        = procSalvarItem;
-window.procRemoveItem        = procRemoveItem;
 
 // ── Meu Perfil ────────────────────────────────────────────────────────
 function abrirMeuPerfil() {
@@ -15576,6 +14767,7 @@ window.tableWeekReset = tableWeekReset;
 window.tableWeekNav = tableWeekNav;
 window.toggleHdMenu = toggleHdMenu;
 window.toggleTopbarMenu = toggleTopbarMenu;
+window.toggleTema = toggleTema;
 window.goPg = goPg;
 window.editRec = editRec;
 window.askDel = askDel;
