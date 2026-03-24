@@ -14647,3 +14647,63 @@ window.pa_onModoChange   = pa_onModoChange;
 window.pa_onMesChange    = function(){ if(paResultados.length) renderProgAutomaticaResultado(); };
 window.paToggleInsumos = paToggleInsumos;
 window.progToggleInsumos = progToggleInsumos;
+// ─────────────────────────────────────────────────────────────────
+// grpSwitchTab — controla sub-tabs do painel de Relatórios
+// Sub-tabs: producao | maquinas | produtos | funcionarios | insumos | gerencial
+// ─────────────────────────────────────────────────────────────────
+function grpSwitchTab(id) {
+  // 1. Atualizar visual dos botões de sub-tab
+  document.querySelectorAll('.rpt-grp-btn, [data-grp-tab]').forEach(btn => {
+    const btnId = btn.getAttribute('data-grp-tab') || btn.dataset.grp || btn.id.replace('rpt-grp-','');
+    const isActive = btnId === id;
+    btn.classList.toggle('active', isActive);
+    // Suporte a estilos inline (botões sem classe dedicada)
+    if (btn.dataset.grpTab || btn.getAttribute('onclick')?.includes(id)) {
+      btn.style.background = isActive ? 'var(--cyan,#f26522)' : '';
+      btn.style.color      = isActive ? '#fff' : '';
+    }
+  });
+
+  // Garantir que o novo relatorios.js está inicializado
+  if (window.relatorios) {
+    const rel2root = document.getElementById('rel2-root');
+    if (!rel2root) {
+      window.relatorios.init();
+      return;
+    }
+  }
+
+  // 2. Mostrar/esconder seções do painel rel2-root conforme sub-tab
+  const secMap = {
+    producao:    ['rel2-kpis','rel2-alertas','chart-producao-dia','chart-maquinas',
+                  'chart-top-produtos','chart-ociosidade'],
+    maquinas:    ['rel2-kpis','chart-maquinas'],
+    produtos:    ['rel2-kpis','chart-top-produtos'],
+    funcionarios:['rel2-kpis'],
+    insumos:     ['rel2-kpis','rel2-cobertura-card'],
+    gerencial:   ['rel2-kpis','rel2-alertas','rel2-pvr-grid'],
+  };
+
+  // Para sub-tabs ainda não mapeados, mostrar tudo
+  const show = secMap[id] || null;
+
+  // Seções principais do rel2-root
+  const allSecs = [
+    'rel2-alertas', 'rel2-kpis',
+    document.querySelector('#rel2-root > div[style*="grid-template-columns:1fr 1fr"]:nth-of-type(1)'),
+    document.querySelector('#rel2-root > div[style*="grid-template-columns:1fr 1fr"]:nth-of-type(2)'),
+    document.querySelector('.rel2-card[style*="margin-bottom:20px"]'),
+    document.querySelector('.rel2-card:last-of-type'),
+  ];
+
+  // Se não houver mapeamento específico, mostrar tudo e deixar o relatorios.js decidir
+  if (!show) {
+    if (window.relatorios) window.relatorios.render();
+    return;
+  }
+
+  // Renderizar relatórios completos para ter dados
+  if (window.relatorios) window.relatorios.render();
+}
+
+window.grpSwitchTab = grpSwitchTab;
