@@ -14647,3 +14647,76 @@ window.pa_onModoChange   = pa_onModoChange;
 window.pa_onMesChange    = function(){ if(paResultados.length) renderProgAutomaticaResultado(); };
 window.paToggleInsumos = paToggleInsumos;
 window.progToggleInsumos = progToggleInsumos;
+
+// ═══════════════════════════════════════════════════════════════════
+// HANDLERS GRP* — Relatórios (index.html onclick/onchange)
+// Definidos aqui no app.js (ES module confirmado que carrega)
+// como fallback garantido caso relatorios.js não tenha sido carregado.
+// ═══════════════════════════════════════════════════════════════════
+
+function _grpValFiltro(...ids) {
+  for (const id of ids) {
+    const el = document.getElementById(id);
+    if (el && el.value !== undefined) return el.value;
+  }
+  return '';
+}
+
+function _grpSincronizarFiltros() {
+  const ini = _grpValFiltro('grp-data-ini','grp-inicio','rpt-data-ini','rpt-inicio','rel-data-ini');
+  const fim = _grpValFiltro('grp-data-fim','grp-fim','rpt-data-fim','rpt-fim','rel-data-fim');
+  const maq = _grpValFiltro('grp-maq','grp-maquina','rpt-maq-filter','rpt-maq','rel-maq');
+  const prod = _grpValFiltro('grp-prod','grp-produto','rpt-prod','rpt-produto','rel-prod');
+  const set = (id, v) => { const el = document.getElementById(id); if (el && v) el.value = v; };
+  if (ini)  set('rel2-data-inicio', ini);
+  if (fim)  set('rel2-data-fim',    fim);
+  if (maq)  set('rel2-maquina',     maq);
+  if (prod) set('rel2-produto',     prod);
+}
+
+function grpRender() {
+  const rel2root = document.getElementById('rel2-root');
+  if (!rel2root) {
+    if (window.relatorios) { window.relatorios.init(); }
+    setTimeout(() => { _grpSincronizarFiltros(); if (window.relatorios) window.relatorios.aplicarFiltros(); }, 100);
+    return;
+  }
+  _grpSincronizarFiltros();
+  if (window.relatorios) window.relatorios.aplicarFiltros();
+}
+
+function grpSwitchTab(id) {
+  // Marcar botão ativo
+  document.querySelectorAll('[onclick*="grpSwitchTab"]').forEach(btn => {
+    const on = (btn.getAttribute('onclick') || '').includes("'" + id + "'")
+             || (btn.getAttribute('onclick') || '').includes('"' + id + '"');
+    btn.classList.toggle('active', on);
+  });
+  // Garantir painel e renderizar
+  const rel2root = document.getElementById('rel2-root');
+  if (!rel2root) {
+    if (window.relatorios) window.relatorios.init();
+    setTimeout(() => { _grpSincronizarFiltros(); if (window.relatorios) window.relatorios.render(); }, 100);
+    return;
+  }
+  _grpSincronizarFiltros();
+  if (window.relatorios) window.relatorios.render();
+}
+
+function grpClear() {
+  ['grp-data-ini','grp-data-fim','grp-inicio','grp-fim','rpt-data-ini','rpt-data-fim',
+   'grp-maq','grp-maquina','grp-prod','grp-produto','grp-op','grp-operador',
+   'rpt-maq-filter','rpt-prod','rpt-op'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.value = '';
+  });
+  if (window.relatorios) window.relatorios.limparFiltros();
+}
+
+function grpExport() {
+  if (window.relatorios) window.relatorios.exportXLSX();
+}
+
+window.grpRender    = grpRender;
+window.grpSwitchTab = grpSwitchTab;
+window.grpClear     = grpClear;
+window.grpExport    = grpExport;
