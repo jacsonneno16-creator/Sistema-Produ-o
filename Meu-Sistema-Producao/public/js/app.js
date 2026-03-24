@@ -2065,26 +2065,27 @@ function renderProdGrid(maq, filter){
   ));
   
   // Se não achou no catálogo mas a máquina tem produtos compatíveis, constrói lista a partir deles
-  // Só exibe produtos que existem de fato no catálogo (evita mostrar produtos não cadastrados)
   if (!prods.length && maqProds.length) {
     const todosProds = getAllProdutos();
+    const catalogoCarregado = todosProds.length > 0;
     prods = maqProds
       .filter(p => !filter || p.produto.toLowerCase().includes(filter.toLowerCase()))
       .map(p => {
         const catalogo = todosProds.find(x =>
           x.descricao?.trim().toLowerCase() === p.produto?.trim().toLowerCase()
         );
-        if (!catalogo) return null; // ignora produto não cadastrado
+        // Se catálogo carregado e produto não existe nele, omite
+        if (catalogoCarregado && !catalogo) return null;
         return {
-          descricao: catalogo.descricao,
-          cod: catalogo.cod || 0,
-          unid: catalogo.unid || 1,
-          pc_min: p.velocidade || catalogo.pc_min || (maqData && maqData.pcMin) || 0,
+          descricao: p.produto,
+          cod: catalogo ? (catalogo.cod || 0) : 0,
+          unid: catalogo ? (catalogo.unid || 1) : 1,
+          pc_min: p.velocidade || (catalogo && catalogo.pc_min) || (maqData && maqData.pcMin) || 0,
           maquina: maq,
-          kg_fd: catalogo.kg_fd || 0
+          kg_fd: catalogo ? (catalogo.kg_fd || 0) : 0
         };
       })
-      .filter(Boolean); // remove os nulls
+      .filter(Boolean);
   }
   const grid=document.getElementById('prod-grid');
   if(!prods.length){
@@ -12458,7 +12459,7 @@ function renderCalculos(){
 
 window.toggleSidebar = toggleSidebar;
 window.toggleTopbarMenu = toggleTopbarMenu;
-window.toggleTema = toggleTema;
+window.toggleTema = window.toggleTema || function(){}; // definida no index.html
 window.handleLogin = handleLogin;
 window.logout = () => import('./auth.js').then(m => m.logout());
 
@@ -14767,7 +14768,7 @@ window.tableWeekReset = tableWeekReset;
 window.tableWeekNav = tableWeekNav;
 window.toggleHdMenu = toggleHdMenu;
 window.toggleTopbarMenu = toggleTopbarMenu;
-window.toggleTema = toggleTema;
+window.toggleTema = window.toggleTema || function(){}; // definida no index.html
 window.goPg = goPg;
 window.editRec = editRec;
 window.askDel = askDel;
