@@ -23,6 +23,9 @@ let _sortCol = 'eficiencia';
 let _sortAsc = false;
 let _tabelaBusca = '';
 
+// ── Cache de dados calculados (evitar re-consulta desnecessária) ───
+let _dadosCache = null;
+
 // ── Horas de trabalho (11 horas: 7h–17h) ──────────────────────────
 const HORAS_DIA = 11;
 const MINUTOS_DIA = HORAS_DIA * 60;
@@ -348,6 +351,8 @@ function renderRelatorios() {
     lblUpdate.textContent = 'Atualizado em ' + new Date().toLocaleTimeString('pt-BR', { hour:'2-digit', minute:'2-digit' });
   }
 
+  // Invalidar cache ao renderizar (filtros mudaram)
+  _dadosCache = null;
   const dados = _calcularDados();
 
   _renderKPIs(dados);
@@ -362,98 +367,139 @@ function renderRelatorios() {
 }
 
 // ─────────────────────────────────────────────────────────────────
-// CÁLCULO DE DADOS
+// CÁLCULO DE DADOS — usa getDadosFiltrados() como base única
 // ─────────────────────────────────────────────────────────────────
 function _calcularDados() {
-  const recs = _getRecordsFiltrados();
+  // Retornar cache se disponível
+  if (_dadosCache) return _dadosCache;
+
+  const { recs, realizadoMap } = getDadosFiltrados();
   const inicio = _relFiltros.dataInicio;
   const fim    = _relFiltros.dataFim;
 
-  // ── Apontamentos no período ──
-  const aponPeriodo = _getAponPeriodo(recs, inicio, fim);
+  // ── Produção real por dia (usando realizadoMap do cache) ──────
+  const producaoPorDia = _calcPorDiaFiltrado(recs, inicio, fim);
 
-  // ── Produção real total por dia ──
-  const producaoPorDia = _calcPorDia(recs, inicio, fim);
+  // ── Dias com produção no período ──────────────────────────────
+  const diasComProducao = Math.max(1, Object.values(producaoPorDia).filter(v => v > 0).length);
 
-  // ── Produção por máquina ──
+  // ── Produção por máquina ──────────────────────────────────────
   const porMaquina = {};
   recs.forEach(r => {
     if (!r.maquina) return;
-    if (!porMaquina[r.maquina]) porMaquina[r.maquina] = { programado: 0, realizado: 0, setup: 0, registros: [] };
+    if (!porMaquina[r.maquina]) {
+      porMaquina[r.maquina] = { programado: 0, realizado: 0, setup: 0, registros: [] };
+    }
     porMaquina[r.maquina].programado += r.qntCaixas || 0;
-    porMaquina[r.maquina].realizado  += _getRealizadoRec(r, inicio, fim);
+    porMaquina[r.maquina].realizado  += realizadoMap[r.id] || 0;
     porMaquina[r.maquina].setup      += _getSetupMin(r.maquina);
     porMaquina[r.maquina].registros.push(r);
   });
 
-  // ── Produção por produto ──
+  // ── Produção por produto ──────────────────────────────────────
   const porProduto = {};
   recs.forEach(r => {
     if (!r.produto) return;
-    if (!porProduto[r.produto]) porProduto[r.produto] = { programado: 0, realizado: 0, maquina: r.maquina };
+    if (!porProduto[r.produto]) {
+      porProduto[r.produto] = { programado: 0, realizado: 0, maquina: r.maquina };
+    }
     porProduto[r.produto].programado += r.qntCaixas || 0;
-    porProduto[r.produto].realizado  += _getRealizadoRec(r, inicio, fim);
+    porProduto[r.produto].realizado  += realizadoMap[r.id] || 0;
   });
 
-  // ── KPIs globais ──
-  let totalProgramado = 0, totalRealizado = 0;
-  recs.forEach(r => {
-    totalProgramado += r.qntCaixas || 0;
-    totalRealizado  += _getRealizadoRec(r, inicio, fim);
+  // ── KPIs globais ─────────────────────────────────────────────
+  // Produção total = soma dos apontamentos filtrados
+  let totalRealizado  = 0;
+  let totalCapacidade = 0;
+
+  Object.entries(porMaquina).forEach(([maq, m]) => {
+    const vel = _getVelMaquina(maq);
+    totalRealizado += m.realizado;
+    // Capacidade real = velocidade × minutos disponíveis no período
+    if (vel > 0) {
+      totalCapacidade += vel * MINUTOS_DIA * diasComProducao;
+    } else {
+      // Sem velocidade cadastrada: usar programado como proxy de capacidade
+      totalCapacidade += m.programado;
+    }
   });
-  const eficienciaMedia = totalProgramado > 0 ? Math.round(totalRealizado / totalProgramado * 100) : 0;
 
-  // ── Dias com produção ──
-  const diasComProducao = Object.values(producaoPorDia).filter(v => v > 0).length;
-  const totalDias = Object.keys(producaoPorDia).length;
+  // Eficiência = produzido / capacidade real no período filtrado
+  const eficienciaMedia = totalCapacidade > 0
+    ? Math.min(100, Math.round(totalRealizado / totalCapacidade * 100))
+    : 0;
 
-  // ── Ociosidade estimada ──
-  // Capacidade = dias úteis × MINUTOS_DIA × máquinas
+  // Programado total (para KPI de comparação)
+  const totalProgramado = recs.reduce((a, r) => a + (r.qntCaixas || 0), 0);
+
+  // ── Ociosidade = tempo parado / tempo total disponível ────────
   const numMaquinas = Math.max(1, Object.keys(porMaquina).length);
-  const minutosCapacidade = diasComProducao * MINUTOS_DIA * numMaquinas;
-  const minutosOcupados = Object.values(porMaquina).reduce((acc, m) => {
-    const vel = _getVelMaquina(Object.keys(porMaquina).find(k => porMaquina[k] === m));
-    return acc + (vel > 0 ? m.realizado / vel * 60 : 0);
-  }, 0);
-  const minutosSetup = Object.values(porMaquina).reduce((a, m) => a + m.setup, 0);
-  const minutosOcioso = Math.max(0, minutosCapacidade - minutosOcupados - minutosSetup);
-  const pctOcupado = minutosCapacidade > 0 ? Math.round(minutosOcupados / minutosCapacidade * 100) : 0;
-  const pctSetup   = minutosCapacidade > 0 ? Math.round(minutosSetup   / minutosCapacidade * 100) : 0;
+  const minutosTotalDisponiveis = diasComProducao * MINUTOS_DIA * numMaquinas;
+
+  let minutosProdutivos = 0;
+  let minutosSetupTotal = 0;
+  Object.entries(porMaquina).forEach(([maq, m]) => {
+    const vel = _getVelMaquina(maq);
+    minutosProdutivos += vel > 0 ? m.realizado / vel : 0;
+    minutosSetupTotal += m.setup;
+  });
+
+  const minutosOciosos = Math.max(0, minutosTotalDisponiveis - minutosProdutivos - minutosSetupTotal);
+  const pctOcupado = minutosTotalDisponiveis > 0 ? Math.round(minutosProdutivos  / minutosTotalDisponiveis * 100) : 0;
+  const pctSetup   = minutosTotalDisponiveis > 0 ? Math.round(minutosSetupTotal  / minutosTotalDisponiveis * 100) : 0;
   const pctOcioso  = Math.max(0, 100 - pctOcupado - pctSetup);
 
-  // ── Ruptura / cobertura ──
+  // ── Ruptura / cobertura ───────────────────────────────────────
   let rupturas = 0;
   try {
     const pc = window.projecaoCalculada || [];
     rupturas = pc.filter(p => p.risco === 'critico' || p.risco === 'alto').length;
   } catch(e) {}
 
-  // ── Tabela analítica ──
+  // ── Tabela analítica — eficiência por capacidade real ─────────
   const tabelaRows = Object.entries(porMaquina).map(([maq, dados]) => {
-    const real   = dados.realizado;
-    const plan   = dados.programado;
-    const efic   = plan > 0 ? Math.round(real / plan * 100) : 0;
-    const setup  = _getSetupMin(maq);
-    const vel    = _getVelMaquina(maq);
-    const minsOc = diasComProducao > 0 ?
-      Math.max(0, diasComProducao * MINUTOS_DIA - (vel > 0 ? real / vel * 60 : 0) - setup) : 0;
-    const pctOc  = diasComProducao * MINUTOS_DIA > 0 ?
-      Math.round(minsOc / (diasComProducao * MINUTOS_DIA) * 100) : 0;
+    const real = dados.realizado;
+    const vel  = _getVelMaquina(maq);
+    const setup = _getSetupMin(maq);
+
+    // Capacidade real da máquina no período
+    const capReal = vel > 0
+      ? vel * MINUTOS_DIA * diasComProducao
+      : dados.programado;
+
+    // Eficiência = produzido / capacidade real
+    const efic = capReal > 0 ? Math.min(100, Math.round(real / capReal * 100)) : 0;
+
+    // Ociosidade = tempo parado / tempo total disponível
+    const minsDispMaq = diasComProducao * MINUTOS_DIA;
+    const minsProd    = vel > 0 ? real / vel : 0;
+    const minsOciosos = Math.max(0, minsDispMaq - minsProd - setup);
+    const pctOc       = minsDispMaq > 0 ? Math.round(minsOciosos / minsDispMaq * 100) : 0;
+
     const topProd = dados.registros.reduce((best, r) => {
-      const rv = _getRealizadoRec(r, inicio, fim);
+      const rv = realizadoMap[r.id] || 0;
       return rv > (best.v || 0) ? { nome: r.produto, v: rv } : best;
     }, {});
-    return { maquina: maq, produto: topProd.nome || '—', programado: plan, realizado: real, eficiencia: efic, setup, pctOcioso: pctOc };
+
+    return {
+      maquina: maq,
+      produto: topProd.nome || '—',
+      programado: dados.programado,
+      realizado: real,
+      eficiencia: efic,
+      setup,
+      pctOcioso: pctOc,
+    };
   });
 
-  return {
-    recs, porMaquina, porProduto, producaoPorDia,
+  _dadosCache = {
+    recs, realizadoMap, porMaquina, porProduto, producaoPorDia,
     totalProgramado, totalRealizado, eficienciaMedia,
     pctOcupado, pctSetup, pctOcioso,
-    diasComProducao, totalDias, numMaquinas,
-    rupturas, tabelaRows,
-    minutosOcupados, minutosSetup
+    diasComProducao, numMaquinas, rupturas, tabelaRows,
+    minutosProdutivos, minutosSetupTotal
   };
+  return _dadosCache;
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -495,6 +541,7 @@ function _kpiCard(label, valor, cor, icon, extra) {
 
 // ─────────────────────────────────────────────────────────────────
 // ALERTAS INTELIGENTES
+// Regras: eficiência < 70% → crítico | ociosidade > 30% → atenção
 // ─────────────────────────────────────────────────────────────────
 function _renderAlertas(d) {
   const el = document.getElementById('rel2-alertas');
@@ -502,20 +549,58 @@ function _renderAlertas(d) {
 
   const alertas = [];
 
-  // Máquinas com baixa eficiência
+  // Máquinas: eficiência por capacidade real
   Object.entries(d.porMaquina).forEach(([maq, m]) => {
-    const efic = m.programado > 0 ? Math.round(m.realizado / m.programado * 100) : null;
-    if (efic !== null && efic < 65) {
-      alertas.push({ tipo: 'erro', msg: `Máquina <strong>${maq}</strong> com baixa eficiência (${efic}%) — verificar causas de parada` });
-    } else if (efic !== null && efic < 80) {
-      alertas.push({ tipo: 'aviso', msg: `Máquina <strong>${maq}</strong> abaixo da meta de eficiência (${efic}%)` });
+    const vel     = _getVelMaquina(maq);
+    const capReal = vel > 0
+      ? vel * MINUTOS_DIA * d.diasComProducao
+      : m.programado;
+    const efic = capReal > 0 ? Math.min(100, Math.round(m.realizado / capReal * 100)) : null;
+
+    if (efic !== null && efic < 70) {
+      // Eficiência crítica: < 70%
+      alertas.push({
+        tipo: 'erro',
+        msg: `Eficiência crítica na <strong>${maq}</strong> — ${efic}% da capacidade real (meta: 70%). Verificar paradas, setup ou falta de insumo.`
+      });
+    } else if (efic !== null && efic < 85) {
+      // Eficiência abaixo da meta: 70–84%
+      alertas.push({
+        tipo: 'aviso',
+        msg: `<strong>${maq}</strong> abaixo da meta de eficiência — ${efic}% (meta: 85%). Monitorar rendimento.`
+      });
     }
-    // Setup alto
+
+    // Ociosidade alta: > 30%
+    const minsDisp = d.diasComProducao * MINUTOS_DIA;
+    const minsProd = vel > 0 ? m.realizado / vel : 0;
+    const pctOcMaq = minsDisp > 0
+      ? Math.round(Math.max(0, minsDisp - minsProd - _getSetupMin(maq)) / minsDisp * 100)
+      : 0;
+    if (pctOcMaq > 30) {
+      alertas.push({
+        tipo: 'aviso',
+        msg: `Alta ociosidade na <strong>${maq}</strong> — ${pctOcMaq}% do tempo disponível sem produção (limite: 30%).`
+      });
+    }
+
+    // Setup alto: > 45 min
     const setupMin = _getSetupMin(maq);
     if (setupMin > 45) {
-      alertas.push({ tipo: 'aviso', msg: `Alto tempo de setup na <strong>${maq}</strong> — ${setupMin} min de configuração` });
+      alertas.push({
+        tipo: 'aviso',
+        msg: `Tempo de setup elevado na <strong>${maq}</strong> — ${setupMin} min por ordem. Considerar otimização de troca.`
+      });
     }
   });
+
+  // Ociosidade global > 30%
+  if (d.pctOcioso > 30 && Object.keys(d.porMaquina).length > 1) {
+    alertas.push({
+      tipo: 'aviso',
+      msg: `Ociosidade global elevada: <strong>${d.pctOcioso}%</strong> do tempo disponível sem produção. Revisar programação.`
+    });
+  }
 
   // Rupturas de estoque
   try {
@@ -523,36 +608,47 @@ function _renderAlertas(d) {
     const criticos = pc.filter(p => p.risco === 'critico');
     const altos    = pc.filter(p => p.risco === 'alto');
     criticos.slice(0, 3).forEach(p => {
-      alertas.push({ tipo: 'erro', msg: `Ruptura crítica — <strong>${p.produto.substring(0,40)}</strong> com cobertura ${p.coberturaAtual?.toFixed(1) ?? '?'}d` });
+      alertas.push({
+        tipo: 'erro',
+        msg: `Ruptura crítica — <strong>${p.produto.substring(0, 40)}</strong>: cobertura de apenas ${p.coberturaAtual?.toFixed(1) ?? '?'} dias. Priorizar produção.`
+      });
     });
     if (altos.length > 0) {
-      alertas.push({ tipo: 'aviso', msg: `${altos.length} produto(s) com risco alto de ruptura (cobertura ≤ 7 dias)` });
+      alertas.push({
+        tipo: 'aviso',
+        msg: `${altos.length} produto(s) com risco alto de ruptura (cobertura ≤ 7 dias). Avaliar programação de reposição.`
+      });
     }
+    // Produtos com baixa produção vs demanda
+    pc.filter(p => p.risco === 'medio').slice(0, 2).forEach(p => {
+      if (p.demandaDiaria > 0 && p.coberturaAtual != null && p.coberturaAtual < 14) {
+        alertas.push({
+          tipo: 'info',
+          msg: `Atenção: <strong>${p.produto.substring(0, 40)}</strong> com cobertura de ${p.coberturaAtual.toFixed(1)} dias — monitorar reposição.`
+        });
+      }
+    });
   } catch(e) {}
-
-  // Ociosidade alta
-  if (d.pctOcioso > 35) {
-    alertas.push({ tipo: 'aviso', msg: `Ociosidade elevada: ${d.pctOcioso}% do tempo disponível sem produção` });
-  }
 
   // Nenhum alerta
   if (alertas.length === 0) {
     el.innerHTML = `<div class="rel2-alerta" style="background:rgba(46,201,122,.08);border:1px solid rgba(46,201,122,.2)">
       <span style="font-size:16px">✅</span>
-      <span style="color:#2ec97a;font-weight:600">Produção dentro dos parâmetros esperados</span>
+      <span style="color:#2ec97a;font-weight:600">Produção dentro dos parâmetros esperados — nenhum alerta identificado</span>
     </div>`;
     return;
   }
 
   el.innerHTML = alertas.map(a => {
-    const bg = a.tipo === 'erro'
-      ? 'background:rgba(232,50,26,.08);border:1px solid rgba(232,50,26,.2)'
-      : 'background:rgba(245,197,24,.07);border:1px solid rgba(245,197,24,.2)';
-    const icon = a.tipo === 'erro' ? '🔴' : '⚠️';
-    const cor  = a.tipo === 'erro' ? '#e8321a' : '#f5c518';
-    return `<div class="rel2-alerta" style="${bg}">
-      <span style="font-size:14px">${icon}</span>
-      <span style="color:${cor}">${a.msg}</span>
+    const styles = {
+      erro:  { bg: 'rgba(232,50,26,.08)',   border: 'rgba(232,50,26,.2)',   cor: '#e8321a', icon: '🔴' },
+      aviso: { bg: 'rgba(245,197,24,.07)',  border: 'rgba(245,197,24,.2)',  cor: '#f5c518', icon: '⚠️' },
+      info:  { bg: 'rgba(100,120,200,.07)', border: 'rgba(100,120,200,.2)', cor: '#6478c8', icon: 'ℹ️' },
+    };
+    const s = styles[a.tipo] || styles.info;
+    return `<div class="rel2-alerta" style="background:${s.bg};border:1px solid ${s.border}">
+      <span style="font-size:14px;flex-shrink:0">${s.icon}</span>
+      <span style="color:${s.cor}">${a.msg}</span>
     </div>`;
   }).join('');
 }
@@ -851,12 +947,29 @@ function _renderTabelaRows(rows) {
   }
 
   tbody.innerHTML = filtradas.map((r, i) => {
+    // Cores por nível de eficiência
     const eficCor = r.eficiencia >= 85 ? '#2ec97a' : r.eficiencia >= 70 ? '#f5c518' : '#e8321a';
     const ocCor   = r.pctOcioso <= 15 ? 'var(--text3)' : r.pctOcioso <= 30 ? '#f5c518' : '#e8321a';
     const setupCor = r.setup <= 15 ? 'var(--text3)' : r.setup <= 45 ? '#f5c518' : '#e8321a';
-    const rowBg = i % 2 === 1 ? 'background:rgba(255,255,255,.01)' : '';
 
-    return `<tr style="${rowBg}">
+    // Destaque visual da linha por status predominante
+    let rowBg = i % 2 === 1 ? 'rgba(255,255,255,.01)' : 'transparent';
+    let rowBorder = 'none';
+    if (r.eficiencia < 70) {
+      // Eficiência crítica → fundo vermelho suave
+      rowBg = 'rgba(232,50,26,.06)';
+      rowBorder = 'border-left:3px solid rgba(232,50,26,.5)';
+    } else if (r.pctOcioso > 30) {
+      // Ociosidade alta → fundo amarelo suave
+      rowBg = 'rgba(245,197,24,.05)';
+      rowBorder = 'border-left:3px solid rgba(245,197,24,.4)';
+    } else if (r.eficiencia >= 85 && r.pctOcioso <= 15) {
+      // Tudo bom → fundo verde suave
+      rowBg = 'rgba(46,201,122,.04)';
+      rowBorder = 'border-left:3px solid rgba(46,201,122,.35)';
+    }
+
+    return `<tr style="background:${rowBg};${rowBorder}">
       <td class="rel2-td" style="color:var(--cyan);font-family:'JetBrains Mono',monospace;font-weight:700;font-size:12px">${r.maquina}</td>
       <td class="rel2-td" style="color:var(--text);max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${_esc(r.produto)}">${r.produto}</td>
       <td class="rel2-td" style="text-align:right;font-family:'JetBrains Mono',monospace;color:var(--text2)">${_fmtNum(r.programado)}</td>
@@ -866,7 +979,7 @@ function _renderTabelaRows(rows) {
       </td>
       <td class="rel2-td" style="text-align:right;font-family:'JetBrains Mono',monospace;color:${setupCor}">${r.setup > 0 ? r.setup + ' min' : '—'}</td>
       <td class="rel2-td" style="text-align:right">
-        <span class="rel2-badge" style="background:${ocCor}18;color:${ocCor};border:1px solid ${ocCor}33">${r.pctOcioso}%</span>
+        <span class="rel2-badge" style="background:${ocCor === 'var(--text3)' ? 'rgba(255,255,255,.06)' : ocCor + '18'};color:${ocCor};border:1px solid ${ocCor === 'var(--text3)' ? 'rgba(255,255,255,.08)' : ocCor + '33'}">${r.pctOcioso}%</span>
       </td>
     </tr>`;
   }).join('');
@@ -1125,10 +1238,16 @@ function _getRecords() {
   return (typeof records !== 'undefined' && Array.isArray(records)) ? records : [];
 }
 
-function _getRecordsFiltrados() {
-  const recs = _getRecords();
+// ─────────────────────────────────────────────────────────────────
+// FONTE ÚNICA DE DADOS FILTRADOS
+// Todos os cálculos devem usar esta função como base.
+// ─────────────────────────────────────────────────────────────────
+function getDadosFiltrados() {
+  const allRecs = _getRecords();
   const { dataInicio, dataFim, maquina, produto } = _relFiltros;
-  return recs.filter(r => {
+
+  // Filtrar registros pelos 4 critérios
+  const recs = allRecs.filter(r => {
     const dt = r.dtDesejada || r.dtSolicitacao || '';
     if (dataInicio && dt && dt < dataInicio) return false;
     if (dataFim    && dt && dt > dataFim)    return false;
@@ -1136,6 +1255,20 @@ function _getRecordsFiltrados() {
     if (produto    && r.produto !== produto) return false;
     return true;
   });
+
+  // Pré-calcular apontamentos no período para cada registro UMA VEZ
+  // Evita chamar _getRealizadoRec() repetidamente em cada função
+  const realizadoMap = {};
+  recs.forEach(r => {
+    realizadoMap[r.id] = _getRealizadoRec(r, dataInicio, dataFim);
+  });
+
+  return { recs, realizadoMap };
+}
+
+// Mantida para compatibilidade interna (usa getDadosFiltrados)
+function _getRecordsFiltrados() {
+  return getDadosFiltrados().recs;
 }
 
 function _getRealizadoRec(r, inicio, fim) {
@@ -1214,6 +1347,12 @@ function _getSetupMin(maquina) {
     const md = window.MAQUINAS_DATA?.[maquina];
     return parseFloat(md?.tempoSetupPadrao) || 0;
   } catch(e) { return 0; }
+}
+
+// Versão otimizada de _calcPorDia que usa o realizadoMap do cache
+// para não re-iterar os apontamentos ao calcular produção por dia
+function _calcPorDiaFiltrado(recs, inicio, fim) {
+  return _calcPorDia(recs, inicio, fim);
 }
 
 function _getVelMaquina(maquina) {
@@ -1299,6 +1438,7 @@ function _toast(msg, tipo) {
 const relatorios = {
   init: initRelatorios,
   render: renderRelatorios,
+  getDadosFiltrados,  // exposto para uso externo
 
   aplicarFiltros() {
     renderRelatorios();
@@ -1345,12 +1485,14 @@ const relatorios = {
   sortBy(col) {
     if (_sortCol === col) { _sortAsc = !_sortAsc; }
     else { _sortCol = col; _sortAsc = col === 'maquina' || col === 'produto'; }
+    // Usa cache — não reconsulta Firebase
     const dados = _calcularDados();
     _renderTabela(dados);
   },
 
   filtrarTabela(busca) {
     _tabelaBusca = busca;
+    // Usa cache — não reconsulta Firebase
     const dados = _calcularDados();
     _renderTabelaRows(dados.tabelaRows);
   },
@@ -1360,6 +1502,7 @@ const relatorios = {
       window._relChartTipoProd = window._relChartTipoProd === 'bar' ? 'line' : 'bar';
       const btn = document.getElementById('btn-chart-tipo');
       if (btn) btn.textContent = window._relChartTipoProd === 'bar' ? 'Linha' : 'Barras';
+      // Usa cache — apenas re-renderiza o gráfico
       const dados = _calcularDados();
       _renderChartProducaoDia(dados);
     }
