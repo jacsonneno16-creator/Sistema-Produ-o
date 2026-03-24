@@ -2468,7 +2468,19 @@ function buildSchedule(monday){
       const totalProd = (typeof calcularTotalProduzido==='function')
         ? calcularTotalProduzido(r.id) : 0;
       const remaining = (r.qntCaixas||0) - totalProd;
-      return remaining > 0; // só overflow real
+      if(remaining <= 0) return false;
+      // Só entra como overflow se produção foi iniciada OU não há registro
+      // futuro para o mesmo produto+máquina (evita que S1 apareça no Gantt de S2/S3/S4
+      // quando a programação automática já criou registros separados por semana)
+      if(totalProd > 0) return true;
+      const hasFutureRecord = records.some(other =>
+        other.id !== r.id &&
+        other.maquina === r.maquina &&
+        other.produto === r.produto &&
+        other.status !== 'Concluído' &&
+        (other.dtDesejada || other.dtSolicitacao || '') >= mondayStr
+      );
+      return !hasFutureRecord;
     }
     return false;
   });
@@ -2592,8 +2604,17 @@ function buildSchedule(monday){
         const blkAvailMin=blkTotalMin-snap.usedMin;
         if(blkAvailMin<=0.001){snap.blkIdx++;snap.usedMin=0;continue;}
         const useMin=Math.min(remainSetupMin,blkAvailMin);
+        // Calcular posição percentual no dia (para renderização no Gantt)
+        const _setupDayCapMin=(hoursOnDayMaq(days[snap.dayIdx],maq))*60;
+        const _setupAllBlocks=getBlocks(days[snap.dayIdx],maq);
+        let _setupBlkOffset=0;
+        for(let _bi=0;_bi<snap.blkIdx;_bi++) _setupBlkOffset+=(_setupAllBlocks[_bi].fimMin-_setupAllBlocks[_bi].inicioMin);
+        const _setupAbsStart=_setupBlkOffset+snap.usedMin;
+        const _setupStartPct=_setupDayCapMin>0?(_setupAbsStart/_setupDayCapMin)*100:0;
+        const _setupEndPct=_setupDayCapMin>0?((_setupAbsStart+useMin)/_setupDayCapMin)*100:0;
         setupSegments.push({date:dateStr(days[snap.dayIdx]),dayIdx:snap.dayIdx,
-          turnoIdx:blk.turnoIdx,turnoLabel:blk.label,setupMin:useMin});
+          turnoIdx:blk.turnoIdx,turnoLabel:blk.label,setupMin:useMin,
+          startPct:_setupStartPct,endPct:_setupEndPct});
         remainSetupMin-=useMin;
         snap.usedMin+=useMin;
         if(snap.usedMin>=blkTotalMin-0.001){snap.blkIdx++;snap.usedMin=0;}
@@ -2784,8 +2805,9 @@ function renderGanttSemanal(){
     </div>`).join('');
 
   // COL WIDTHS — LABEL_W é ajustável pelo usuário (salvo no localStorage)
-  const MAQ_W=72, QTY_W=48, TEMPO_W=52, SETUP_W=52, TOTMAQ_W=68, OBS_W=140, DQTY_W=36;
+  const MAQ_W=72, QTY_W=48, TEMPO_W=52, SETUP_W=52, TOTMAQ_W=68, DQTY_W=36;
   const LABEL_W = parseInt(localStorage.getItem('gantt-label-width') || '280');
+  const OBS_W   = parseInt(localStorage.getItem('gantt-obs-width')   || '140');
   const gridCols=`${MAQ_W}px ${LABEL_W}px ${QTY_W}px ${TEMPO_W}px ${SETUP_W}px ${TOTMAQ_W}px ${OBS_W}px repeat(7,1fr) repeat(7,${DQTY_W}px)`;
 
   // Pre-calculate total SCHEDULED hours per machine for THIS WEEK only
@@ -2825,7 +2847,11 @@ function renderGanttSemanal(){
     <div class="g-head-label" style="font-size:9px">Tempo<br>h</div>
     <div class="g-head-label" style="font-size:9px">Set Up<br>h</div>
     <div class="g-head-label" style="font-size:9px">H.<br>Prog.</div>
-    <div class="g-head-label" style="font-size:9px">Obser-<br>vação</div>`;
+    <div class="g-head-label" style="font-size:9px;position:relative">Obser-<br>vação
+      <div id="gantt-obs-resizer" style="position:absolute;right:0;top:0;width:6px;height:100%;cursor:col-resize;display:flex;align-items:center;justify-content:center;z-index:10" title="Arraste para redimensionar observação">
+        <div style="width:2px;height:60%;background:var(--border);border-radius:2px"></div>
+      </div>
+    </div>`;
   days.forEach(d=>{
     const isToday=dateStr(d)===today;
     const isWknd=hoursOnDay(d)===0;
@@ -2889,25 +2915,27 @@ function renderGanttSemanal(){
       const pk = obs ? (prodNorm + '||' + obs.toLowerCase()) : prodNorm;
       if(!prodMap[pk]){
         prodMap[pk] = {
-          produto:    entry.rec.produto,
-          obs:        obs,
-          maquina:    entry.rec.maquina,
-          color:      colorMap[entry.rec.id],
-          qntCaixas:  0,
-          setupMin:   0,
-          segments:   [],       // todos os segmentos de todos os registros
-          recs:       []
+          produto:       entry.rec.produto,
+          obs:           obs,
+          maquina:       entry.rec.maquina,
+          color:         colorMap[entry.rec.id],
+          qntCaixas:     0,
+          setupMin:      0,
+          segments:      [],       // todos os segmentos de todos os registros
+          setupSegments: [],       // segmentos de setup (para renderizar no Gantt)
+          recs:          []
         };
       }
-      prodMap[pk].qntCaixas += (entry.rec.qntCaixas || 0);
-      prodMap[pk].setupMin  += (entry.setupMin || 0);   // somar setup total
-      prodMap[pk].segments  = prodMap[pk].segments.concat(entry.segments || []);
+      prodMap[pk].qntCaixas    += (entry.rec.qntCaixas || 0);
+      prodMap[pk].setupMin     += (entry.setupMin || 0);   // somar setup total
+      prodMap[pk].segments     = prodMap[pk].segments.concat(entry.segments || []);
+      prodMap[pk].setupSegments= (prodMap[pk].setupSegments||[]).concat(entry.setupSegments||[]);
       prodMap[pk].recs.push(entry.rec);
     }
     const prodEntries = Object.values(prodMap);
 
     for(const prodEntry of prodEntries){
-      const { produto, obs, maquina: recMaq, color, qntCaixas, setupMin, segments, recs } = prodEntry;
+      const { produto, obs, maquina: recMaq, color, qntCaixas, setupMin, segments, setupSegments: prodSetupSegs, recs } = prodEntry;
 
       // Calcular horas de produção totais (soma de todos os segmentos)
       const prodHrs = segments.reduce((a, sg) => a + (sg.hrsNoDia || 0), 0);
@@ -2951,12 +2979,13 @@ function renderGanttSemanal(){
         const isWknd=hoursOnDayMaq(day,maq)===0 && hoursOnDay(day)===0;
         const isToday=dateStr(day)===today;
         const daySeg=segments.filter(s=>s.dayIdx===di);
+        const daySetupSeg=(prodSetupSegs||[]).filter(s=>s.dayIdx===di);
         const blocks=ganttGetBlocks(day,maq);
         const dayCapMin=(hoursOnDayMaq(day,maq))*60;
 
         html+=`<div class="g-day ${isWknd?'weekend':''}" style="${isToday?'background:rgba(0,229,204,.04)':''}">`;
 
-        if(daySeg.length && dayCapMin>0){
+        if((daySeg.length||daySetupSeg.length) && dayCapMin>0){
           // Show bars for each segment (one per shift block used)
           html+=`<div class="g-bar-wrap" style="position:relative;width:100%;height:100%">`;
 
@@ -2971,6 +3000,17 @@ function renderGanttSemanal(){
             html+=`<div style="position:absolute;left:${blkLeft.toFixed(1)}%;width:${blkW.toFixed(1)}%;top:0;bottom:0;background:${blkColors[blk.turnoIdx]||''};border-left:1px dashed rgba(255,255,255,.06)"></div>`;
           });
 
+          // ── Setup bars (laranja, menor altura, atrás da produção) ──
+          daySetupSeg.forEach(seg=>{
+            const leftPct=seg.startPct.toFixed(1);
+            const widthPct=Math.max(0.5,(seg.endPct-seg.startPct)).toFixed(1);
+            const setupLabel=fmtHrs(seg.setupMin/60);
+            html+=`<div style="left:${leftPct}%;width:${widthPct}%;background:var(--orange,#ff9900);opacity:0.85;position:absolute;top:0;height:30%;border-radius:2px 2px 0 0"
+              title="⚙ Setup: ${setupLabel}${seg.turnoLabel?' · '+seg.turnoLabel:''}">
+              ${parseFloat(widthPct)>8?`<span style="font-size:7px;color:#000;padding:0 2px;white-space:nowrap;overflow:hidden;display:block">⚙ ${setupLabel}</span>`:''}
+            </div>`;
+          });
+
           daySeg.forEach(seg=>{
             const leftPct=seg.startPct.toFixed(1);
             const widthPct=(seg.endPct-seg.startPct).toFixed(1);
@@ -2978,7 +3018,7 @@ function renderGanttSemanal(){
             const hrsLabel=fmtHrs(seg.hrsNoDia);
             const turnoTip=seg.turnoLabel?` · ${seg.turnoLabel}`:'';
             const obsTip=obs?` — ${obs}`:'';
-            html+=`<div class="g-bar" style="left:${leftPct}%;width:${widthPct}%;background:${color};opacity:0.9;position:absolute;top:15%;height:70%"
+            html+=`<div class="g-bar" style="left:${leftPct}%;width:${widthPct}%;background:${color};opacity:0.9;position:absolute;top:30%;height:70%"
               title="${produto}${obsTip}${turnoTip} · ${cx} cx · ${hrsLabel}">
               <div class="g-bar-tip">${produto.substring(0,40)}${obs?'<br><span style=\"font-size:9px;opacity:.8\">'+obs+'</span>':''}<br>${cx} cx · ${hrsLabel}${seg.turnoLabel?' · '+seg.turnoLabel:''}</div>
             </div>`;
@@ -3012,6 +3052,18 @@ function renderGanttSemanal(){
   document.getElementById('gantt-table').innerHTML=html;
   document.getElementById('gantt-summary').innerHTML='';
 
+  // ── Helper: recalcula o gridTemplateColumns a partir dos valores atuais ──
+  function _buildGanttGrid(){
+    const MAQ_W=72,QTY_W=48,TEMPO_W=52,SETUP_W=52,TOTMAQ_W=68,DQTY_W=36;
+    const lw=parseInt(localStorage.getItem('gantt-label-width')||'280');
+    const ow=parseInt(localStorage.getItem('gantt-obs-width')||'140');
+    return `${MAQ_W}px ${lw}px ${QTY_W}px ${TEMPO_W}px ${SETUP_W}px ${TOTMAQ_W}px ${ow}px repeat(7,1fr) repeat(7,${DQTY_W}px)`;
+  }
+  function _applyGanttGrid(){
+    const g=_buildGanttGrid();
+    document.querySelectorAll('.gantt-row, .gantt-head-row').forEach(el=>el.style.gridTemplateColumns=g);
+  }
+
   // ── Resize da coluna Produto do Gantt ──
   (function initGanttLabelResizer(){
     const resizer = document.getElementById('gantt-label-resizer');
@@ -3025,11 +3077,32 @@ function renderGanttSemanal(){
         const delta = ev.clientX - startX;
         const newW = Math.max(120, Math.min(520, startW + delta));
         localStorage.setItem('gantt-label-width', newW);
-        const MAQ_W=72, QTY_W=48, TEMPO_W=52, SETUP_W=52, TOTMAQ_W=68, OBS_W=140, DQTY_W=36;
-        const newGrid=`${MAQ_W}px ${newW}px ${QTY_W}px ${TEMPO_W}px ${SETUP_W}px ${TOTMAQ_W}px ${OBS_W}px repeat(7,1fr) repeat(7,${DQTY_W}px)`;
-        document.querySelectorAll('.gantt-row, .gantt-head-row').forEach(el=>{
-          el.style.gridTemplateColumns = newGrid;
-        });
+        _applyGanttGrid();
+      }
+      function onUp(){
+        resizer.querySelector('div').style.background = 'var(--border)';
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+      }
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+  })();
+
+  // ── Resize da coluna Observação do Gantt ──
+  (function initGanttObsResizer(){
+    const resizer = document.getElementById('gantt-obs-resizer');
+    if(!resizer) return;
+    resizer.addEventListener('mousedown', function(e){
+      e.preventDefault();
+      const startX = e.clientX;
+      const startW = parseInt(localStorage.getItem('gantt-obs-width') || '140');
+      resizer.querySelector('div').style.background = 'var(--cyan)';
+      function onMove(ev){
+        const delta = ev.clientX - startX;
+        const newW = Math.max(60, Math.min(400, startW + delta));
+        localStorage.setItem('gantt-obs-width', newW);
+        _applyGanttGrid();
       }
       function onUp(){
         resizer.querySelector('div').style.background = 'var(--border)';
@@ -11425,7 +11498,9 @@ function gerarProgAutomarica(){
 
             // Se o lote inteiro não cabe, tentar mover metade (split entre máquinas)
             const cxMetade = Math.floor(det.cx / 2);
-            if(cxMetade > 0){
+            // ── Fix 2: não dividir se o produto cabe em ≤ 1 dia — volume pequeno não merece split
+            const hrsUmDiaA = (maqCapPorSemana[sem]?.[maqSrc] || maqCapacidades[maqSrc] || 44) / 5;
+            if(cxMetade > 0 && det.hrs > hrsUmDiaA + 0.5){
               const redistMetade = calcRedistribuicao(c, det, maqAlt, sem, cxMetade);
               if(redistMetade){
                 // Atualizar alocação na máquina original com a metade restante
@@ -11594,6 +11669,12 @@ function gerarProgAutomarica(){
             return d.maq !== maqOciosa.maq && (maqHrsUsadas[sem][d.maq] / capD) > 0.60;
           });
           if(!detSrc || detSrc.cx < 2) continue;
+
+          // ── Fix 2: não dividir se o produto cabe em menos de 1 dia útil na
+          // máquina de origem — é pouco volume e dividir gera 2 registros desnecessários.
+          // Um dia útil típico = capacidade_semanal / 5 dias.
+          const hrsUmDiaSrc = (maqCapPorSemana[sem]?.[detSrc.maq] || maqCapacidades[detSrc.maq] || 44) / 5;
+          if(detSrc.hrs <= hrsUmDiaSrc + 0.5) continue; // cabe em ~1 dia, não divide
 
           // Velocidade nesta máquina ociosa
           const mcOciosa = c.maquinasCompativeis.find(mc => mc.maquina === maqOciosa.maq);
