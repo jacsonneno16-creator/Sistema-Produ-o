@@ -2079,18 +2079,15 @@ function showProdStep(maq){
 }
 
 function renderProdGrid(maq, filter){
-  // Busca produtos do cadastro real (Firestore + localStorage)
-  // Se a máquina tiver produtos compatíveis cadastrados, usa eles como fonte primária
   const maqData = getMaquinaData(maq);
   const maqProds = maqData && Array.isArray(maqData.produtosCompativeis) ? maqData.produtosCompativeis : [];
-  
-  let prods = getAllProdutos().filter(p => p.maquina === maq && (
-    !filter || p.descricao.toLowerCase().includes(filter.toLowerCase())
-  ));
-  
-  // Se não achou no catálogo mas a máquina tem produtos compatíveis, constrói lista a partir deles
-  if (!prods.length && maqProds.length) {
-    const todosProds = getAllProdutos();
+  const todosProds = getAllProdutos();
+
+  let prods;
+
+  if (maqProds.length) {
+    // Se a máquina tem produtosCompativeis, essa lista é a fonte de verdade.
+    // O catálogo é usado apenas para enriquecer com cod, unid, pc_min reais.
     const catalogoCarregado = todosProds.length > 0;
     prods = maqProds
       .filter(p => !filter || p.produto.toLowerCase().includes(filter.toLowerCase()))
@@ -2098,18 +2095,23 @@ function renderProdGrid(maq, filter){
         const catalogo = todosProds.find(x =>
           x.descricao?.trim().toLowerCase() === p.produto?.trim().toLowerCase()
         );
-        // Se catálogo carregado e produto não existe nele, omite
+        // Se catálogo carregado e produto não existe nele, omite (não cadastrado)
         if (catalogoCarregado && !catalogo) return null;
         return {
           descricao: p.produto,
-          cod: catalogo ? (catalogo.cod || 0) : 0,
-          unid: catalogo ? (catalogo.unid || 1) : 1,
+          cod:    catalogo ? (catalogo.cod   || 0) : 0,
+          unid:   catalogo ? (catalogo.unid  || 1) : 1,
           pc_min: p.velocidade || (catalogo && catalogo.pc_min) || (maqData && maqData.pcMin) || 0,
           maquina: maq,
-          kg_fd: catalogo ? (catalogo.kg_fd || 0) : 0
+          kg_fd:  catalogo ? (catalogo.kg_fd || 0) : 0
         };
       })
       .filter(Boolean);
+  } else {
+    // Fallback: sem produtosCompativeis, usa o catálogo filtrado por maquina
+    prods = todosProds.filter(p => p.maquina === maq && (
+      !filter || p.descricao.toLowerCase().includes(filter.toLowerCase())
+    ));
   }
   const grid=document.getElementById('prod-grid');
   if(!prods.length){
