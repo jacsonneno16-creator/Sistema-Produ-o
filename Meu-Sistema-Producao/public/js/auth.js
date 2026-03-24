@@ -51,6 +51,7 @@ export const MODULOS = [
   { key:"configuracoes", label:"Configurações" },
   { key:"funcionarios",  label:"Funcionários" },
   { key:"usuarios",      label:"Usuários do Sistema" },
+  { key:"relatorios",    label:"Relatórios" },
 ];
 
 // Estado global
