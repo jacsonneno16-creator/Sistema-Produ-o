@@ -14647,63 +14647,115 @@ window.pa_onModoChange   = pa_onModoChange;
 window.pa_onMesChange    = function(){ if(paResultados.length) renderProgAutomaticaResultado(); };
 window.paToggleInsumos = paToggleInsumos;
 window.progToggleInsumos = progToggleInsumos;
-// ─────────────────────────────────────────────────────────────────
-// grpSwitchTab — controla sub-tabs do painel de Relatórios
-// Sub-tabs: producao | maquinas | produtos | funcionarios | insumos | gerencial
-// ─────────────────────────────────────────────────────────────────
-function grpSwitchTab(id) {
-  // 1. Atualizar visual dos botões de sub-tab
-  document.querySelectorAll('.rpt-grp-btn, [data-grp-tab]').forEach(btn => {
-    const btnId = btn.getAttribute('data-grp-tab') || btn.dataset.grp || btn.id.replace('rpt-grp-','');
-    const isActive = btnId === id;
-    btn.classList.toggle('active', isActive);
-    // Suporte a estilos inline (botões sem classe dedicada)
-    if (btn.dataset.grpTab || btn.getAttribute('onclick')?.includes(id)) {
-      btn.style.background = isActive ? 'var(--cyan,#f26522)' : '';
-      btn.style.color      = isActive ? '#fff' : '';
-    }
-  });
+// ═════════════════════════════════════════════════════════════════
+// FUNÇÕES DO PAINEL DE RELATÓRIOS (index.html)
+// Chamadas pelos filtros e sub-tabs do HTML estático
+// ═════════════════════════════════════════════════════════════════
 
-  // Garantir que o novo relatorios.js está inicializado
+// Sub-tab ativo no momento
+let _grpTabAtivo = 'producao';
+
+// ── Helpers para ler filtros do index.html ────────────────────────
+function _grpGetFiltros() {
+  // Tenta ler pelos IDs mais comuns usados no index.html
+  // Suporta múltiplas convenções de nomenclatura
+  const _val = (...ids) => {
+    for (const id of ids) {
+      const el = document.getElementById(id);
+      if (el && el.value !== undefined) return el.value;
+    }
+    return '';
+  };
+  return {
+    dataInicio: _val('grp-data-ini','grp-inicio','rpt-data-ini','rpt-inicio','rel-data-ini'),
+    dataFim:    _val('grp-data-fim','grp-fim','rpt-data-fim','rpt-fim','rel-data-fim'),
+    maquina:    _val('grp-maq','grp-maquina','rpt-maq-filter','rpt-maq','rel-maq'),
+    produto:    _val('grp-prod','grp-produto','rpt-prod','rpt-produto','rel-prod'),
+    operador:   _val('grp-op','grp-operador','rpt-op','rpt-operador','rel-op'),
+  };
+}
+
+// ── Sincronizar filtros externos → inputs internos do rel2-root ───
+function _grpSyncFiltros() {
+  const f = _grpGetFiltros();
+  const _set = (id, val) => {
+    const el = document.getElementById(id);
+    if (el && val) el.value = val;
+  };
+  if (f.dataInicio) _set('rel2-data-inicio', f.dataInicio);
+  if (f.dataFim)    _set('rel2-data-fim',    f.dataFim);
+  if (f.maquina)    _set('rel2-maquina',     f.maquina);
+  if (f.produto)    _set('rel2-produto',     f.produto);
+}
+
+// ── grpRender — chamado pelos filtros do index.html ───────────────
+// Sincroniza filtros e re-renderiza o relatório ativo
+function grpRender() {
+  // Garantir painel inicializado
   if (window.relatorios) {
     const rel2root = document.getElementById('rel2-root');
     if (!rel2root) {
       window.relatorios.init();
+      // Aguardar init e renderizar depois
+      setTimeout(() => { _grpSyncFiltros(); window.relatorios.aplicarFiltros(); }, 80);
       return;
     }
+    _grpSyncFiltros();
+    window.relatorios.aplicarFiltros();
   }
-
-  // 2. Mostrar/esconder seções do painel rel2-root conforme sub-tab
-  const secMap = {
-    producao:    ['rel2-kpis','rel2-alertas','chart-producao-dia','chart-maquinas',
-                  'chart-top-produtos','chart-ociosidade'],
-    maquinas:    ['rel2-kpis','chart-maquinas'],
-    produtos:    ['rel2-kpis','chart-top-produtos'],
-    funcionarios:['rel2-kpis'],
-    insumos:     ['rel2-kpis','rel2-cobertura-card'],
-    gerencial:   ['rel2-kpis','rel2-alertas','rel2-pvr-grid'],
-  };
-
-  // Para sub-tabs ainda não mapeados, mostrar tudo
-  const show = secMap[id] || null;
-
-  // Seções principais do rel2-root
-  const allSecs = [
-    'rel2-alertas', 'rel2-kpis',
-    document.querySelector('#rel2-root > div[style*="grid-template-columns:1fr 1fr"]:nth-of-type(1)'),
-    document.querySelector('#rel2-root > div[style*="grid-template-columns:1fr 1fr"]:nth-of-type(2)'),
-    document.querySelector('.rel2-card[style*="margin-bottom:20px"]'),
-    document.querySelector('.rel2-card:last-of-type'),
-  ];
-
-  // Se não houver mapeamento específico, mostrar tudo e deixar o relatorios.js decidir
-  if (!show) {
-    if (window.relatorios) window.relatorios.render();
-    return;
-  }
-
-  // Renderizar relatórios completos para ter dados
-  if (window.relatorios) window.relatorios.render();
 }
 
+// ── grpSwitchTab — chamado pelos botões de sub-tab ────────────────
+function grpSwitchTab(id) {
+  _grpTabAtivo = id;
+
+  // Atualizar visual dos botões — suporta várias convenções de classe/atributo
+  document.querySelectorAll(
+    '[onclick*="grpSwitchTab"], .rpt-grp-btn, .grp-tab-btn, [data-grp-tab]'
+  ).forEach(btn => {
+    const oc  = btn.getAttribute('onclick') || '';
+    const isActive = oc.includes(`'${id}'`) || oc.includes(`"${id}"`)
+                  || btn.getAttribute('data-grp-tab') === id;
+    btn.classList.toggle('active', isActive);
+  });
+
+  // Garantir inicialização e renderizar
+  if (window.relatorios) {
+    const rel2root = document.getElementById('rel2-root');
+    if (!rel2root) {
+      window.relatorios.init();
+      setTimeout(() => { _grpSyncFiltros(); window.relatorios.render(); }, 80);
+      return;
+    }
+    _grpSyncFiltros();
+    window.relatorios.render();
+  }
+}
+
+// ── grpClear — botão Limpar ───────────────────────────────────────
+function grpClear() {
+  // Limpar inputs externos
+  ['grp-data-ini','grp-data-fim','grp-inicio','grp-fim',
+   'rpt-data-ini','rpt-data-fim'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.value = '';
+  });
+  ['grp-maq','grp-maquina','grp-prod','grp-produto','grp-op','grp-operador',
+   'rpt-maq-filter','rpt-prod','rpt-op'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.value = '';
+  });
+  // Limpar e re-renderizar via relatorios.js
+  if (window.relatorios) window.relatorios.limparFiltros();
+}
+
+// ── grpExport — botão Excel ───────────────────────────────────────
+function grpExport() {
+  if (window.relatorios && typeof window.relatorios.exportXLSX === 'function') {
+    window.relatorios.exportXLSX();
+  }
+}
+
+// ── Expor tudo globalmente ────────────────────────────────────────
+window.grpRender    = grpRender;
 window.grpSwitchTab = grpSwitchTab;
+window.grpClear     = grpClear;
+window.grpExport    = grpExport;
