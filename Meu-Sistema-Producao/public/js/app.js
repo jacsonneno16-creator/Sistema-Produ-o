@@ -9435,7 +9435,13 @@ function switchTabSidebar(name) {
     }
     rPanel.classList.add('on');
     if (window.relatorios) {
-      setTimeout(() => window.relatorios.init(), 50);
+      setTimeout(() => {
+        window.relatorios.init();
+        // Após init, ativar o sub-tab padrão (producao)
+        setTimeout(() => {
+          if (typeof grpSwitchTab === 'function') grpSwitchTab('producao');
+        }, 80);
+      }, 50);
     }
   }
   if(name==='usuarios') { openSettings(); setTimeout(()=>settingsNav('usuarios'), 80); }
@@ -14650,68 +14656,128 @@ window.progToggleInsumos = progToggleInsumos;
 
 // ═══════════════════════════════════════════════════════════════════
 // HANDLERS GRP* — Relatórios (index.html onclick/onchange)
-// Definidos aqui no app.js (ES module confirmado que carrega)
-// como fallback garantido caso relatorios.js não tenha sido carregado.
 // ═══════════════════════════════════════════════════════════════════
 
-function _grpValFiltro(...ids) {
-  for (const id of ids) {
-    const el = document.getElementById(id);
-    if (el && el.value !== undefined) return el.value;
+let _grpTabAtivo = 'producao';
+
+// Lê os filtros varrendo o DOM — funciona com qualquer ID
+function _grpLerFiltrosExternos() {
+  const panel = document.getElementById('panel-relatorios');
+  const rel2  = document.getElementById('rel2-root');
+  const result = { dataInicio:'', dataFim:'', maquina:'', produto:'' };
+
+  // Buscar inputs de data FORA do rel2-root (filtros externos do index.html)
+  const allInputs = panel
+    ? Array.from(panel.querySelectorAll('input[type="date"], input[type="text"], select'))
+    : Array.from(document.querySelectorAll('input[type="date"], select'));
+
+  allInputs.forEach(el => {
+    // Ignorar os inputs que já são internos do rel2-root
+    if (rel2 && rel2.contains(el)) return;
+    const v = el.value || '';
+    if (!v) return;
+    const id = el.id || '';
+    // Data início
+    if (!result.dataInicio && (id.includes('ini') || id.includes('inicio') || id.includes('start') ||
+        el.placeholder?.includes('nício') || el === panel?.querySelectorAll('input[type="date"]')[0])) {
+      result.dataInicio = v;
+    }
+    // Data fim
+    else if (!result.dataFim && (id.includes('fim') || id.includes('end') || id.includes('final') ||
+        el === panel?.querySelectorAll('input[type="date"]')[1])) {
+      result.dataFim = v;
+    }
+    // Máquina
+    if (!result.maquina && el.tagName === 'SELECT' && (id.includes('maq') || id.includes('maquina'))) {
+      result.maquina = v;
+    }
+    // Produto
+    if (!result.produto && el.tagName === 'SELECT' && (id.includes('prod') || id.includes('produto'))) {
+      result.produto = v;
+    }
+  });
+
+  // Fallback por ordem de selects (se IDs não identificados)
+  if (!result.maquina || !result.produto) {
+    const sels = allInputs.filter(el => el.tagName === 'SELECT' && !(rel2 && rel2.contains(el)));
+    if (!result.maquina && sels[0]) result.maquina = sels[0].value || '';
+    if (!result.produto  && sels[1]) result.produto  = sels[1].value || '';
   }
-  return '';
+
+  // Fallback datas por posição
+  const dates = allInputs.filter(el => el.type === 'date' && !(rel2 && rel2.contains(el)));
+  if (!result.dataInicio && dates[0]) result.dataInicio = dates[0].value || '';
+  if (!result.dataFim    && dates[1]) result.dataFim    = dates[1].value || '';
+
+  return result;
 }
 
-function _grpSincronizarFiltros() {
-  const ini = _grpValFiltro('grp-data-ini','grp-inicio','rpt-data-ini','rpt-inicio','rel-data-ini');
-  const fim = _grpValFiltro('grp-data-fim','grp-fim','rpt-data-fim','rpt-fim','rel-data-fim');
-  const maq = _grpValFiltro('grp-maq','grp-maquina','rpt-maq-filter','rpt-maq','rel-maq');
-  const prod = _grpValFiltro('grp-prod','grp-produto','rpt-prod','rpt-produto','rel-prod');
+// Sincronizar filtros externos → inputs internos do rel2-root
+function _grpSincFiltros() {
+  const f = _grpLerFiltrosExternos();
   const set = (id, v) => { const el = document.getElementById(id); if (el && v) el.value = v; };
-  if (ini)  set('rel2-data-inicio', ini);
-  if (fim)  set('rel2-data-fim',    fim);
-  if (maq)  set('rel2-maquina',     maq);
-  if (prod) set('rel2-produto',     prod);
+  if (f.dataInicio) set('rel2-data-inicio', f.dataInicio);
+  if (f.dataFim)    set('rel2-data-fim',    f.dataFim);
+  if (f.maquina)    set('rel2-maquina',     f.maquina);
+  if (f.produto)    set('rel2-produto',     f.produto);
 }
 
+// Garantir painel inicializado e visível
+function _grpEnsurePanel(cb) {
+  // Garantir que o panel-relatorios está visível
+  const panel = document.getElementById('panel-relatorios');
+  if (panel) panel.classList.add('on');
+
+  if (document.getElementById('rel2-root')) {
+    cb(); return;
+  }
+  // Painel ainda não inicializado
+  if (window.relatorios) {
+    window.relatorios.init();
+    setTimeout(cb, 120);
+  }
+}
+
+// grpRender — chamado pelos filtros externos (data, máquina, produto, operador)
 function grpRender() {
-  const rel2root = document.getElementById('rel2-root');
-  if (!rel2root) {
-    if (window.relatorios) { window.relatorios.init(); }
-    setTimeout(() => { _grpSincronizarFiltros(); if (window.relatorios) window.relatorios.aplicarFiltros(); }, 100);
-    return;
-  }
-  _grpSincronizarFiltros();
-  if (window.relatorios) window.relatorios.aplicarFiltros();
+  _grpEnsurePanel(() => {
+    _grpSincFiltros();
+    if (window.relatorios) window.relatorios.aplicarFiltros();
+  });
 }
 
+// grpSwitchTab — chamado pelos botões de sub-tab
 function grpSwitchTab(id) {
-  // Marcar botão ativo
+  _grpTabAtivo = id;
+
+  // Atualizar visual dos botões
   document.querySelectorAll('[onclick*="grpSwitchTab"]').forEach(btn => {
-    const on = (btn.getAttribute('onclick') || '').includes("'" + id + "'")
-             || (btn.getAttribute('onclick') || '').includes('"' + id + '"');
-    btn.classList.toggle('active', on);
+    const oc = btn.getAttribute('onclick') || '';
+    const active = oc.includes("'" + id + "'") || oc.includes('"' + id + '"');
+    btn.classList.toggle('active', active);
   });
-  // Garantir painel e renderizar
-  const rel2root = document.getElementById('rel2-root');
-  if (!rel2root) {
-    if (window.relatorios) window.relatorios.init();
-    setTimeout(() => { _grpSincronizarFiltros(); if (window.relatorios) window.relatorios.render(); }, 100);
-    return;
-  }
-  _grpSincronizarFiltros();
-  if (window.relatorios) window.relatorios.render();
+
+  _grpEnsurePanel(() => {
+    _grpSincFiltros();
+    if (window.relatorios) window.relatorios.render();
+  });
 }
 
+// grpClear — botão Limpar
 function grpClear() {
-  ['grp-data-ini','grp-data-fim','grp-inicio','grp-fim','rpt-data-ini','rpt-data-fim',
-   'grp-maq','grp-maquina','grp-prod','grp-produto','grp-op','grp-operador',
-   'rpt-maq-filter','rpt-prod','rpt-op'].forEach(id => {
-    const el = document.getElementById(id); if (el) el.value = '';
-  });
+  // Limpar todos os inputs/selects externos ao rel2-root
+  const panel = document.getElementById('panel-relatorios');
+  const rel2  = document.getElementById('rel2-root');
+  if (panel) {
+    panel.querySelectorAll('input[type="date"], select').forEach(el => {
+      if (rel2 && rel2.contains(el)) return;
+      el.value = '';
+    });
+  }
   if (window.relatorios) window.relatorios.limparFiltros();
 }
 
+// grpExport — botão Excel
 function grpExport() {
   if (window.relatorios) window.relatorios.exportXLSX();
 }
