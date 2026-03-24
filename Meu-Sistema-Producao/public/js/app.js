@@ -378,15 +378,24 @@ function lojaDoc(nomeColecao, docId) {
 }
 
 // Carrega lista de lojas cadastradas
-async function carregarLojas() {
+let _lojasCache = null;
+let _lojasCacheTs = 0;
+async function carregarLojas(forceReload = false) {
+  const TTL = 5 * 60 * 1000; // 5 minutos
+  if (!forceReload && _lojasCache && (Date.now() - _lojasCacheTs < TTL)) {
+    return _lojasCache;
+  }
   try {
     const snap = await getDocs(collection(firestoreDB, 'lojas'));
-    return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    _lojasCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    _lojasCacheTs = Date.now();
+    return _lojasCache;
   } catch(e) {
     console.warn('[LOJAS] Erro ao carregar:', e.message);
-    return [];
+    return _lojasCache || [];
   }
 }
+function invalidarCacheLojas() { _lojasCache = null; }
 
 // Cria uma nova loja no Firestore
 async function criarLoja(id, nome) {
@@ -399,6 +408,7 @@ async function criarLoja(id, nome) {
       ativo: true
     });
     toast('Loja "' + nome + '" criada!', 'ok');
+    invalidarCacheLojas();
     return lojaId;
   } catch(e) {
     toast('Erro ao criar loja: ' + e.message, 'err');
@@ -533,6 +543,7 @@ async function carregarSetupFirestore() {
   try {
     const snap = await getDocs(lojaCol('setup_maquinas'));
     SETUP_FIRESTORE = {};
+    window._setupDocIds = {};
     snap.docs.forEach(d => {
       const data = d.data();
       const maq = data.maquina || '';
@@ -543,9 +554,10 @@ async function carregarSetupFirestore() {
       if (!SETUP_FIRESTORE[maq]) SETUP_FIRESTORE[maq] = {};
       if (!SETUP_FIRESTORE[maq][pA]) SETUP_FIRESTORE[maq][pA] = {};
       SETUP_FIRESTORE[maq][pA][pB] = t;
-      // Bidirecional se não existir o inverso
       if (!SETUP_FIRESTORE[maq][pB]) SETUP_FIRESTORE[maq][pB] = {};
       if (SETUP_FIRESTORE[maq][pB][pA] == null) SETUP_FIRESTORE[maq][pB][pA] = t;
+      // Guarda ID do doc para evitar getDocs em edições futuras
+      window._setupDocIds[`${maq}__${pA}__${pB}`] = d.id;
     });
     if (!snap.empty) console.log('[SETUP] Carregados do Firestore:', snap.size, 'registros');
   } catch(e) {
@@ -556,18 +568,29 @@ async function carregarSetupFirestore() {
 // Salva um registro de setup no Firestore
 async function salvarSetupFirestore(maquina, prodOrigem, prodDestino, tempoMinutos) {
   try {
-    // Verifica se já existe
-    const q = query(lojaCol('setup_maquinas'),
-      where('maquina', '==', maquina),
-      where('produto_origem', '==', prodOrigem),
-      where('produto_destino', '==', prodDestino)
-    );
-    const snap = await getDocs(q);
     const payload = { maquina, produto_origem: prodOrigem, produto_destino: prodDestino, tempo_setup: parseInt(tempoMinutos)||0, atualizadoEm: new Date().toISOString() };
-    if (!snap.empty) {
-      await setDoc(lojaDoc('setup_maquinas', snap.docs[0].id), payload);
+    // Busca ID no cache local (evita getDocs extra ao Firestore)
+    const cacheKey = `${maquina}__${prodOrigem}__${prodDestino}`;
+    const idCached = window._setupDocIds && window._setupDocIds[cacheKey];
+    if (idCached) {
+      await setDoc(lojaDoc('setup_maquinas', idCached), payload);
     } else {
-      await addDoc(lojaCol('setup_maquinas'), payload);
+      // Fallback: consulta só se não tem ID em cache
+      const q = query(lojaCol('setup_maquinas'),
+        where('maquina', '==', maquina),
+        where('produto_origem', '==', prodOrigem),
+        where('produto_destino', '==', prodDestino)
+      );
+      const snap = await getDocs(q);
+      if (!snap.empty) {
+        await setDoc(lojaDoc('setup_maquinas', snap.docs[0].id), payload);
+        if (!window._setupDocIds) window._setupDocIds = {};
+        window._setupDocIds[cacheKey] = snap.docs[0].id;
+      } else {
+        const ref = await addDoc(lojaCol('setup_maquinas'), payload);
+        if (!window._setupDocIds) window._setupDocIds = {};
+        window._setupDocIds[cacheKey] = ref.id;
+      }
     }
     invalidateCache('setup');
     await carregarSetupCached(true);
@@ -839,6 +862,7 @@ async function salvarNomeLoja(lojaId) {
   try {
     await updateDoc(doc(firestoreDB, 'lojas', lojaId), { nome: novoNome });
     toast(`Nome atualizado para "${novoNome}"`, 'ok');
+    invalidarCacheLojas();
     await atualizarTopbarLoja();
     renderGestaoLojas();
   } catch(e) {
@@ -8258,10 +8282,13 @@ async function _baixarTemplateCompleto() {
     const hdrSetup = ['maquina','de','para','minutos'];
     let rowsSetup = [];
     try {
-      const snapSetup = await getDocs(lojaCol('setup_maquinas'));
-      rowsSetup = snapSetup.docs.map(d => {
-        const s = d.data();
-        return [s.maquina || '', s.produto_origem || '', s.produto_destino || '', s.tempo_setup || 0];
+      // Usa cache SETUP_FIRESTORE em memória — evita leitura extra ao Firestore
+      Object.entries(SETUP_FIRESTORE || {}).forEach(([maq, origens]) => {
+        Object.entries(origens).forEach(([de, destinos]) => {
+          Object.entries(destinos).forEach(([para, mins]) => {
+            if (mins > 0) rowsSetup.push([maq, de, para, mins]);
+          });
+        });
       });
     } catch(e) { console.warn('Erro ao ler setup:', e); }
     const wsSetup = XLSX.utils.aoa_to_sheet([
@@ -8614,10 +8641,12 @@ async function exportarArquivoPadrao() {
     const hdrSetup = ['maquina','de','para','minutos'];
     let rowsSetup = [];
     try {
-      const snapSetup = await getDocs(lojaCol('setup_maquinas'));
-      rowsSetup = snapSetup.docs.map(d => {
-        const s = d.data();
-        return [s.maquina || '', s.produto_origem || '', s.produto_destino || '', s.tempo_setup || 0];
+      Object.entries(SETUP_FIRESTORE || {}).forEach(([maq, origens]) => {
+        Object.entries(origens).forEach(([de, destinos]) => {
+          Object.entries(destinos).forEach(([para, mins]) => {
+            if (mins > 0) rowsSetup.push([maq, de, para, mins]);
+          });
+        });
       });
     } catch(e) { console.warn('Erro ao ler setup para exportação:', e); }
     const wsSetup = XLSX.utils.aoa_to_sheet([
