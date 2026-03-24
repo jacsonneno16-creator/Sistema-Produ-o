@@ -9779,7 +9779,9 @@ function _grpRenderProducao(){
     const saldo=Math.max(0,totalProg-totalReal);
     const pct=totalProg>0?Math.round(totalReal/totalProg*100):0;
     const pctColor=pct>=100?'var(--green)':pct>=70?'var(--cyan)':pct>=40?'var(--warn)':'var(--red)';
-    const conc=recs.filter(r=>(aponMap[r.id]?.totalCaixas||0)>=r.qntCaixas).length;
+    // Ordens concluídas: usa TODOS os apontamentos já feitos (não só do período)
+    // para refletir corretamente o status real de cada ordem
+    const conc=recs.filter(r=>aponGetTotalProduced(String(r.id))>=(r.qntCaixas||0)&&(r.qntCaixas||0)>0).length;
     const excesso=Math.max(0,totalReal-totalProg);
 
     const kpis=`<div class="grp-kpi-row">
@@ -9791,27 +9793,33 @@ function _grpRenderProducao(){
     </div>`;
 
     // Tabela por produto
+    // real = apontamentos do período filtrado (reflete filtro de operador/máquina)
+    // concluido = baseado no total geral de todos os apontamentos da ordem
     const byProd={};
     recs.forEach(function(r){
-      if(!byProd[r.produto]) byProd[r.produto]={produto:r.produto,maquina:r.maquina||'—',prog:0,real:0,ordens:0};
+      if(!byProd[r.produto]) byProd[r.produto]={produto:r.produto,maquina:r.maquina||'—',prog:0,real:0,realTotal:0,ordens:0,conc:0};
       byProd[r.produto].prog+=r.qntCaixas||0;
       byProd[r.produto].real+=aponMap[r.id]?.totalCaixas||0;
+      byProd[r.produto].realTotal+=aponGetTotalProduced(String(r.id));
       byProd[r.produto].ordens++;
+      if(aponGetTotalProduced(String(r.id))>=(r.qntCaixas||0)&&(r.qntCaixas||0)>0) byProd[r.produto].conc++;
     });
     const prodRows=Object.values(byProd).sort((a,b)=>b.prog-a.prog);
     const tblRows=prodRows.map(function(p){
-      const pt=p.prog>0?Math.round(p.real/p.prog*100):0;
+      // % atendimento = realTotal (todos os apontamentos) / prog para refletir status real
+      const pt=p.prog>0?Math.min(100,Math.round(p.realTotal/p.prog*100)):0;
       const pc=pt>=100?'var(--green)':pt>=60?'var(--cyan)':pt>=30?'var(--warn)':'var(--red)';
-      const sl=Math.max(0,p.prog-p.real);
+      const sl=Math.max(0,p.prog-p.realTotal);
+      const concBadge=p.conc>0?`<span style="font-size:9px;padding:1px 6px;border-radius:8px;background:rgba(90,184,72,.15);color:var(--green);font-weight:700;margin-left:4px">${p.conc} ✓</span>`:'';
       return `<tr>
-        <td style="font-weight:600">${p.produto}</td>
+        <td style="font-weight:600">${p.produto}${concBadge}</td>
         <td style="color:var(--purple);font-family:'JetBrains Mono',monospace;font-size:11px">${p.maquina}</td>
         <td style="font-family:'JetBrains Mono',monospace;color:var(--cyan)">${p.prog.toLocaleString('pt-BR')}</td>
-        <td style="font-family:'JetBrains Mono',monospace;color:var(--green)">${p.real.toLocaleString('pt-BR')}</td>
+        <td style="font-family:'JetBrains Mono',monospace;color:var(--green)" title="No período: ${p.real.toLocaleString('pt-BR')} cx">${p.realTotal.toLocaleString('pt-BR')}</td>
         <td style="font-family:'JetBrains Mono',monospace;color:${sl>0?'var(--warn)':'var(--text3)'}">${sl>0?sl.toLocaleString('pt-BR'):'—'}</td>
         <td><div style="display:flex;align-items:center;gap:6px">
           <div style="flex:1;height:6px;background:var(--s3);border-radius:3px;overflow:hidden;min-width:40px">
-            <div style="width:${Math.min(100,pt)}%;height:100%;background:${pc};border-radius:3px"></div>
+            <div style="width:${pt}%;height:100%;background:${pc};border-radius:3px"></div>
           </div>
           <span style="font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:700;color:${pc}">${pt}%</span>
         </div></td>
@@ -9869,9 +9877,41 @@ function _grpRenderMaquinas(){
 
     const maqs=maqF?[maqF]:[...new Set(records.map(r=>r.maquina).filter(Boolean))].sort();
     const maqStats=maqs.map(function(maq){
+      // hrsDisp: soma real de horas disponíveis por dia no período (respeitando turnos por máquina)
       const hrsDisp=diasUteis.reduce((a,d)=>a+hoursOnDayMaq(d,maq),0);
+
       const recsM=records.filter(r=>r.maquina===maq&&(r.dtDesejada||r.dtSolicitacao||'')>=ini&&(r.dtDesejada||r.dtSolicitacao||'')<=fim);
-      const hrsProg=recsM.reduce((a,r)=>a+(r.qntCaixas||0)/Math.max(1,r.pcMin||1)/60,0);
+
+      // hrsProg: usa buildSchedule semana a semana (mesma lógica do Gantt)
+      // Conta horas de segmentos que caem dentro do período ini-fim
+      let hrsProg=0;
+      if(typeof buildSchedule==='function'){
+        // Itera pelas semanas dentro do período
+        const iniMon=getWeekMonday(new Date(ini+'T12:00:00'));
+        const fimDate=new Date(fim+'T12:00:00');
+        const semCur=new Date(iniMon);
+        while(semCur<=fimDate){
+          try{
+            const {schedule,days}=buildSchedule(semCur);
+            const entries=schedule[maq];
+            if(entries&&entries.length){
+              entries.forEach(function(e){
+                e.segments.forEach(function(seg){
+                  if(seg.date>=ini&&seg.date<=fim) hrsProg+=seg.hrsNoDia||0;
+                });
+                e.setupSegments.forEach(function(seg){
+                  if(seg.date>=ini&&seg.date<=fim) hrsProg+=seg.setupMin/60||0;
+                });
+              });
+            }
+          }catch(e2){}
+          semCur.setDate(semCur.getDate()+7);
+        }
+        hrsProg=Math.round(hrsProg*10)/10;
+      } else {
+        // Fallback: fórmula simples se buildSchedule não disponível
+        hrsProg=Math.round(recsM.reduce((a,r)=>a+(r.qntCaixas||0)/Math.max(0.001,r.pcMin||0.001)/60,0)*10)/10;
+      }
       const realCx=docs.filter(d=>d.maquina===maq).reduce((a,d)=>a+(d.quantidade||0),0);
       // setup
       let setupMin=0;
@@ -10255,11 +10295,31 @@ function _grpRenderGerencial(){
       const recsM=records.filter(r=>r.maquina===maq&&(r.dtDesejada||r.dtSolicitacao||'')>=ini&&(r.dtDesejada||r.dtSolicitacao||'')<=fim&&(!prodF||r.produto===prodF));
       const realCx=docs.filter(d=>d.maquina===maq).reduce((a,d)=>a+(d.quantidade||0),0);
       const progCx=recsM.reduce((a,r)=>a+(r.qntCaixas||0),0);
-      const diasUteis=[];
-      const cur=new Date(ini+'T12:00:00');
-      while(dateStr(cur)<=fim){if(hoursOnDayMaq(cur,maq)>0) diasUteis.push(1);cur.setDate(cur.getDate()+1);}
-      const hrsDisp=diasUteis.length*(hoursOnDayMaq(new Date(ini+'T12:00:00'),maq)||8);
-      const hrsProg=recsM.reduce((a,r)=>a+(r.qntCaixas||0)/Math.max(1,r.pcMin||1)/60,0);
+      // hrsDisp: soma real por dia (respeita turnos por máquina)
+      let hrsDisp=0;
+      const cur2=new Date(ini+'T12:00:00');
+      while(dateStr(cur2)<=fim){hrsDisp+=hoursOnDayMaq(cur2,maq);cur2.setDate(cur2.getDate()+1);}
+      // hrsProg: via buildSchedule semana a semana
+      let hrsProg=0;
+      if(typeof buildSchedule==='function'){
+        const iniMon2=getWeekMonday(new Date(ini+'T12:00:00'));
+        const fimD2=new Date(fim+'T12:00:00');
+        const sc2=new Date(iniMon2);
+        while(sc2<=fimD2){
+          try{
+            const {schedule:sch2}=buildSchedule(sc2);
+            const ents=sch2[maq];
+            if(ents) ents.forEach(function(e){
+              e.segments.forEach(function(s){if(s.date>=ini&&s.date<=fim)hrsProg+=s.hrsNoDia||0;});
+              e.setupSegments.forEach(function(s){if(s.date>=ini&&s.date<=fim)hrsProg+=s.setupMin/60||0;});
+            });
+          }catch(e2){}
+          sc2.setDate(sc2.getDate()+7);
+        }
+        hrsProg=Math.round(hrsProg*10)/10;
+      } else {
+        hrsProg=recsM.reduce((a,r)=>a+(r.qntCaixas||0)/Math.max(0.001,r.pcMin||0.001)/60,0);
+      }
       const util=hrsDisp>0?Math.min(100,Math.round(hrsProg/hrsDisp*100)):0;
       return {maq,realCx,progCx,util};
     }).filter(m=>m.progCx>0||m.realCx>0).sort((a,b)=>b.realCx-a.realCx);
