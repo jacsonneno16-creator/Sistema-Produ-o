@@ -12,17 +12,6 @@
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <title>DT Produção — Planejamento e Controle</title>
 <link rel="stylesheet" href="css/style.css">
-<script>
-/* Aplica tema salvo antes de renderizar - evita flash de tema errado */
-(function(){
-  var t = localStorage.getItem('tema');
-  if(t === 'light') document.documentElement.style.cssText = 'visibility:hidden';
-  document.addEventListener('DOMContentLoaded', function(){
-    if(t === 'light') { document.body.classList.add('light'); updateBtnTema(); }
-    document.documentElement.style.cssText = '';
-  });
-})();
-</script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -141,7 +130,6 @@
         <option>Carregando...</option>
       </select>
     </div>
-    <button id="btn-tema" onclick="toggleTema()" title="Alternar tema claro/escuro">🌙</button>
     <div style="position:relative">
       <button id="hd-menu-btn" onclick="toggleHdMenu()" style="background:var(--s1);border:1px solid var(--border);border-radius:8px;width:36px;height:36px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--text2);transition:all .18s;flex-direction:column;gap:3px" title="Menu">
         <span style="display:block;width:4px;height:4px;border-radius:50%;background:currentColor"></span>
@@ -677,7 +665,7 @@
         </div>
         <div class="frow">
           <label class="flbl">% máx. da máquina por produto</label>
-          <input type="number" class="finp" id="pa-max-pct-maq" value="60" min="10" max="100" style="font-size:12px">
+          <input type="number" class="finp" id="pa-max-pct-maq" value="90" min="10" max="100" style="font-size:12px">
         </div>
         <div class="frow">
           <label class="flbl">Fechamento da última semana</label>
@@ -1943,35 +1931,6 @@ window.irParaLogin = irParaLogin;
   </div>
 </div>
 
-
-<script>
-/* ============================================================
-   ALTERNÂNCIA DE TEMA CLARO / ESCURO
-   ============================================================ */
-function toggleTema() {
-  document.body.classList.toggle('light');
-  var temaAtual = document.body.classList.contains('light') ? 'light' : 'dark';
-  localStorage.setItem('tema', temaAtual);
-  updateBtnTema();
-}
-
-function updateBtnTema() {
-  var btn = document.getElementById('btn-tema');
-  if (!btn) return;
-  var isLight = document.body.classList.contains('light');
-  btn.textContent = isLight ? '🌙' : '☀️';
-  btn.title = isLight ? 'Mudar para tema escuro' : 'Mudar para tema claro';
-}
-
-/* Aplicar tema salvo ao carregar */
-(function aplicarTemaSalvo() {
-  var tema = localStorage.getItem('tema');
-  if (tema === 'light') {
-    document.body.classList.add('light');
-  }
-  updateBtnTema();
-})();
-</script>
 </body>
 
 </html>
