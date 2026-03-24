@@ -580,8 +580,6 @@ async function carregarSetupFirestore() {
     console.warn('[SETUP] Usando matriz estática (fallback):', e.message);
   }
 }
-  }
-}
 
 // Salva um registro de setup no Firestore
 async function salvarSetupFirestore(maquina, prodOrigem, prodDestino, tempoMinutos) {
