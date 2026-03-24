@@ -418,6 +418,12 @@ window.canAccess = canAccess;
 
 // ===== FIREBASE DB REPLACEMENTS (IndexedDB → Firestore) =====
 let records = [], pg = 1;
+// Expor records globalmente para módulos externos (ex: relatorios.js)
+Object.defineProperty(window, 'records', {
+  get() { return records; },
+  set(v) { records = v; },
+  configurable: true,
+});
 const PER = 15;
 
 async function dbAll() {
@@ -9414,7 +9420,24 @@ function switchTabSidebar(name) {
   if(name==='api-sync') renderApiSync();
   if(name==='calculos'||name==='prog-auto') renderCalculos();
   if(name==='projecao') renderProjecao();
-  if(name==='relatorios') { if(window.relatorios) { setTimeout(()=>window.relatorios.init(), 50); } }
+  if(name==='relatorios') {
+    // Garantir que o painel existe antes de inicializar
+    let rPanel = document.getElementById('panel-relatorios');
+    if (!rPanel) {
+      rPanel = document.createElement('div');
+      rPanel.id = 'panel-relatorios';
+      rPanel.className = 'panel';
+      const container = document.getElementById('main-content')
+        || document.getElementById('content')
+        || document.getElementById('app')
+        || document.body;
+      container.appendChild(rPanel);
+    }
+    rPanel.classList.add('on');
+    if (window.relatorios) {
+      setTimeout(() => window.relatorios.init(), 50);
+    }
+  }
   if(name==='usuarios') { openSettings(); setTimeout(()=>settingsNav('usuarios'), 80); }
 }
 
@@ -14560,6 +14583,10 @@ window.filterMaqWeek = filterMaqWeek;
 window.ganttSetWeek = ganttSetWeek;
 window.aponSaveFunc = aponSaveFunc;
 window.aponRecalcRow = aponRecalcRow;
+// Expor funções de apontamento para relatorios.js e outros módulos externos
+window.aponGetAllKeys  = aponGetAllKeys;
+window.aponStorageGet  = aponStorageGet;
+window.aponStorageSet  = aponStorageSet;
 window.pdFinalize = pdFinalize;
 window.editFichaByCod = editFichaByCod;
 window.saveFichaByCod = saveFichaByCod;

@@ -45,8 +45,21 @@ function initRelatorios() {
       </div>`;
     return;
   }
-  const panel = document.getElementById('panel-relatorios');
-  if (!panel) return;
+
+  let panel = document.getElementById('panel-relatorios');
+
+  // Se o painel não existir no HTML, criá-lo automaticamente
+  if (!panel) {
+    panel = document.createElement('div');
+    panel.id = 'panel-relatorios';
+    panel.className = 'panel';
+    // Tentar inserir dentro do container principal de painéis
+    const container = document.getElementById('main-content')
+      || document.getElementById('content')
+      || document.getElementById('app')
+      || document.body;
+    container.appendChild(panel);
+  }
 
   // Injetar HTML completo do painel
   panel.innerHTML = buildRelatoriosHTML();
@@ -338,7 +351,6 @@ function renderRelatorios() {
     initRelatorios();
     return;
   }
-
   // Ler filtros
   _relFiltros.dataInicio = document.getElementById('rel2-data-inicio')?.value || '';
   _relFiltros.dataFim    = document.getElementById('rel2-data-fim')?.value    || '';
@@ -1235,7 +1247,10 @@ async function exportImagem() {
 // HELPERS DE DADOS
 // ─────────────────────────────────────────────────────────────────
 function _getRecords() {
-  return (typeof records !== 'undefined' && Array.isArray(records)) ? records : [];
+  // Acessa window.records (exposto pelo app.js) ou variável global de mesmo nome
+  if (Array.isArray(window.records)) return window.records;
+  if (typeof records !== 'undefined' && Array.isArray(records)) return records;
+  return [];
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -1274,18 +1289,22 @@ function _getRecordsFiltrados() {
 function _getRealizadoRec(r, inicio, fim) {
   let total = 0;
   try {
-    // Iterar sobre todas as chaves de apontamento para este registro
     const suffix = '_' + r.id;
-    const allKeys = typeof aponGetAllKeys === 'function' ? aponGetAllKeys() : [];
+    // Suporta window.aponGetAllKeys (exposto pelo app.js) ou variável local
+    const _aponGetAllKeys = window.aponGetAllKeys || (typeof aponGetAllKeys === 'function' ? aponGetAllKeys : null);
+    const _aponStorageGet = window.aponStorageGet || (typeof aponStorageGet === 'function' ? aponStorageGet : null);
+    if (!_aponGetAllKeys || !_aponStorageGet) return 0;
+
+    const allKeys = _aponGetAllKeys();
     allKeys.forEach(k => {
       if (!k.endsWith(suffix)) return;
       // Extrair data da chave: apon_YYYY-MM-DD_recId
       const datePart = k.slice('apon_'.length, k.length - suffix.length);
       if (inicio && datePart < inicio) return;
       if (fim    && datePart > fim)    return;
-      const d = typeof aponStorageGet === 'function' ? aponStorageGet(k) : null;
+      const d = _aponStorageGet(k);
       if (d) {
-        const hrs = typeof APON_HOURS !== 'undefined' ? APON_HOURS : APON_H;
+        const hrs = (typeof APON_HOURS !== 'undefined' ? APON_HOURS : null) || APON_H;
         hrs.forEach(h => { total += parseInt(d[h]) || 0; });
       }
     });
@@ -1319,26 +1338,31 @@ function _calcPorDia(recs, inicio, fim) {
   const porDia = {};
   diasSet.forEach(dia => { porDia[dia] = 0; });
 
-  recs.forEach(r => {
-    try {
-      const suffix = '_' + r.id;
-      const allKeys = typeof aponGetAllKeys === 'function' ? aponGetAllKeys() : [];
-      allKeys.forEach(k => {
-        if (!k.endsWith(suffix)) return;
-        const datePart = k.slice('apon_'.length, k.length - suffix.length);
-        if (inicio && datePart < inicio) return;
-        if (fim    && datePart > fim)    return;
-        const d = typeof aponStorageGet === 'function' ? aponStorageGet(k) : null;
-        if (d) {
-          const hrs = typeof APON_HOURS !== 'undefined' ? APON_HOURS : APON_H;
-          const tot = hrs.reduce((a, h) => a + (parseInt(d[h])||0), 0);
-          if (tot > 0) {
-            porDia[datePart] = (porDia[datePart] || 0) + tot;
+  const _aponGetAllKeys = window.aponGetAllKeys || (typeof aponGetAllKeys === 'function' ? aponGetAllKeys : null);
+  const _aponStorageGet = window.aponStorageGet || (typeof aponStorageGet === 'function' ? aponStorageGet : null);
+
+  if (_aponGetAllKeys && _aponStorageGet) {
+    recs.forEach(r => {
+      try {
+        const suffix = '_' + r.id;
+        const allKeys = _aponGetAllKeys();
+        allKeys.forEach(k => {
+          if (!k.endsWith(suffix)) return;
+          const datePart = k.slice('apon_'.length, k.length - suffix.length);
+          if (inicio && datePart < inicio) return;
+          if (fim    && datePart > fim)    return;
+          const d = _aponStorageGet(k);
+          if (d) {
+            const hrs = (typeof APON_HOURS !== 'undefined' ? APON_HOURS : null) || APON_H;
+            const tot = hrs.reduce((a, h) => a + (parseInt(d[h])||0), 0);
+            if (tot > 0) {
+              porDia[datePart] = (porDia[datePart] || 0) + tot;
+            }
           }
-        }
-      });
-    } catch(e) {}
-  });
+        });
+      } catch(e) {}
+    });
+  }
   return porDia;
 }
 
