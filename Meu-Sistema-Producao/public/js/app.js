@@ -14823,6 +14823,19 @@ window.pa_onMesChange    = function(){ if(paResultados.length) renderProgAutomat
 window.paToggleInsumos = paToggleInsumos;
 window.progToggleInsumos = progToggleInsumos;
 
+// ── Estado e helpers dos relatórios ──────────────────────────────
+let _grpTabAtivo = 'producao';
+
+function _grpFiltros() {
+  return {
+    dtIni:   (document.getElementById('grp-dt-ini')  || {}).value || '',
+    dtFim:   (document.getElementById('grp-dt-fim')  || {}).value || '',
+    maquina: (document.getElementById('grp-maq')     || {}).value || '',
+    produto: (document.getElementById('grp-prod')    || {}).value || '',
+    func:    (document.getElementById('grp-func')    || {}).value || '',
+  };
+}
+
 function grpSwitchTab(id) {
   _grpTabAtivo = id;
 
@@ -15183,4 +15196,8 @@ window.grpRender         = grpRender;
 window.grpSwitchTab      = grpSwitchTab;
 window.grpClear          = grpClear;
 window.grpExport         = grpExport;
+// Aliases usados pelo HTML
+window.grpResetFiltros   = grpClear;
+window.grpExportXLSX     = grpExport;
+window._grpFiltros       = _grpFiltros;
 
