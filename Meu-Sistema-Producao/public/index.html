@@ -130,6 +130,7 @@
         <option>Carregando...</option>
       </select>
     </div>
+    <button id="btn-tema" title="Alternar tema claro/escuro"></button>
     <div style="position:relative">
       <button id="hd-menu-btn" onclick="toggleHdMenu()" style="background:var(--s1);border:1px solid var(--border);border-radius:8px;width:36px;height:36px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--text2);transition:all .18s;flex-direction:column;gap:3px" title="Menu">
         <span style="display:block;width:4px;height:4px;border-radius:50%;background:currentColor"></span>
@@ -336,6 +337,7 @@
     <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:14px" id="gantt-legend"></div>
 
     <!-- Gantt full width, scrollable -->
+    <div id="gantt-setup-diag" style="display:none;margin:0 0 8px 0;padding:8px 14px;background:rgba(255,153,0,.1);border:1px solid var(--orange,#ff9900);border-radius:6px;font-size:11px;color:var(--orange,#ff9900);line-height:1.5"></div>
     <div style="overflow-x:auto">
       <div id="gantt-table"></div>
     </div>
@@ -653,19 +655,19 @@
       <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:12px">
         <div class="frow">
           <label class="flbl">Cobertura mínima desejada (dias)</label>
-          <input type="number" class="finp" id="pa-cobertura-min" value="5" min="1" max="30" style="font-size:12px">
+          <input type="number" class="finp" id="pa-cobertura-min" value="30" min="1" max="60" style="font-size:12px">
         </div>
         <div class="frow">
           <label class="flbl">Cobertura alvo após produção (dias)</label>
-          <input type="number" class="finp" id="pa-cobertura-alvo" value="15" min="3" max="60" style="font-size:12px">
+          <input type="number" class="finp" id="pa-cobertura-alvo" value="20" min="3" max="60" style="font-size:12px">
         </div>
         <div class="frow">
           <label class="flbl">Risco crítico abaixo de (dias)</label>
-          <input type="number" class="finp" id="pa-risco-critico" value="3" min="1" max="10" style="font-size:12px">
+          <input type="number" class="finp" id="pa-risco-critico" value="10" min="1" max="30" style="font-size:12px">
         </div>
         <div class="frow">
           <label class="flbl">% máx. da máquina por produto</label>
-          <input type="number" class="finp" id="pa-max-pct-maq" value="60" min="10" max="100" style="font-size:12px">
+          <input type="number" class="finp" id="pa-max-pct-maq" value="90" min="10" max="100" style="font-size:12px">
         </div>
         <div class="frow">
           <label class="flbl">Fechamento da última semana</label>
@@ -706,42 +708,39 @@
   <!-- RELATÓRIOS                                               -->
   <!-- ======================================================= -->
   <div class="panel" id="panel-relatorios">
-    <!-- Toolbar de filtros -->
-    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:18px">
-      <div style="display:flex;background:var(--s1);border:1px solid var(--border);border-radius:8px;overflow:hidden">
-        <button id="rel-mode-mes" onclick="relSetMode('mes')" class="btn btn-primary" style="border-radius:0;padding:7px 14px;font-size:12px">📅 Mês</button>
-        <button id="rel-mode-semana" onclick="relSetMode('semana')" class="btn btn-ghost" style="border-radius:0;padding:7px 14px;font-size:12px;border:none">📆 Semana</button>
-        <button id="rel-mode-dia" onclick="relSetMode('dia')" class="btn btn-ghost" style="border-radius:0;padding:7px 14px;font-size:12px;border:none">🗓 Dia</button>
-      </div>
-      <select id="rel-periodo-a" class="finp" style="font-size:12px;padding:7px 10px;min-width:160px" onchange="renderRelatorios()">
-        <option value="">— Período A —</option>
-      </select>
-      <span style="color:var(--text3);font-size:13px">vs</span>
-      <select id="rel-periodo-b" class="finp" style="font-size:12px;padding:7px 10px;min-width:160px" onchange="renderRelatorios()">
-        <option value="">— Período B (opcional) —</option>
-      </select>
-      <select id="rel-produto-filter" class="finp" style="font-size:12px;padding:7px 10px;min-width:200px" onchange="renderRelatorios()">
-        <option value="">Todos os produtos</option>
-      </select>
-      <select id="rel-maq-filter" class="finp" style="font-size:12px;padding:7px 10px;min-width:160px" onchange="renderRelatorios()">
-        <option value="">Todas as máquinas</option>
-      </select>
-      <button class="btn btn-ghost" onclick="relExportXLSX()" style="padding:7px 12px">📊 Excel</button>
+
+    <!-- ── FILTROS GLOBAIS ── -->
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:14px;padding:12px 14px;background:var(--s1);border:1px solid var(--border);border-radius:10px">
+      <span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--text3);white-space:nowrap">Período</span>
+      <input type="date" id="grp-dt-ini" onchange="grpRender()" style="font-size:12px;padding:6px 10px;min-width:130px">
+      <span style="color:var(--text3);font-size:12px">até</span>
+      <input type="date" id="grp-dt-fim" onchange="grpRender()" style="font-size:12px;padding:6px 10px;min-width:130px">
+      <div style="width:1px;height:24px;background:var(--border);margin:0 4px"></div>
+      <select id="grp-maq" onchange="grpRender()" style="font-size:12px;padding:6px 10px;min-width:150px"><option value="">Todas as máquinas</option></select>
+      <select id="grp-prod" onchange="grpRender()" style="font-size:12px;padding:6px 10px;min-width:180px"><option value="">Todos os produtos</option></select>
+      <select id="grp-func" onchange="grpRender()" style="font-size:12px;padding:6px 10px;min-width:160px"><option value="">Todos os operadores</option></select>
+      <button onclick="grpResetFiltros()" class="btn btn-ghost" style="padding:6px 12px;font-size:11px">✕ Limpar</button>
+      <button onclick="grpExportXLSX()" class="btn btn-ghost" style="padding:6px 12px;font-size:11px;margin-left:auto">📊 Excel</button>
     </div>
-    <!-- KPI cards -->
-    <div id="rel-kpis" style="display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:18px"></div>
-    <!-- Gráfico de barras -->
-    <div class="sbox" style="margin-bottom:16px">
-      <div class="sbox-title" id="rel-chart-title">Programado vs Realizado</div>
-      <div id="rel-chart" style="overflow-x:auto;padding-top:8px"></div>
+
+    <!-- ── ABAS DE CATEGORIA ── -->
+    <div style="display:flex;gap:2px;background:var(--s2);border:1px solid var(--border);border-radius:10px;padding:3px;width:fit-content;margin-bottom:16px" id="grp-tab-bar">
+      <button class="grp-tab-btn on" onclick="grpSwitchTab('producao',this)">📊 Produção</button>
+      <button class="grp-tab-btn" onclick="grpSwitchTab('maquinas',this)">⚙️ Máquinas</button>
+      <button class="grp-tab-btn" onclick="grpSwitchTab('produtos',this)">📦 Produtos</button>
+      <button class="grp-tab-btn" onclick="grpSwitchTab('funcionarios',this)">👷 Funcionários</button>
+      <button class="grp-tab-btn" onclick="grpSwitchTab('insumos',this)">🧪 Insumos</button>
+      <button class="grp-tab-btn" onclick="grpSwitchTab('gerencial',this)">📈 Gerencial</button>
     </div>
-    <!-- Tabela detalhada -->
-    <div class="tbl-wrap">
-      <table style="width:100%;border-collapse:collapse;font-size:12.5px">
-        <thead id="rel-thead"></thead>
-        <tbody id="rel-tbody"></tbody>
-      </table>
-    </div>
+
+    <!-- ── PAINÉIS DE CADA ABA ── -->
+    <div id="grp-panel-producao"  class="grp-panel on" ></div>
+    <div id="grp-panel-maquinas"  class="grp-panel off"></div>
+    <div id="grp-panel-produtos"  class="grp-panel off"></div>
+    <div id="grp-panel-funcionarios" class="grp-panel off"></div>
+    <div id="grp-panel-insumos"   class="grp-panel off"></div>
+    <div id="grp-panel-gerencial" class="grp-panel off"></div>
+
   </div>
 
   <!-- COBERTURA DE INSUMOS -->
@@ -925,15 +924,15 @@
             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
             Ficha Técnica
           </button>
-          <button onclick="settingsNav('categoria')" id="snav-categoria" class="snav-btn" style="width:100%;text-align:left;background:none;border:1px solid transparent;border-radius:6px;padding:6px 10px;color:var(--text2);font-family:'Space Grotesk',sans-serif;font-size:11px;cursor:pointer;display:flex;align-items:center;gap:7px;transition:all .15s" onmouseover="if(!this.classList.contains('snav-active'))this.style.background='var(--s2)'" onmouseout="if(!this.classList.contains('snav-active'))this.style.background='none'">
-            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 7h-9"/><path d="M14 17H5"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/></svg>
-            Categoria
-          </button>
         </div>
       </div>
       <button onclick="settingsNav('funcionarios')" id="snav-funcionarios" class="snav-btn" style="width:100%;text-align:left;background:none;border:1px solid transparent;border-radius:7px;padding:8px 10px;color:var(--text2);font-family:'Space Grotesk',sans-serif;font-size:12px;cursor:pointer;display:flex;align-items:center;gap:8px;transition:all .15s" onmouseover="if(!this.classList.contains('snav-active'))this.style.background='var(--s2)'" onmouseout="if(!this.classList.contains('snav-active'))this.style.background='none'">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
         Funcionários
+      </button>
+      <button onclick="settingsNav('processos')" id="snav-processos" class="snav-btn" style="width:100%;text-align:left;background:none;border:1px solid transparent;border-radius:7px;padding:8px 10px;color:var(--text2);font-family:'Space Grotesk',sans-serif;font-size:12px;cursor:pointer;display:flex;align-items:center;gap:8px;transition:all .15s" onmouseover="if(!this.classList.contains('snav-active'))this.style.background='var(--s2)'" onmouseout="if(!this.classList.contains('snav-active'))this.style.background='none'">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+        Processos
       </button>
       <button onclick="settingsNav('jornada')" id="snav-jornada" class="snav-btn" style="width:100%;text-align:left;background:none;border:1px solid transparent;border-radius:7px;padding:8px 10px;color:var(--text2);font-family:'Space Grotesk',sans-serif;font-size:12px;cursor:pointer;display:flex;align-items:center;gap:8px;transition:all .15s" onmouseover="if(!this.classList.contains('snav-active'))this.style.background='var(--s2)'" onmouseout="if(!this.classList.contains('snav-active'))this.style.background='none'">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
@@ -1063,26 +1062,27 @@
               </div>
               <button onclick="resetCategoriaForm()" class="btn btn-ghost" style="padding:4px 10px;font-size:11px">Novo</button>
             </div>
-            <div style="padding:14px 16px;display:flex;flex-direction:column;gap:10px">
+            <div style="padding:14px 16px;display:flex;flex-direction:column;gap:12px">
               <input type="hidden" id="cat-edit-id">
               <div>
-                <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:5px">Nome *</label>
-                <input id="cat-nome-inp" type="text" placeholder="Ex: ESPECIARIAS" style="width:100%;background:var(--s2);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-size:13px;outline:none;box-sizing:border-box">
+                <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:5px">Nome da categoria</label>
+                <input id="cat-nome-inp" type="text" placeholder="Ex: Especiarias" style="width:100%;background:var(--s2);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-size:13px;outline:none;box-sizing:border-box">
               </div>
-              <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-                <div>
-                  <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:5px">Ordem</label>
-                  <input id="cat-ordem-inp" type="number" min="0" step="1" placeholder="1" style="width:100%;background:var(--s2);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-size:13px;outline:none;box-sizing:border-box">
-                </div>
-                <div>
-                  <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:5px">Status</label>
-                  <select id="cat-ativo-inp" style="width:100%;background:var(--s2);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-size:13px;outline:none;box-sizing:border-box">
-                    <option value="true">✅ Ativa</option>
-                    <option value="false">⛔ Inativa</option>
-                  </select>
-                </div>
+              <div>
+                <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:5px">Ordem</label>
+                <input id="cat-ordem-inp" type="number" min="0" step="1" placeholder="0" style="width:100%;background:var(--s2);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-size:13px;outline:none;box-sizing:border-box">
               </div>
-              <button onclick="saveCategoriaCfg()" style="background:var(--cyan);color:#000;border:none;border-radius:8px;padding:10px 12px;font-size:12px;font-weight:700;cursor:pointer">Salvar Categoria</button>
+              <div>
+                <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:5px">Status</label>
+                <select id="cat-ativo-inp" style="width:100%;background:var(--s2);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-size:13px;outline:none;box-sizing:border-box">
+                  <option value="true">✅ Ativa</option>
+                  <option value="false">⛔ Inativa</option>
+                </select>
+              </div>
+              <div style="display:flex;gap:8px;justify-content:flex-end">
+                <button onclick="resetCategoriaForm()" class="btn btn-ghost">Cancelar</button>
+                <button onclick="saveCategoriaCfg()" class="btn btn-primary">💾 Salvar</button>
+              </div>
             </div>
           </div>
           <div style="background:var(--s1);border:1px solid var(--border);border-radius:10px;overflow:hidden">
@@ -1121,7 +1121,25 @@
         </div>
       </div>
 
-      <!-- SEÇÃO USUÁRIOS DO SISTEMA -->
+      <!-- SEÇÃO PROCESSOS -->
+      <div id="scontent-processos" class="scontent" style="display:none;flex-direction:column;gap:0">
+        <div style="background:var(--s1);border:1px solid var(--border);border-radius:10px;overflow:hidden">
+          <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between">
+            <div style="display:flex;align-items:center;gap:8px">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--cyan)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+              <span style="font-size:13px;font-weight:700;color:var(--text)">Processos de Produção</span>
+            </div>
+            <button onclick="openModalProcesso()" style="background:var(--cyan);color:#fff;border:none;border-radius:7px;padding:6px 14px;font-family:'Space Grotesk',sans-serif;font-size:12px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:6px">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              Novo Processo
+            </button>
+          </div>
+          <div style="padding:8px 16px 6px;font-size:11px;color:var(--text3);background:rgba(0,0,0,.06);border-bottom:1px solid var(--border)">
+            ⚙️ Cadastre os processos que ocorrem dentro da produção. Eles aparecerão na aba de Processos do Realizado.
+          </div>
+          <div id="processos-list" style="padding:6px 0"></div>
+        </div>
+      </div>
       <div id="scontent-gestao-lojas" class="scontent" style="display:none;flex-direction:column;gap:12px"></div>
 
       <div id="scontent-usuarios" class="scontent" style="display:none;flex-direction:column;gap:0">
@@ -1840,6 +1858,34 @@ document.addEventListener('touchend', e => {
 .forgot-result { display:none; padding:10px 13px; border-radius:8px; font-size:12px; line-height:1.5; }
 .forgot-result.ok  { display:block; background:rgba(46,204,113,.1); border:1px solid rgba(46,204,113,.3); color:var(--green); }
 .forgot-result.err { display:block; background:rgba(231,76,60,.1); border:1px solid rgba(231,76,60,.3); color:#ff6b6b; }
+/* Relatórios gerenciais */
+.grp-tab-btn{padding:7px 18px;border-radius:7px;cursor:pointer;font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:12px;color:var(--text2);transition:all .18s;border:none;background:transparent;letter-spacing:.2px}
+.grp-tab-btn:hover{color:var(--text);background:var(--s3)}
+.grp-tab-btn.on{background:var(--cyan);color:#fff;box-shadow:0 2px 10px rgba(224,112,32,.3)}
+.grp-panel{display:none;flex-direction:column;gap:16px;animation:fadeUp .22s ease}
+.grp-panel.on{display:flex}
+.grp-card{background:var(--s1);border:1px solid var(--border);border-radius:12px;overflow:hidden}
+.grp-card-hd{padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:8px}
+.grp-card-title{font-size:12px;font-weight:700;color:var(--text);display:flex;align-items:center;gap:7px}
+.grp-card-body{padding:14px 16px}
+.grp-kpi-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:4px}
+.grp-kpi{background:var(--s2);border:1px solid var(--border);border-radius:10px;padding:14px 16px}
+.grp-kpi-lbl{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--text3);margin-bottom:6px;font-family:'JetBrains Mono',monospace}
+.grp-kpi-val{font-family:'JetBrains Mono',monospace;font-size:22px;font-weight:700;line-height:1}
+.grp-tbl{width:100%;border-collapse:collapse;font-size:12px}
+.grp-tbl thead{background:var(--s2);border-bottom:1px solid var(--border)}
+.grp-tbl th{padding:9px 12px;text-align:left;font-family:'JetBrains Mono',monospace;font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.8px;color:var(--text3);white-space:nowrap}
+.grp-tbl td{padding:9px 12px;border-bottom:1px solid var(--td-border);color:var(--text);vertical-align:middle}
+.grp-tbl tbody tr:last-child td{border-bottom:none}
+.grp-tbl tbody tr:hover td{background:var(--row-hover)}
+.grp-tbl .tot-row td{background:rgba(224,112,32,.04);border-top:1px solid rgba(224,112,32,.18);color:var(--cyan);font-weight:700}
+.grp-bar-wrap{display:flex;flex-direction:column;gap:8px}
+.grp-bar-row{display:flex;align-items:center;gap:8px;font-size:11px}
+.grp-bar-lbl{min-width:120px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text2);text-align:right}
+.grp-bar-track{flex:1;height:10px;background:var(--s3);border-radius:5px;overflow:hidden}
+.grp-bar-fill{height:100%;border-radius:5px;transition:width .5s ease}
+.grp-bar-val{min-width:60px;color:var(--text);font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:600}
+.grp-empty{padding:32px 16px;text-align:center;color:var(--text3);font-size:13px}
 </style>
 
 <script type="module">
@@ -2002,6 +2048,59 @@ window.irParaLogin = irParaLogin;
     </div>
   </div>
 </div>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!-- MODAL PROCESSO                                              -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<div id="modal-processo" class="overlay" style="display:none;position:fixed;inset:0;z-index:800;align-items:center;justify-content:center">
+  <div class="modal-box" style="max-width:440px">
+    <div class="modal-hd">
+      <h2 id="processo-modal-title">Novo Processo</h2>
+      <button onclick="closeModalProcesso()" style="background:none;border:none;color:var(--text2);cursor:pointer;font-size:18px;line-height:1">✕</button>
+    </div>
+    <div class="modal-bd" style="display:flex;flex-direction:column;gap:14px">
+      <input type="hidden" id="processo-edit-id">
+      <div>
+        <label style="font-size:11px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.8px;display:block;margin-bottom:6px">Nome do Processo</label>
+        <input type="text" id="processo-nome" placeholder="Ex: Pesagem, Mistura, Embalagem..." class="finp" style="width:100%">
+      </div>
+      <div>
+        <label style="font-size:11px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.8px;display:block;margin-bottom:6px">Descrição (opcional)</label>
+        <input type="text" id="processo-desc" placeholder="Descrição do processo..." class="finp" style="width:100%">
+      </div>
+    </div>
+    <div class="modal-ft">
+      <button class="btn btn-ghost" onclick="closeModalProcesso()">Cancelar</button>
+      <button class="btn btn-primary" onclick="salvarProcesso()">Salvar</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  /* ── ALTERNADOR DE TEMA ───────────────────────────────── */
+  (function() {
+    var btn = document.getElementById('btn-tema');
+    var body = document.body;
+
+    function updateBtn() {
+      var isLight = body.classList.contains('light');
+      btn.textContent = isLight ? '🌙' : '☀️';
+      btn.title = isLight ? 'Mudar para tema escuro' : 'Mudar para tema claro';
+    }
+
+    // Carrega preferência salva (padrão: escuro)
+    if (localStorage.getItem('tema') === 'light') {
+      body.classList.add('light');
+    }
+    updateBtn();
+
+    btn.addEventListener('click', function() {
+      var isLight = body.classList.toggle('light');
+      localStorage.setItem('tema', isLight ? 'light' : 'dark');
+      updateBtn();
+    });
+  })();
+</script>
 
 </body>
 

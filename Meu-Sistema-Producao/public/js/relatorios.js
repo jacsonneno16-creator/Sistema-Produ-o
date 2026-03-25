@@ -190,6 +190,18 @@ function buildRelatoriosHTML() {
     </div>
   </div>
 
+  <!-- OCUPAÇÃO POR CATEGORIA -->
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px">
+    <div class="rel2-card">
+      <div class="rel2-card-hd"><span>🧩 Categoria de Produto</span></div>
+      <div id="rel2-cat-prod" style="padding:14px 16px"></div>
+    </div>
+    <div class="rel2-card">
+      <div class="rel2-card-hd"><span>🏷️ Categoria de Máquina</span></div>
+      <div id="rel2-cat-maq" style="padding:14px 16px"></div>
+    </div>
+  </div>
+
   <!-- PLANEJADO vs REALIZADO -->
   <div class="rel2-card" style="margin-bottom:20px">
     <div class="rel2-card-hd"><span>🎯 Planejado vs Realizado por Máquina</span></div>
@@ -404,7 +416,7 @@ function _calcularDados() {
     }
     porMaquina[r.maquina].programado += r.qntCaixas || 0;
     porMaquina[r.maquina].realizado  += realizadoMap[r.id] || 0;
-    porMaquina[r.maquina].setup      += _getSetupMin(r.maquina);
+    // setup por sequência calculado depois
     porMaquina[r.maquina].registros.push(r);
   });
 
@@ -1071,6 +1083,21 @@ function _renderCobertura() {
     }
   } catch(e) {
     el.innerHTML = '<div style="padding:16px;color:var(--text3);font-size:12px">Erro ao carregar dados de cobertura</div>';
+  }
+}
+
+function _renderCategorias(d) {
+  const prodEl = document.getElementById('rel2-cat-prod');
+  const maqEl = document.getElementById('rel2-cat-maq');
+  if (prodEl) {
+    const rows = Object.values(d.porCategoriaProduto || {}).sort((a,b)=> (b.totalMin||0) - (a.totalMin||0));
+    if (!rows.length) prodEl.innerHTML = '<div style="color:var(--text3);font-size:12px">Sem dados</div>';
+    else prodEl.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr><th class="rel2-th">Categoria</th><th class="rel2-th" style="text-align:right">Programado</th><th class="rel2-th" style="text-align:right">Setup</th><th class="rel2-th" style="text-align:right">Total</th></tr></thead><tbody>${rows.map(r=>`<tr><td class="rel2-td">${r.categoria}</td><td class="rel2-td" style="text-align:right">${_fmtNum(r.programado)}</td><td class="rel2-td" style="text-align:right">${Math.round(r.setupMin||0)} min</td><td class="rel2-td" style="text-align:right">${Math.round(r.totalMin||0)} min</td></tr>`).join('')}</tbody></table>`;
+  }
+  if (maqEl) {
+    const rows = Object.values(d.porCategoriaMaquina || {}).sort((a,b)=> (b.ocupacaoPct||0) - (a.ocupacaoPct||0));
+    if (!rows.length) maqEl.innerHTML = '<div style="color:var(--text3);font-size:12px">Sem dados</div>';
+    else maqEl.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr><th class="rel2-th">Categoria</th><th class="rel2-th" style="text-align:right">Máq.</th><th class="rel2-th" style="text-align:right">Setup</th><th class="rel2-th" style="text-align:right">Ocup.</th></tr></thead><tbody>${rows.map(r=>`<tr><td class="rel2-td">${r.categoria}</td><td class="rel2-td" style="text-align:right">${(r.maquinas||[]).length}</td><td class="rel2-td" style="text-align:right">${Math.round(r.setupMin||0)} min</td><td class="rel2-td" style="text-align:right">${r.ocupacaoPct||0}%</td></tr>`).join('')}</tbody></table>`;
   }
 }
 
