@@ -9542,8 +9542,8 @@ function switchTabSidebar(name) {
       container.appendChild(rPanel);
     }
     rPanel.classList.add('on');
-    // Renderizar o sub-tab ativo ao entrar na aba
-    setTimeout(() => grpRender(), 80);
+    // Sincronizar records e popular filtros antes de renderizar
+    setTimeout(() => { grpInitFiltros(); grpRender(); }, 80);
   }
   if(name==='usuarios') { openSettings(); setTimeout(()=>settingsNav('usuarios'), 80); }
 }
@@ -14780,6 +14780,177 @@ window.reloadFresh = reloadFresh;
 window.invalidateCache = invalidateCache;
 window.loadReorderList = loadReorderList;
 
+// ===== IMPORTAÇÃO EXCEL — PROGRAMAÇÃO =====
+// Lê colunas: Produto | Quantidade | Data (e opcionais: Máquina, Status, Observação)
+async function importarProgramacaoExcel(file) {
+  if (!file) return;
+  if (!can('programacao', 'criar')) { toast('Sem permissão para importar programação.', 'err'); return; }
+
+  const btnEl = document.getElementById('btn-imp-prog');
+  if (btnEl) { btnEl.disabled = true; btnEl.textContent = '⏳ Importando...'; }
+
+  try {
+    // Ler arquivo
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(buf, { type: 'array', cellDates: true });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
+
+    if (!rows.length) { toast('Planilha vazia ou sem dados.', 'err'); return; }
+
+    // Mapear cabeçalhos de forma flexível (case-insensitive, sem acento)
+    const norm = s => (s || '').toString().toLowerCase()
+      .normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+
+    const firstRow = rows[0];
+    const colMap = {};
+    for (const k of Object.keys(firstRow)) {
+      const n = norm(k);
+      if (!colMap.produto    && /^prod/.test(n))                          colMap.produto    = k;
+      if (!colMap.quantidade && /^(qtd|quant|quantidade|caixas|cx)/.test(n)) colMap.quantidade = k;
+      if (!colMap.data       && /^(data|dt|date|inicio|início)/.test(n)) colMap.data       = k;
+      if (!colMap.maquina    && /^(maq|maquin|machine)/.test(n))         colMap.maquina    = k;
+      if (!colMap.status     && /^status/.test(n))                        colMap.status     = k;
+      if (!colMap.obs        && /^(obs|observ|ref|destino)/.test(n))      colMap.obs        = k;
+    }
+
+    if (!colMap.produto)    { toast('Coluna "Produto" não encontrada. Verifique o cabeçalho.', 'err'); return; }
+    if (!colMap.quantidade) { toast('Coluna "Quantidade" não encontrada. Verifique o cabeçalho.', 'err'); return; }
+    if (!colMap.data)       { toast('Coluna "Data" não encontrada. Verifique o cabeçalho.', 'err'); return; }
+
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const todos = getAllProdutos();
+
+    let ok = 0, erros = 0, erroMsgs = [];
+
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const nomeBusca = (row[colMap.produto] || '').toString().trim();
+      if (!nomeBusca) continue;
+
+      const qnt = parseInt(row[colMap.quantidade]) || 0;
+      if (qnt < 1) { erros++; erroMsgs.push(`Linha ${i+2}: "${nomeBusca}" — quantidade inválida (${row[colMap.quantidade]})`); continue; }
+
+      // Data: aceita Date object (XLSX com cellDates), string YYYY-MM-DD, DD/MM/YYYY
+      let dtStr = '';
+      const dtRaw = row[colMap.data];
+      if (dtRaw instanceof Date && !isNaN(dtRaw)) {
+        dtStr = dtRaw.toISOString().slice(0, 10);
+      } else {
+        const s = (dtRaw || '').toString().trim();
+        if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+          dtStr = s;
+        } else if (/^\d{2}\/\d{2}\/\d{4}$/.test(s)) {
+          const [d, m, y] = s.split('/');
+          dtStr = `${y}-${m}-${d}`;
+        } else if (/^\d{5}$/.test(s)) {
+          // Serial numérico do Excel
+          const d = new Date(Math.round((parseFloat(s) - 25569) * 86400 * 1000));
+          dtStr = d.toISOString().slice(0, 10);
+        }
+      }
+      if (!dtStr) { dtStr = todayStr; }
+
+      // Máquina da coluna (opcional) — senão usa maquinaPadrao do produto
+      const maqColuna = colMap.maquina ? (row[colMap.maquina] || '').toString().trim() : '';
+
+      // Buscar produto: nome exato → parcial (contém) → normalizado
+      const normNome = norm(nomeBusca);
+      let prod = todos.find(p => p.descricao === nomeBusca)
+        || todos.find(p => norm(p.descricao) === normNome)
+        || todos.find(p => norm(p.descricao).includes(normNome) || normNome.includes(norm(p.descricao)));
+
+      // Se tem máquina na coluna, filtrar por ela também
+      if (prod && maqColuna) {
+        const maqNorm = norm(maqColuna);
+        const prodComMaq = todos.find(p =>
+          norm(p.descricao) === normNome && norm(p.maquina).includes(maqNorm)
+        );
+        if (prodComMaq) prod = prodComMaq;
+      }
+
+      if (!prod) {
+        erros++;
+        erroMsgs.push(`Linha ${i+2}: produto "${nomeBusca}" não encontrado no cadastro`);
+        continue;
+      }
+
+      const maqFinal = maqColuna || prod.maquina || '';
+      if (!maqFinal) {
+        erros++;
+        erroMsgs.push(`Linha ${i+2}: "${nomeBusca}" — máquina não definida`);
+        continue;
+      }
+
+      const statusValidos = ['Pendente', 'Em Andamento', 'Concluído'];
+      const statusCol = colMap.status ? (row[colMap.status] || '').toString().trim() : '';
+      const status = statusValidos.includes(statusCol) ? statusCol : 'Pendente';
+
+      const obs = colMap.obs ? (row[colMap.obs] || '').toString().trim() : '';
+
+      const obj = {
+        produto: prod.descricao,
+        prodCod: parseInt(prod.cod) || 0,
+        maquina: maqFinal,
+        pcMin: prod.pc_min || 0,
+        unidPorCx: prod.unid || 1,
+        qntCaixas: qnt,
+        qntUnid: qnt * (prod.unid || 1),
+        status,
+        dtSolicitacao: dtStr,
+        dtDesejada: dtStr,
+        obs,
+        sortOrder: Date.now() + i,
+        updatedAt: new Date().toISOString(),
+      };
+
+      try {
+        await dbPut(obj);
+        ok++;
+      } catch (e) {
+        erros++;
+        erroMsgs.push(`Linha ${i+2}: erro ao salvar "${nomeBusca}" — ${e.message}`);
+      }
+    }
+
+    await reloadFresh();
+
+    if (ok > 0 && erros === 0) {
+      toast(`✅ ${ok} item(ns) importado(s) com sucesso!`, 'ok');
+    } else if (ok > 0 && erros > 0) {
+      toast(`⚠️ ${ok} importado(s), ${erros} com erro. Veja o console.`, 'warn');
+      console.warn('[IMPORT PROG] Erros:\n' + erroMsgs.join('\n'));
+    } else {
+      toast(`❌ Nenhum item importado. ${erros} erro(s). Veja o console.`, 'err');
+      console.error('[IMPORT PROG] Erros:\n' + erroMsgs.join('\n'));
+    }
+  } catch (e) {
+    toast('Erro ao ler arquivo: ' + e.message, 'err');
+    console.error('[IMPORT PROG]', e);
+  } finally {
+    if (btnEl) { btnEl.disabled = false; btnEl.textContent = '📥 Importar Excel'; }
+    // Limpar o input para permitir reimportar o mesmo arquivo
+    const inp = document.getElementById('inp-imp-prog');
+    if (inp) inp.value = '';
+  }
+}
+window.importarProgramacaoExcel = importarProgramacaoExcel;
+
+function importarProgramacaoTemplate() {
+  const wb = XLSX.utils.book_new();
+  const ws = XLSX.utils.aoa_to_sheet([
+    ['Produto', 'Quantidade', 'Data', 'Maquina', 'Status', 'Observacao'],
+    ['EXEMPLO PRODUTO DA TERRINHA 1KG', 500, '2026-04-01', 'SELGRON 01', 'Pendente', ''],
+    ['EXEMPLO PRODUTO DA TERRINHA 500G', 300, '2026-04-03', '', '', 'Nacional'],
+  ]);
+  ws['!cols'] = [{ wch: 45 }, { wch: 12 }, { wch: 14 }, { wch: 18 }, { wch: 15 }, { wch: 20 }];
+  XLSX.utils.book_append_sheet(wb, ws, 'Programacao');
+  XLSX.writeFile(wb, 'Template_Importacao_Programacao.xlsx');
+}
+window.importarProgramacaoTemplate = importarProgramacaoTemplate;
+
+
+
 // ===== API SYNC EXPORTS =====
 window.renderApiSync = renderApiSync;
 window.apiTestarConexao = apiTestarConexao;
@@ -14875,7 +15046,7 @@ function grpRender() {
 // ── Helper: filtrar records pelos filtros globais ─────────────────
 function _grpGetRecords() {
   const f = _grpFiltros();
-  return (window.records || []).filter(r => {
+  return (records || []).filter(r => {
     const dt = r.dtDesejada || r.dtSolicitacao || '';
     if (f.dtIni   && dt && dt < f.dtIni)           return false;
     if (f.dtFim   && dt && dt > f.dtFim)            return false;
@@ -14891,13 +15062,13 @@ function _grpRealizado(r) {
   let total = 0;
   try {
     const suffix = '_' + r.id;
-    const keys = (window.aponGetAllKeys || (() => []))();
+    const keys = aponGetAllKeys();
     keys.forEach(k => {
       if (!k.endsWith(suffix)) return;
       const dt = k.slice('apon_'.length, k.length - suffix.length);
       if (f.dtIni && dt < f.dtIni) return;
       if (f.dtFim && dt > f.dtFim) return;
-      const d = (window.aponStorageGet || (() => null))(k);
+      const d = aponStorageGet(k);
       if (d) [7,8,9,10,11,12,13,14,15,16,17].forEach(h => { total += parseInt(d[h])||0; });
     });
   } catch(e) {}
@@ -15031,7 +15202,7 @@ function _grpRenderFuncionarios() {
   // Agrupar apontamentos por funcionário
   const porFunc = {};
   try {
-    const keys = (window.aponGetAllKeys || (() => []))();
+    const keys = aponGetAllKeys();
     keys.forEach(k => {
       // chave: apon_YYYY-MM-DD_recId
       const parts = k.split('_');
@@ -15039,7 +15210,7 @@ function _grpRenderFuncionarios() {
       const dt = parts[1];
       if (f.dtIni && dt < f.dtIni) return;
       if (f.dtFim && dt > f.dtFim) return;
-      const d = (window.aponStorageGet || (() => null))(k);
+      const d = aponStorageGet(k);
       if (!d) return;
       const func = d.operador || d.funcionario || '—';
       if (f.func && func !== f.func) return;
@@ -15201,4 +15372,59 @@ window.grpExport         = grpExport;
 window.grpResetFiltros   = grpClear;
 window.grpExportXLSX     = grpExport;
 window._grpFiltros       = _grpFiltros;
+
+// ── Expor dados que _grpGetRecords e _grpRealizado precisam ──────
+// records é let no escopo do módulo — atualizado via grpSyncRecords()
+window.aponGetAllKeys  = aponGetAllKeys;
+window.aponStorageGet  = aponStorageGet;
+
+function grpSyncRecords() {
+  window.records = records;
+}
+window.grpSyncRecords = grpSyncRecords;
+
+// ── Popular selects de filtro ao entrar na aba ────────────────────
+function grpInitFiltros() {
+  grpSyncRecords();
+
+  // Select de máquinas
+  const selMaq = document.getElementById('grp-maq');
+  if (selMaq && selMaq.options.length <= 1) {
+    const maquinas = [...new Set((records || []).map(r => r.maquina).filter(Boolean))].sort();
+    maquinas.forEach(m => {
+      const o = document.createElement('option');
+      o.value = o.textContent = m;
+      selMaq.appendChild(o);
+    });
+  }
+
+  // Select de produtos
+  const selProd = document.getElementById('grp-prod');
+  if (selProd && selProd.options.length <= 1) {
+    const produtos = [...new Set((records || []).map(r => r.produto).filter(Boolean))].sort();
+    produtos.forEach(p => {
+      const o = document.createElement('option');
+      o.value = o.textContent = p;
+      selProd.appendChild(o);
+    });
+  }
+
+  // Select de operadores/funcionários (vem dos apontamentos)
+  const selFunc = document.getElementById('grp-func');
+  if (selFunc && selFunc.options.length <= 1) {
+    const funcs = new Set();
+    try {
+      aponGetAllKeys().forEach(k => {
+        const d = aponStorageGet(k);
+        if (d && (d.operador || d.funcionario)) funcs.add(d.operador || d.funcionario);
+      });
+    } catch(e) {}
+    [...funcs].sort().forEach(fn => {
+      const o = document.createElement('option');
+      o.value = o.textContent = fn;
+      selFunc.appendChild(o);
+    });
+  }
+}
+window.grpInitFiltros = grpInitFiltros;
 
