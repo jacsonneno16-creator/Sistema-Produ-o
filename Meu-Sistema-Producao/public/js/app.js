@@ -534,13 +534,13 @@ async function carregarProdutosCached(forceReload = false) {
   _cache._carregadoProdutos = true;
 }
 
-function carregarCategoriasCached(forceReload = false) {
+async function carregarCategoriasCached(forceReload = false) {
   if(!forceReload && _cache._carregadoCategorias) return;
   await carregarCategoriasFirestore();
   _cache._carregadoCategorias = true;
 }
 
-function carregarCategoriasFirestore() {
+async function carregarCategoriasFirestore() {
   try {
     const snap = await getDocs(query(lojaCol('categorias'), orderBy('ordem'), orderBy('nome')));
     CATEGORIAS = snap.docs.map(d => ({ id: d.id, ...d.data() }));
