@@ -409,21 +409,11 @@ window.getLojaAtiva = getLojaAtiva;
 window.setLojaAtiva = setLojaAtiva;
 window.criarLoja = criarLoja;
 
-// Expor helpers de permissão globalmente para scripts não-módulo (ex: relatorios.js)
-window.can = can;
-window.canAccess = canAccess;
-
 // ===== TURNOS POR MÁQUINA (módulo de disponibilidade real) =====
 // Nota: turnosMaquinas.js é carregado como script separado no index.html
 
 // ===== FIREBASE DB REPLACEMENTS (IndexedDB → Firestore) =====
 let records = [], pg = 1;
-// Expor records globalmente para módulos externos (ex: relatorios.js)
-Object.defineProperty(window, 'records', {
-  get() { return records; },
-  set(v) { records = v; },
-  configurable: true,
-});
 const PER = 15;
 
 async function dbAll() {
@@ -464,6 +454,7 @@ async function dbDel(id) {
 // ===== DADOS =====
 // Array de produtos: populado do Firestore via carregarProdutosFirestore()
 let PRODUTOS = [];
+let CATEGORIAS = [];
 // Ficha técnica: populada do Firestore ou importação Excel
 let FICHA_TECNICA = [];
 // Flag de cache independente para ficha técnica
@@ -546,34 +537,16 @@ async function carregarSetupFirestore() {
     snap.docs.forEach(d => {
       const data = d.data();
       const maq = data.maquina || '';
-      const pAOrig = (data.produto_origem || '').trim();
-      const pBOrig = (data.produto_destino || '').trim();
-      const pA = normProd(pAOrig);
-      const pB = normProd(pBOrig);
-      // Usar parseInt mas aceitar 0 como valor válido (|| pode descartar 0)
-      const t = (data.tempo_setup != null && data.tempo_setup !== '') ? parseInt(data.tempo_setup) : null;
-      if (!maq || !pA || !pB || t == null) return;
+      const pA = normProd(data.produto_origem || '');
+      const pB = normProd(data.produto_destino || '');
+      const t = parseInt(data.tempo_setup) || 0;
+      if (!maq || !pA || !pB) return;
       if (!SETUP_FIRESTORE[maq]) SETUP_FIRESTORE[maq] = {};
-
-      // Indexar pela chave normalizada (busca principal)
       if (!SETUP_FIRESTORE[maq][pA]) SETUP_FIRESTORE[maq][pA] = {};
       SETUP_FIRESTORE[maq][pA][pB] = t;
-
-      // Indexar também pelo nome original para fallback quando normProd não bate
-      if (pAOrig !== pA) {
-        if (!SETUP_FIRESTORE[maq][pAOrig]) SETUP_FIRESTORE[maq][pAOrig] = {};
-        if (SETUP_FIRESTORE[maq][pAOrig][pBOrig] == null) SETUP_FIRESTORE[maq][pAOrig][pBOrig] = t;
-        if (SETUP_FIRESTORE[maq][pAOrig][pB] == null)     SETUP_FIRESTORE[maq][pAOrig][pB]     = t;
-      }
-
       // Bidirecional se não existir o inverso
       if (!SETUP_FIRESTORE[maq][pB]) SETUP_FIRESTORE[maq][pB] = {};
       if (SETUP_FIRESTORE[maq][pB][pA] == null) SETUP_FIRESTORE[maq][pB][pA] = t;
-      if (pBOrig !== pB) {
-        if (!SETUP_FIRESTORE[maq][pBOrig]) SETUP_FIRESTORE[maq][pBOrig] = {};
-        if (SETUP_FIRESTORE[maq][pBOrig][pAOrig] == null) SETUP_FIRESTORE[maq][pBOrig][pAOrig] = t;
-        if (SETUP_FIRESTORE[maq][pBOrig][pA] == null)     SETUP_FIRESTORE[maq][pBOrig][pA]     = t;
-      }
     });
     if (!snap.empty) console.log('[SETUP] Carregados do Firestore:', snap.size, 'registros');
   } catch(e) {
@@ -631,41 +604,15 @@ function getSetupMin(maq, prodDescA, prodDescB) {
   if (fsMaq) {
     const normA = normProd(prodDescA);
     const normB = normProd(prodDescB);
-
-    // Tentar todas as combinações: normalizado e original
-    const keysA = [...new Set([normA, prodDescA.trim()])];
-    const keysB = [...new Set([normB, prodDescB.trim()])];
-
-    for(const kA of keysA){
-      for(const kB of keysB){
-        if (fsMaq[kA] && fsMaq[kA][kB] != null) return fsMaq[kA][kB];
-        if (fsMaq[kB] && fsMaq[kB][kA] != null) return fsMaq[kB][kA];
-      }
-    }
-
-    // Diagnóstico: mostrar o que foi buscado vs o que existe no SETUP_FIRESTORE
-    if(!window._setupDiagKeys) window._setupDiagKeys = [];
-    const keyBuscada = `${normA} → ${normB}`;
-    if(!window._setupDiagKeys.includes(keyBuscada)){
-      window._setupDiagKeys.push(keyBuscada);
-      const chavesCadastradas = Object.keys(fsMaq).map(k =>
-        `${k} → [${Object.keys(fsMaq[k]||{}).join(', ')}]`
-      ).join(' | ');
-      console.warn(`[SETUP] Máquina "${maq}" — buscando: "${keyBuscada}" | Cadastrado: ${chavesCadastradas || 'nenhum'}`);
-    }
-  } else {
-    // Máquina sem nenhuma entrada no SETUP_FIRESTORE
-    if(!window._setupDiagNoMaq) window._setupDiagNoMaq = new Set();
-    if(!window._setupDiagNoMaq.has(maq)){
-      window._setupDiagNoMaq.add(maq);
-      console.warn(`[SETUP] Máquina "${maq}" não encontrada no SETUP_FIRESTORE. Chaves existentes: ${Object.keys(SETUP_FIRESTORE).join(', ') || 'nenhuma'}`);
-    }
+    if (fsMaq[normA] && fsMaq[normA][normB] != null) return fsMaq[normA][normB];
+    if (fsMaq[normB] && fsMaq[normB][normA] != null) return fsMaq[normB][normA];
   }
 
   // 2) Tempo padrão configurado na máquina (campo tempoSetupPadrao)
   const padrao = getSetupPadrao(maq);
   if (padrao > 0) return padrao;
 
+  // 3) Sem configuração → 0 minutos
   return 0;
 }
 
@@ -2512,19 +2459,7 @@ function buildSchedule(monday){
       const totalProd = (typeof calcularTotalProduzido==='function')
         ? calcularTotalProduzido(r.id) : 0;
       const remaining = (r.qntCaixas||0) - totalProd;
-      if(remaining <= 0) return false;
-      // Só entra como overflow se produção foi iniciada OU não há registro
-      // futuro para o mesmo produto+máquina (evita que S1 apareça no Gantt de S2/S3/S4
-      // quando a programação automática já criou registros separados por semana)
-      if(totalProd > 0) return true;
-      const hasFutureRecord = records.some(other =>
-        other.id !== r.id &&
-        other.maquina === r.maquina &&
-        other.produto === r.produto &&
-        other.status !== 'Concluído' &&
-        (other.dtDesejada || other.dtSolicitacao || '') >= mondayStr
-      );
-      return !hasFutureRecord;
+      return remaining > 0; // só overflow real
     }
     return false;
   });
@@ -2585,18 +2520,7 @@ function buildSchedule(monday){
       if(!pcMin){scheduled.push({rec,segments:[],setupMin:0,setupSegments:[]});continue;}
 
       let setupMin=0;
-      if(ri===0){
-        // Primeiro produto da semana nesta máquina:
-        // Cobrar setup padrão da máquina (troca de bobina / limpeza inicial)
-        // mas apenas se a máquina tem tempoSetupPadrao configurado e há
-        // mais de 1 produto nesta máquina nesta semana (vai haver troca).
-        // Para o primeiro produto não há produto "anterior" conhecido,
-        // então usamos o setup padrão como custo de início de semana.
-        const padrao = getSetupPadrao(maq);
-        if(padrao > 0 && recs.length > 1) setupMin = padrao;
-      } else {
-        setupMin = getSetupMin(maq, recs[ri-1].produto, rec.produto);
-      }
+      if(ri>0) setupMin=getSetupMin(maq, recs[ri-1].produto, rec.produto);
 
       const totalUnid=rec.qntUnid||(rec.qntCaixas*unidPorCx);
 
@@ -2659,17 +2583,8 @@ function buildSchedule(monday){
         const blkAvailMin=blkTotalMin-snap.usedMin;
         if(blkAvailMin<=0.001){snap.blkIdx++;snap.usedMin=0;continue;}
         const useMin=Math.min(remainSetupMin,blkAvailMin);
-        // Calcular posição percentual no dia (para renderização no Gantt)
-        const _setupDayCapMin=(hoursOnDayMaq(days[snap.dayIdx],maq))*60;
-        const _setupAllBlocks=getBlocks(days[snap.dayIdx],maq);
-        let _setupBlkOffset=0;
-        for(let _bi=0;_bi<snap.blkIdx;_bi++) _setupBlkOffset+=(_setupAllBlocks[_bi].fimMin-_setupAllBlocks[_bi].inicioMin);
-        const _setupAbsStart=_setupBlkOffset+snap.usedMin;
-        const _setupStartPct=_setupDayCapMin>0?(_setupAbsStart/_setupDayCapMin)*100:0;
-        const _setupEndPct=_setupDayCapMin>0?((_setupAbsStart+useMin)/_setupDayCapMin)*100:0;
         setupSegments.push({date:dateStr(days[snap.dayIdx]),dayIdx:snap.dayIdx,
-          turnoIdx:blk.turnoIdx,turnoLabel:blk.label,setupMin:useMin,
-          startPct:_setupStartPct,endPct:_setupEndPct});
+          turnoIdx:blk.turnoIdx,turnoLabel:blk.label,setupMin:useMin});
         remainSetupMin-=useMin;
         snap.usedMin+=useMin;
         if(snap.usedMin>=blkTotalMin-0.001){snap.blkIdx++;snap.usedMin=0;}
@@ -2739,10 +2654,7 @@ function buildSchedule(monday){
   return {schedule:result,days};
 }
 
-async function renderGantt(){
-  // Garantir que setup está carregado antes de renderizar
-  // (evita que o Gantt abra antes dos dados de setup chegarem do Firestore)
-  await carregarSetupCached();
+function renderGantt(){
   if(ganttMode === 'mensal'){
     renderGanttMensal();
   } else {
@@ -2833,25 +2745,6 @@ function renderGanttSemanal(){
   const {schedule,days}=buildSchedule(ganttBaseMonday);
   const today=dateStr(new Date());
 
-  // ── Diagnóstico de setup: verificar se há configuração ──────────
-  // Se nenhuma máquina tem setup padrão E SETUP_FIRESTORE está vazio,
-  // mostrar aviso visível no topo do Gantt.
-  const setupDiagEl = document.getElementById('gantt-setup-diag');
-  if(setupDiagEl){
-    const maqSemSetup = MAQUINAS.filter(m => {
-      const padrao = getSetupPadrao(m);
-      const temFS = !!(SETUP_FIRESTORE[m] && Object.keys(SETUP_FIRESTORE[m]).length > 0);
-      return padrao <= 0 && !temFS;
-    });
-    if(maqSemSetup.length > 0){
-      setupDiagEl.style.display = 'block';
-      setupDiagEl.innerHTML = `⚠ <strong>Setup não configurado</strong> nas máquinas: ${maqSemSetup.join(', ')} — a coluna SET UP mostrará "—". `
-        + `Configure o tempo padrão em <strong>Configurações → Máquinas → Setup Padrão (min)</strong>.`;
-    } else {
-      setupDiagEl.style.display = 'none';
-    }
-  }
-
   // Week label
   const mon=days[0],sun=days[6];
   document.getElementById('gantt-week-label').textContent=
@@ -2882,9 +2775,8 @@ function renderGanttSemanal(){
     </div>`).join('');
 
   // COL WIDTHS — LABEL_W é ajustável pelo usuário (salvo no localStorage)
-  const MAQ_W=72, QTY_W=48, TEMPO_W=52, SETUP_W=52, TOTMAQ_W=68, DQTY_W=36;
+  const MAQ_W=72, QTY_W=48, TEMPO_W=52, SETUP_W=52, TOTMAQ_W=68, OBS_W=140, DQTY_W=36;
   const LABEL_W = parseInt(localStorage.getItem('gantt-label-width') || '280');
-  const OBS_W   = parseInt(localStorage.getItem('gantt-obs-width')   || '140');
   const gridCols=`${MAQ_W}px ${LABEL_W}px ${QTY_W}px ${TEMPO_W}px ${SETUP_W}px ${TOTMAQ_W}px ${OBS_W}px repeat(7,1fr) repeat(7,${DQTY_W}px)`;
 
   // Pre-calculate total SCHEDULED hours per machine for THIS WEEK only
@@ -2924,11 +2816,7 @@ function renderGanttSemanal(){
     <div class="g-head-label" style="font-size:9px">Tempo<br>h</div>
     <div class="g-head-label" style="font-size:9px">Set Up<br>h</div>
     <div class="g-head-label" style="font-size:9px">H.<br>Prog.</div>
-    <div class="g-head-label" style="font-size:9px;position:relative">Obser-<br>vação
-      <div id="gantt-obs-resizer" style="position:absolute;right:0;top:0;width:6px;height:100%;cursor:col-resize;display:flex;align-items:center;justify-content:center;z-index:10" title="Arraste para redimensionar observação">
-        <div style="width:2px;height:60%;background:var(--border);border-radius:2px"></div>
-      </div>
-    </div>`;
+    <div class="g-head-label" style="font-size:9px">Obser-<br>vação</div>`;
   days.forEach(d=>{
     const isToday=dateStr(d)===today;
     const isWknd=hoursOnDay(d)===0;
@@ -2992,32 +2880,28 @@ function renderGanttSemanal(){
       const pk = obs ? (prodNorm + '||' + obs.toLowerCase()) : prodNorm;
       if(!prodMap[pk]){
         prodMap[pk] = {
-          produto:       entry.rec.produto,
-          obs:           obs,
-          maquina:       entry.rec.maquina,
-          color:         colorMap[entry.rec.id],
-          qntCaixas:     0,
-          setupMin:      0,
-          segments:      [],       // todos os segmentos de todos os registros
-          setupSegments: [],       // segmentos de setup (para renderizar no Gantt)
-          recs:          []
+          produto:    entry.rec.produto,
+          obs:        obs,
+          maquina:    entry.rec.maquina,
+          color:      colorMap[entry.rec.id],
+          qntCaixas:  0,
+          setupMin:   0,
+          segments:   [],       // todos os segmentos de todos os registros
+          recs:       []
         };
       }
-      prodMap[pk].qntCaixas    += (entry.rec.qntCaixas || 0);
-      prodMap[pk].setupMin     += (entry.setupMin || 0);   // somar setup total
-      prodMap[pk].segments     = prodMap[pk].segments.concat(entry.segments || []);
-      prodMap[pk].setupSegments= (prodMap[pk].setupSegments||[]).concat(entry.setupSegments||[]);
+      prodMap[pk].qntCaixas += (entry.rec.qntCaixas || 0);
+      prodMap[pk].setupMin  += (entry.setupMin || 0);   // somar setup total
+      prodMap[pk].segments  = prodMap[pk].segments.concat(entry.segments || []);
       prodMap[pk].recs.push(entry.rec);
     }
     const prodEntries = Object.values(prodMap);
 
     for(const prodEntry of prodEntries){
-      const { produto, obs, maquina: recMaq, color, qntCaixas, setupMin, segments, setupSegments: prodSetupSegs, recs } = prodEntry;
+      const { produto, obs, maquina: recMaq, color, qntCaixas, setupMin, segments, recs } = prodEntry;
 
-      // ── Não renderizar produtos sem nenhuma produção nesta semana
-      // (máquina cheia — não cabe na capacidade disponível)
+      // Calcular horas de produção totais (soma de todos os segmentos)
       const prodHrs = segments.reduce((a, sg) => a + (sg.hrsNoDia || 0), 0);
-      if(prodHrs <= 0 && setupMin <= 0) continue;
       const prodHrsStr = fmtHrs(prodHrs);
 
       html+=`<div class="gantt-row" style="grid-template-columns:${gridCols}">`;
@@ -3031,26 +2915,14 @@ function renderGanttSemanal(){
       // Qtd cx col — soma de todos os registros
       html+=`<div class="g-col-qty"><div class="g-col-qty-txt">${qntCaixas}<br><span style="font-size:9px;color:var(--text3);font-weight:400">cx</span></div></div>`;
 
-      // Tempo col — só produção; tooltip mostra total com setup
-      const totalHrsComSetup = prodHrs + setupMin/60;
-      const totalHrsTooltip = setupMin > 0
-        ? `Produção: ${prodHrsStr} + Setup: ${fmtHrs(setupMin/60)} = Total: ${fmtHrs(totalHrsComSetup)}`
-        : `Produção: ${prodHrsStr}`;
-      html+=`<div style="display:flex;align-items:center;justify-content:center;border-left:1px solid var(--border);background:var(--s1);font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:600;color:var(--warn);padding:4px 2px;text-align:center" title="${totalHrsTooltip}">${prodHrsStr}</div>`;
+      // Tempo col
+      html+=`<div style="display:flex;align-items:center;justify-content:center;border-left:1px solid var(--border);background:var(--s1);font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:600;color:var(--warn);padding:4px 2px;text-align:center">${prodHrsStr}</div>`;
 
       // Set Up col — setup total (apenas o primeiro registro tem setup real)
       const setupHrs=setupMin/60;
       const setupStr=setupMin>0?fmtHrs(setupHrs):'—';
       const setupColor=setupMin>0?'var(--orange)':'var(--text3)';
-      // Verificar se setup não está configurado (para tooltip diagnóstico)
-      const setupPadrao=getSetupPadrao(recMaq);
-      const temSetupFS=!!(SETUP_FIRESTORE[recMaq] && Object.keys(SETUP_FIRESTORE[recMaq]).length>0);
-      const setupTooltip=setupMin>0
-        ? `Setup: ${setupStr}`
-        : (setupPadrao>0||temSetupFS
-            ? `Setup: ${setupStr} (produto único na máquina, sem troca)`
-            : `⚠ Setup padrão não configurado — defina em Configurações → Máquinas`);
-      html+=`<div style="display:flex;align-items:center;justify-content:center;border-left:1px solid var(--border);background:var(--s1);font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:${setupMin>0?'600':'400'};color:${setupColor};padding:4px 2px;text-align:center" title="${setupTooltip}">${setupStr}</div>`;
+      html+=`<div style="display:flex;align-items:center;justify-content:center;border-left:1px solid var(--border);background:var(--s1);font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:${setupMin>0?'600':'400'};color:${setupColor};padding:4px 2px;text-align:center" title="Tempo de setup calculado para a troca de produto: ${setupStr}">${setupStr}</div>`;
 
       // H. Prog. col — total scheduled hours for this machine this week (only first row)
       const weekProgStr=firstRowOfMaq?fmtHrs(maqTotH):'';
@@ -3070,13 +2942,12 @@ function renderGanttSemanal(){
         const isWknd=hoursOnDayMaq(day,maq)===0 && hoursOnDay(day)===0;
         const isToday=dateStr(day)===today;
         const daySeg=segments.filter(s=>s.dayIdx===di);
-        const daySetupSeg=(prodSetupSegs||[]).filter(s=>s.dayIdx===di);
         const blocks=ganttGetBlocks(day,maq);
         const dayCapMin=(hoursOnDayMaq(day,maq))*60;
 
         html+=`<div class="g-day ${isWknd?'weekend':''}" style="${isToday?'background:rgba(0,229,204,.04)':''}">`;
 
-        if((daySeg.length||daySetupSeg.length) && dayCapMin>0){
+        if(daySeg.length && dayCapMin>0){
           // Show bars for each segment (one per shift block used)
           html+=`<div class="g-bar-wrap" style="position:relative;width:100%;height:100%">`;
 
@@ -3091,17 +2962,6 @@ function renderGanttSemanal(){
             html+=`<div style="position:absolute;left:${blkLeft.toFixed(1)}%;width:${blkW.toFixed(1)}%;top:0;bottom:0;background:${blkColors[blk.turnoIdx]||''};border-left:1px dashed rgba(255,255,255,.06)"></div>`;
           });
 
-          // ── Setup bars (laranja, menor altura, atrás da produção) ──
-          daySetupSeg.forEach(seg=>{
-            const leftPct=seg.startPct.toFixed(1);
-            const widthPct=Math.max(0.5,(seg.endPct-seg.startPct)).toFixed(1);
-            const setupLabel=fmtHrs(seg.setupMin/60);
-            html+=`<div style="left:${leftPct}%;width:${widthPct}%;background:var(--orange,#ff9900);opacity:0.85;position:absolute;top:0;height:30%;border-radius:2px 2px 0 0"
-              title="⚙ Setup: ${setupLabel}${seg.turnoLabel?' · '+seg.turnoLabel:''}">
-              ${parseFloat(widthPct)>8?`<span style="font-size:7px;color:#000;padding:0 2px;white-space:nowrap;overflow:hidden;display:block">⚙ ${setupLabel}</span>`:''}
-            </div>`;
-          });
-
           daySeg.forEach(seg=>{
             const leftPct=seg.startPct.toFixed(1);
             const widthPct=(seg.endPct-seg.startPct).toFixed(1);
@@ -3109,7 +2969,7 @@ function renderGanttSemanal(){
             const hrsLabel=fmtHrs(seg.hrsNoDia);
             const turnoTip=seg.turnoLabel?` · ${seg.turnoLabel}`:'';
             const obsTip=obs?` — ${obs}`:'';
-            html+=`<div class="g-bar" style="left:${leftPct}%;width:${widthPct}%;background:${color};opacity:0.9;position:absolute;top:30%;height:70%"
+            html+=`<div class="g-bar" style="left:${leftPct}%;width:${widthPct}%;background:${color};opacity:0.9;position:absolute;top:15%;height:70%"
               title="${produto}${obsTip}${turnoTip} · ${cx} cx · ${hrsLabel}">
               <div class="g-bar-tip">${produto.substring(0,40)}${obs?'<br><span style=\"font-size:9px;opacity:.8\">'+obs+'</span>':''}<br>${cx} cx · ${hrsLabel}${seg.turnoLabel?' · '+seg.turnoLabel:''}</div>
             </div>`;
@@ -3143,18 +3003,6 @@ function renderGanttSemanal(){
   document.getElementById('gantt-table').innerHTML=html;
   document.getElementById('gantt-summary').innerHTML='';
 
-  // ── Helper: recalcula o gridTemplateColumns a partir dos valores atuais ──
-  function _buildGanttGrid(){
-    const MAQ_W=72,QTY_W=48,TEMPO_W=52,SETUP_W=52,TOTMAQ_W=68,DQTY_W=36;
-    const lw=parseInt(localStorage.getItem('gantt-label-width')||'280');
-    const ow=parseInt(localStorage.getItem('gantt-obs-width')||'140');
-    return `${MAQ_W}px ${lw}px ${QTY_W}px ${TEMPO_W}px ${SETUP_W}px ${TOTMAQ_W}px ${ow}px repeat(7,1fr) repeat(7,${DQTY_W}px)`;
-  }
-  function _applyGanttGrid(){
-    const g=_buildGanttGrid();
-    document.querySelectorAll('.gantt-row, .gantt-head-row').forEach(el=>el.style.gridTemplateColumns=g);
-  }
-
   // ── Resize da coluna Produto do Gantt ──
   (function initGanttLabelResizer(){
     const resizer = document.getElementById('gantt-label-resizer');
@@ -3168,32 +3016,11 @@ function renderGanttSemanal(){
         const delta = ev.clientX - startX;
         const newW = Math.max(120, Math.min(520, startW + delta));
         localStorage.setItem('gantt-label-width', newW);
-        _applyGanttGrid();
-      }
-      function onUp(){
-        resizer.querySelector('div').style.background = 'var(--border)';
-        document.removeEventListener('mousemove', onMove);
-        document.removeEventListener('mouseup', onUp);
-      }
-      document.addEventListener('mousemove', onMove);
-      document.addEventListener('mouseup', onUp);
-    });
-  })();
-
-  // ── Resize da coluna Observação do Gantt ──
-  (function initGanttObsResizer(){
-    const resizer = document.getElementById('gantt-obs-resizer');
-    if(!resizer) return;
-    resizer.addEventListener('mousedown', function(e){
-      e.preventDefault();
-      const startX = e.clientX;
-      const startW = parseInt(localStorage.getItem('gantt-obs-width') || '140');
-      resizer.querySelector('div').style.background = 'var(--cyan)';
-      function onMove(ev){
-        const delta = ev.clientX - startX;
-        const newW = Math.max(60, Math.min(400, startW + delta));
-        localStorage.setItem('gantt-obs-width', newW);
-        _applyGanttGrid();
+        const MAQ_W=72, QTY_W=48, TEMPO_W=52, SETUP_W=52, TOTMAQ_W=68, OBS_W=140, DQTY_W=36;
+        const newGrid=`${MAQ_W}px ${newW}px ${QTY_W}px ${TEMPO_W}px ${SETUP_W}px ${TOTMAQ_W}px ${OBS_W}px repeat(7,1fr) repeat(7,${DQTY_W}px)`;
+        document.querySelectorAll('.gantt-row, .gantt-head-row').forEach(el=>{
+          el.style.gridTemplateColumns = newGrid;
+        });
       }
       function onUp(){
         resizer.querySelector('div').style.background = 'var(--border)';
@@ -6743,7 +6570,7 @@ function settingsNav(section){
   }
 
   // ── Grupo Produtos ──
-  const prodGroupSections=['produtos','ficha-tecnica-cfg'];
+  const prodGroupSections=['produtos','ficha-tecnica-cfg','categoria'];
   const prodGroupBtn=document.getElementById('snav-produtos-group-btn');
   const prodSubmenu=document.getElementById('snav-produtos-submenu');
   const prodChevron=document.getElementById('snav-produtos-chevron');
@@ -6771,8 +6598,8 @@ function settingsNav(section){
   if(section==='setup-maquinas') setTimeout(()=>renderSetupMaquinas(), 50);
   if(section==='gestao-lojas') setTimeout(()=>renderGestaoLojas(), 50);
   if(section==='ficha-tecnica-cfg') setTimeout(()=>renderFichaTecnicaCfg(), 50);
+  if(section==='categoria') setTimeout(async()=>{ await carregarCategoriasCached(); renderCategoriasCfg(); }, 50);
   if(section==='produtos') setTimeout(()=>renderProdutosCfg(), 50);
-  if(section==='processos') setTimeout(()=>renderProcessos(), 50);
 }
 
 function handleImportZip(file){
@@ -6885,6 +6712,8 @@ async function salvarMaquinaFirestore(dados) {
     codigo: (dados.codigo||'').trim(),
     tipo: (dados.tipo||'').trim(),
     setor: (dados.setor||'').trim(),
+    categoria: (dados.categoria||'').trim(),
+    classificacao: (dados.classificacao||'').trim(),
     status: dados.status || 'ativa',
     pcMin: parseFloat(dados.pcMin) || 0,
     eficiencia: parseFloat(dados.eficiencia) || 100,
@@ -6942,6 +6771,7 @@ function renderCadastroMaquinas() {
     const capHora = cap ? cap.porHora.toLocaleString('pt-BR') + ' saq' : '<span style="color:var(--text3)">—</span>';
     const capDia = cap ? cap.porDia.toLocaleString('pt-BR') + ' saq' : '<span style="color:var(--text3)">—</span>';
     const tipoSetor = [d.tipo, d.setor].filter(Boolean).join(' / ') || '<span style="color:var(--text3)">—</span>';
+    const catClass = [d.categoria, d.classificacao].filter(Boolean).join(' • ');
     const nProds = Array.isArray(d.produtosCompativeis) ? d.produtosCompativeis.length : 0;
     const prodsBadge = nProds > 0
       ? `<span style="background:rgba(139,92,246,.15);color:var(--purple);border:1px solid rgba(139,92,246,.3);border-radius:4px;padding:2px 6px;font-size:10px;font-weight:700">${nProds} prod.</span>`
@@ -6960,6 +6790,8 @@ function renderCadastroMaquinas() {
       <span><span style="color:var(--text3)">Turnos:</span> <span style="color:var(--text2)">${d.nTurnos || '—'}</span></span>
       <span><span style="color:var(--text3)">Hrs/turno:</span> <span style="color:var(--text2)">${d.hTurno || '—'}</span></span>
       <span><span style="color:var(--text3)">Setup padrão:</span> <span style="color:var(--text2)">${setupPadrao}</span></span>
+      <span><span style="color:var(--text3)">Categoria:</span> <span style="color:var(--text2)">${d.categoria || '—'}</span></span>
+      <span><span style="color:var(--text3)">Classificação:</span> <span style="color:var(--text2)">${d.classificacao || '—'}</span></span>
     </div>`;
     if (nProds > 0) {
       const prodsRows = d.produtosCompativeis.map(p => {
@@ -6984,7 +6816,7 @@ function renderCadastroMaquinas() {
     }
     return `<tr style="border-bottom:1px solid var(--border)" onmouseover="this.style.background='var(--s2)'" onmouseout="this.style.background=''">
       <td style="padding:10px 14px;font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--text1);font-weight:600">${m}${d.codigo ? `<span style="font-size:10px;color:var(--text3);font-weight:400;margin-left:6px">${d.codigo}</span>` : ''}</td>
-      <td style="padding:10px 10px;font-size:12px;color:var(--text2)">${tipoSetor}</td>
+      <td style="padding:10px 10px;font-size:12px;color:var(--text2)">${tipoSetor}<div style="margin-top:4px;font-size:10px;color:var(--text3)">${catClass || '—'}</div></td>
       <td style="padding:10px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--warn)">${d.pcMin ? d.pcMin + ' und/min' : '<span style="color:var(--text3)">—</span>'}</td>
       <td style="padding:10px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--cyan)">${capHora}</td>
       <td style="padding:10px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--cyan)">${capDia}</td>
@@ -7021,6 +6853,8 @@ function openAddMaquina() {
   document.getElementById('maq-cod-inp').value = '';
   document.getElementById('maq-tipo-inp').value = '';
   document.getElementById('maq-setor-inp').value = '';
+  const maqCat = document.getElementById('maq-categoria-inp'); if (maqCat) maqCat.value = '';
+  const maqCls = document.getElementById('maq-classificacao-inp'); if (maqCls) maqCls.value = '';
   document.getElementById('maq-status-inp').value = 'ativa';
   document.getElementById('maq-pcmin-inp').value = '';
   document.getElementById('maq-efic-inp').value = '';
@@ -7031,6 +6865,7 @@ function openAddMaquina() {
   document.getElementById('maq-pchora-inp').value = '';
   document.getElementById('maq-pcturno-inp').value = '';
   document.getElementById('maq-pcdia-inp').value = '';
+  carregarCategoriasCached().then(()=>preencherSelectCategorias('maq-categoria-inp',''));
   switchMaqTab('dados');
   populateMaqProdSel();
   renderMaqProdsLista();
@@ -7047,6 +6882,8 @@ function openEditMaquina(nome) {
   document.getElementById('maq-cod-inp').value = d.codigo || '';
   document.getElementById('maq-tipo-inp').value = d.tipo || '';
   document.getElementById('maq-setor-inp').value = d.setor || '';
+  carregarCategoriasCached().then(()=>preencherSelectCategorias('maq-categoria-inp', d.categoria || ''));
+  const maqClsEdit = document.getElementById('maq-classificacao-inp'); if (maqClsEdit) maqClsEdit.value = d.classificacao || '';
   document.getElementById('maq-status-inp').value = d.status || 'ativa';
   // Usar != null para não confundir 0 com vazio
   document.getElementById('maq-pcmin-inp').value = (d.pcMin != null && d.pcMin !== '') ? d.pcMin : '';
@@ -7178,6 +7015,8 @@ async function saveMaquinaModal() {
     codigo: document.getElementById('maq-cod-inp').value || '',
     tipo: document.getElementById('maq-tipo-inp').value || '',
     setor: document.getElementById('maq-setor-inp').value || '',
+    categoria: (document.getElementById('maq-categoria-inp')?.value || '').trim(),
+    classificacao: (document.getElementById('maq-classificacao-inp')?.value || '').trim(),
     status: document.getElementById('maq-status-inp').value || 'ativa',
     pcMin: pcMinVal || 0,
     eficiencia: parseFloat(document.getElementById('maq-efic-inp').value) || 100,
@@ -7410,6 +7249,7 @@ function normalizeProdutoFirestore(data) {
     maquina: data.maquinaPadrao || data.maquina || '',
     kg_fd: data.kg_fd || 0,
     categoria: data.categoria || '',
+    classificacao: data.classificacao || '',
     coberturaDias: data.coberturaDias || 0,
     estoqueMinimo: data.estoqueMinimo || 0,
     ativo: data.ativo !== false,
@@ -7480,6 +7320,7 @@ async function salvarProdutoFirestore(dados) {
     maquinaPadrao: dados.maquina || '',
     kg_fd: 0,
     categoria: dados.categoria || '',
+    classificacao: dados.classificacao || '',
     coberturaDias: parseInt(dados.coberturaDias) || 0,
     estoqueMinimo: parseFloat(dados.estoqueMinimo) || 0,
     ativo: dados.ativo !== false,
@@ -7590,6 +7431,8 @@ function renderProdutosCfg() {
         <div style="display:flex;align-items:center;gap:6px;margin-top:5px;flex-wrap:wrap">
           <span style="font-size:10px;color:${desativado?'var(--text4)':'var(--warn)'};font-family:'JetBrains Mono',monospace">${p.pc_min} und/min</span>
           <span style="font-size:10px;color:var(--text3);font-family:'JetBrains Mono',monospace">${p.unid}un/cx</span>
+          ${p.categoria ? `<span style="font-size:10px;color:var(--cyan);background:rgba(0,212,255,.08);border:1px solid rgba(0,212,255,.18);padding:2px 7px;border-radius:10px">${p.categoria}</span>` : ''}
+          ${p.classificacao ? `<span style="font-size:10px;color:var(--text2);background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);padding:2px 7px;border-radius:10px">${p.classificacao}</span>` : ''}
           <span style="color:var(--text3);font-size:10px">·</span>
           ${maqTags}
         </div>
@@ -7671,6 +7514,8 @@ function openAddProduto() {
   ['pm-cobertura','pm-prod-min','pm-multiplo','pm-prioridade'].forEach(id => { const el = document.getElementById(id); if(el) el.value = ''; });
   const tipoMin = document.getElementById('pm-tipo-min'); if(tipoMin) tipoMin.value = '';
   const pmAtivo = document.getElementById('pm-ativo'); if(pmAtivo) pmAtivo.value = 'true';
+  carregarCategoriasCached().then(()=>preencherSelectCategorias('prod-categoria-inp',''));
+  const prodCls = document.getElementById('prod-classificacao-inp'); if (prodCls) prodCls.value = '';
   const pmInsumos = document.getElementById('pm-insumos-list'); if(pmInsumos) pmInsumos.innerHTML = '';
   const titleEl = document.getElementById('prod-modal-title') || document.getElementById('maq-modal-title');
   if(titleEl) titleEl.textContent = 'Novo Produto';
@@ -7702,6 +7547,8 @@ function editarProduto(cod, maquina, descricao) {
   const elTipo = document.getElementById('pm-tipo-min');   if(elTipo) elTipo.value  = produto.tipoMinimo          || '';
   const elPrio = document.getElementById('pm-prioridade'); if(elPrio) elPrio.value  = produto.prioridadeProducao  || '';
   const elAtivo= document.getElementById('pm-ativo');      if(elAtivo) elAtivo.value = (produto.produtoAtivo !== false) ? 'true' : 'false';
+  carregarCategoriasCached().then(()=>preencherSelectCategorias('prod-categoria-inp', produto.categoria || ''));
+  const prodClsEdit = document.getElementById('prod-classificacao-inp'); if (prodClsEdit) prodClsEdit.value = produto.classificacao || '';
   
   // Popular máquinas no select
   const sel = document.getElementById('pm-maq');
@@ -7827,9 +7674,11 @@ async function saveProdModal() {
   const tipoMinimo         = document.getElementById('pm-tipo-min')?.value             || '';
   const prioridadeProducao = parseInt(document.getElementById('pm-prioridade')?.value) || 2;
   const produtoAtivo       = document.getElementById('pm-ativo')?.value !== 'false';
+  const categoria          = (document.getElementById('prod-categoria-inp')?.value || '').trim();
+  const classificacao      = (document.getElementById('prod-classificacao-inp')?.value || '').trim();
 
   const dados = {
-    cod, descricao: desc, unid, kg_fd: 0, pc_min: pcmin, maquina: maq,
+    cod, descricao: desc, unid, kg_fd: 0, pc_min: pcmin, maquina: maq, categoria, classificacao,
     metaCoberturaDias, producaoMinima, multiploProducao, tipoMinimo, prioridadeProducao, produtoAtivo
   };
 
@@ -8943,7 +8792,6 @@ const MODULO_ACOES = {
   configuracoes: ['visualizar','editar','administrar'],
   funcionarios : ['visualizar','editar','criar','excluir'],
   usuarios     : ['visualizar','editar','criar','excluir','administrar'],
-  relatorios   : ['visualizar','exportar'],
 };
 
 // Descrição detalhada do que cada ação libera em cada módulo
@@ -9016,10 +8864,6 @@ const MODULO_ACOES_DESC = {
     criar      : 'Criar novos usuários com acesso ao sistema',
     excluir    : 'Excluir usuários permanentemente',
     administrar: 'Forçar reset de senha e ativar/desativar contas',
-  },
-  relatorios   : {
-    visualizar : 'Ver a aba de relatórios',
-    exportar   : 'Exportar relatórios em Excel, PDF e Imagem',
   },
 };
 
@@ -9519,7 +9363,6 @@ function buildSidebar(user) {
     { tab:'api-sync',      icon:'🔌', label:'Importação/API',    modulo:'importacao' },
     { tab:'funcionarios',  icon:'👷', label:'Funcionários',      modulo:'funcionarios' },
     { tab:'usuarios',      icon:'👥', label:'Usuários',          modulo:'usuarios' },
-    { tab:'relatorios',    icon:'📊', label:'Relatórios',        modulo:'relatorios' },
   ];
 
   // Filtra apenas os que o perfil pode visualizar
@@ -9539,8 +9382,7 @@ function switchTabSidebar(name) {
     'dashboard':'dashboard','programacao':'programacao','maquinas':'maquinas',
     'gantt':'gantt','apontamento':'realizado','insumos-maq':'insumos_maq',
     'insumos-geral':'insumos_geral','calculos':'calculos','prog-auto':'calculos',
-    'projecao':'projecao','ficha-tecnica':'ficha_tecnica','api-sync':'importacao',
-    'relatorios':'relatorios'
+    'projecao':'projecao','ficha-tecnica':'ficha_tecnica','api-sync':'importacao'
   };
   const modulo = moduloMap[name];
   if (modulo && !canAccess(modulo)) {
@@ -9570,8 +9412,7 @@ function switchTabSidebar(name) {
     'dashboard':'Dashboard','programacao':'Programação','maquinas':'Máquinas',
     'gantt':'Prog. Visual','apontamento':'Realizado','insumos-maq':'Insumos / Máq.',
     'insumos-geral':'Insumos Geral','ficha-tecnica':'Ficha Técnica',
-    'api-sync':'Importação/API','calculos':'Prog. Automática','projecao':'Projeção de Vendas',
-    'relatorios':'Relatórios'
+    'api-sync':'Importação/API','calculos':'Prog. Automática','projecao':'Projeção de Vendas'
   };
   if(bc) bc.innerHTML = `<span>PROGPROD MES</span> <span style="opacity:.4">/</span> <span class="cur">${labels[name]||name}</span>`;
   // Tab-specific renders
@@ -9585,23 +9426,7 @@ function switchTabSidebar(name) {
   if(name==='api-sync') renderApiSync();
   if(name==='calculos'||name==='prog-auto') renderCalculos();
   if(name==='projecao') renderProjecao();
-  if(name==='relatorios') {
-    // Garantir que o painel existe antes de inicializar
-    let rPanel = document.getElementById('panel-relatorios');
-    if (!rPanel) {
-      rPanel = document.createElement('div');
-      rPanel.id = 'panel-relatorios';
-      rPanel.className = 'panel';
-      const container = document.getElementById('main-content')
-        || document.getElementById('content')
-        || document.getElementById('app')
-        || document.body;
-      container.appendChild(rPanel);
-    }
-    rPanel.classList.add('on');
-    // Renderizar o sub-tab ativo ao entrar na aba
-    setTimeout(() => grpRender(), 80);
-  }
+  if(name==='relatorios') renderRelatorios();
   if(name==='usuarios') { openSettings(); setTimeout(()=>settingsNav('usuarios'), 80); }
 }
 
@@ -11386,35 +11211,25 @@ function gerarProgAutomarica(){
 
         let cxRestante = cxNecessario;
 
-        // ── CONCENTRAÇÃO: preferir SEMPRE uma única máquina que absorva tudo.
-        // Só divide em 2 máquinas se NENHUMA consegue produzir a quantidade
-        // inteira sozinha nesta semana.
-        //
-        // Buscar a máquina com maior score que cabe o produto inteiro.
-        // Se não existir nenhuma, usar a principal com split mínimo.
-        const maqQueAbsorve = maqsOrdenadas.find(mc => {
-          const hrsNec = (cxRestante * c.unid) / (mc.pc_min * 60);
-          return maqHrsRestantes[sem][mc.maquina] >= hrsNec - 0.01;
-        });
-
-        // Reordenar: se existe máquina que absorve tudo, colocá-la na frente
-        const maqsParaAlocar = maqQueAbsorve
-          ? [maqQueAbsorve, ...maqsOrdenadas.filter(mc => mc.maquina !== maqQueAbsorve.maquina)]
-          : maqsOrdenadas;
-
-        const maqPrinc       = maqsParaAlocar[0];
-        const hrsNecPrinc    = (cxRestante * c.unid) / (maqPrinc.pc_min * 60);
-        const maxHrsPrinc    = maqHrsRestantes[sem][maqPrinc.maquina];
-        const hrsAlocarPrinc = Math.min(hrsNecPrinc, maxHrsPrinc);
-        const cxAlocarPrinc  = Math.floor(hrsAlocarPrinc * 60 * maqPrinc.pc_min / c.unid);
+        // FIX 2 — validar capacidade real antes de confirmar alocação.
+        // Tentar alocar na máquina principal primeiro. Se não couber tudo,
+        // só divide em uma segunda máquina. O que ainda sobrar (excedente)
+        // é marcado em c._carryover para ser considerado na próxima semana.
+        const maqPrinc = maqsOrdenadas[0];
+        const hrsNecPrinc = (cxRestante * c.unid) / (maqPrinc.pc_min * 60);
+        // maxHrsPrinc = hrsRestantes já incorpora maxPctMaq (aplicado na inicialização)
+        const maxHrsPrinc = maqHrsRestantes[sem][maqPrinc.maquina];
+        const hrsJaAlocPrinc = 0; // redundante: maqHrsRestantes já desconta alocações via registrarAlocacao
+        const hrsPermitPrinc   = maxHrsPrinc;
+        const hrsAlocarPrinc   = Math.min(hrsNecPrinc, hrsPermitPrinc);
+        const cxAlocarPrinc    = Math.floor(hrsAlocarPrinc * 60 * maqPrinc.pc_min / c.unid);
         const principalAbsorve = cxAlocarPrinc >= cxRestante;
 
-        // Só divide se NENHUMA máquina absorve o produto inteiro esta semana
-        const maxMaquinas = (principalAbsorve || maqQueAbsorve) ? 1 : Math.min(2, maqsParaAlocar.length);
+        const maxMaquinas = principalAbsorve ? 1 : Math.min(2, maqsOrdenadas.length);
 
         let cxEfetivamenteAlocado = 0;
         for(let mi = 0; mi < maxMaquinas && cxRestante > 0; mi++){
-          const mc        = maqsParaAlocar[mi];
+          const mc        = maqsOrdenadas[mi];
           const hrsNec    = (cxRestante * c.unid) / (mc.pc_min * 60);
           // maqHrsRestantes já inclui o cap de maxPctMaq
           const hrsAlocar = Math.min(hrsNec, maqHrsRestantes[sem][mc.maquina]);
@@ -11588,11 +11403,7 @@ function gerarProgAutomarica(){
           if(!maqAlts.length) continue;
 
           for(const maqAlt of maqAlts){
-            // ── Não mover parcial se isso gera o mesmo produto em 2 máquinas
-            // (já existe alocação deste produto na máquina alternativa)
-            const jaExisteNaAlt = allocations[c.prod].detalhes[sem].some(d => d.maq === maqAlt.maquina);
-
-            // Tentar mover o lote inteiro primeiro (sem criar split)
+            // Tentar mover o lote inteiro primeiro
             const redistTotal = calcRedistribuicao(c, det, maqAlt, sem, det.cx);
             if(redistTotal){
               removerAlocacao(c.prod, sem, det);
@@ -11602,11 +11413,8 @@ function gerarProgAutomarica(){
             }
 
             // Se o lote inteiro não cabe, tentar mover metade (split entre máquinas)
-            // Só permitido se: volume grande (> 1 dia) E produto ainda não está na outra máquina
             const cxMetade = Math.floor(det.cx / 2);
-            // ── Fix 2: não dividir se o produto cabe em ≤ 1 dia — volume pequeno não merece split
-            const hrsUmDiaA = (maqCapPorSemana[sem]?.[maqSrc] || maqCapacidades[maqSrc] || 44) / 5;
-            if(cxMetade > 0 && det.hrs > hrsUmDiaA + 0.5 && !jaExisteNaAlt){
+            if(cxMetade > 0){
               const redistMetade = calcRedistribuicao(c, det, maqAlt, sem, cxMetade);
               if(redistMetade){
                 // Atualizar alocação na máquina original com a metade restante
@@ -11775,15 +11583,6 @@ function gerarProgAutomarica(){
             return d.maq !== maqOciosa.maq && (maqHrsUsadas[sem][d.maq] / capD) > 0.60;
           });
           if(!detSrc || detSrc.cx < 2) continue;
-
-          // ── Não mover se o produto já está na máquina ociosa (evita duplicar)
-          const jaExisteNaOciosa = allocations[c.prod].detalhes[sem].some(d => d.maq === maqOciosa.maq);
-          if(jaExisteNaOciosa) continue;
-
-          // ── Fix 2: não dividir se o produto cabe em menos de 1 dia útil na
-          // máquina de origem — é pouco volume e dividir gera 2 registros desnecessários.
-          const hrsUmDiaSrc = (maqCapPorSemana[sem]?.[detSrc.maq] || maqCapacidades[detSrc.maq] || 44) / 5;
-          if(detSrc.hrs <= hrsUmDiaSrc + 0.5) continue; // cabe em ~1 dia, não divide
 
           // Velocidade nesta máquina ociosa
           const mcOciosa = c.maquinasCompativeis.find(mc => mc.maquina === maqOciosa.maq);
@@ -14773,10 +14572,6 @@ window.filterMaqWeek = filterMaqWeek;
 window.ganttSetWeek = ganttSetWeek;
 window.aponSaveFunc = aponSaveFunc;
 window.aponRecalcRow = aponRecalcRow;
-// Expor funções de apontamento para relatorios.js e outros módulos externos
-window.aponGetAllKeys  = aponGetAllKeys;
-window.aponStorageGet  = aponStorageGet;
-window.aponStorageSet  = aponStorageSet;
 window.pdFinalize = pdFinalize;
 window.editFichaByCod = editFichaByCod;
 window.saveFichaByCod = saveFichaByCod;
@@ -14837,496 +14632,435 @@ window.pa_onModoChange   = pa_onModoChange;
 window.pa_onMesChange    = function(){ if(paResultados.length) renderProgAutomaticaResultado(); };
 window.paToggleInsumos = paToggleInsumos;
 window.progToggleInsumos = progToggleInsumos;
+window.carregarCategoriasFirestore = carregarCategoriasFirestore;
+window.carregarCategoriasCached = carregarCategoriasCached;
+window.preencherSelectCategorias = preencherSelectCategorias;
+window.saveCategoriaCfg = saveCategoriaCfg;
+window.renderCategoriasCfg = renderCategoriasCfg;
+window.editarCategoriaCfg = editarCategoriaCfg;
+window.excluirCategoriaCfg = excluirCategoriaCfg;
+window.resetCategoriaForm = resetCategoriaForm;
 
-// ═══════════════════════════════════════════════════════════════════
-// HANDLERS GRP* — Sub-abas de Relatórios
-// Compatível com o HTML: grp-panel-producao / maquinas / produtos /
-// funcionarios / insumos / gerencial
-// Filtros globais: grp-dt-ini, grp-dt-fim, grp-maq, grp-prod, grp-func
-// ═══════════════════════════════════════════════════════════════════
+// ================================================================
+//  RELATÓRIOS COM OCUPAÇÃO POR CATEGORIA
+// ================================================================
+let relMode = 'mes';
 
-let _grpTabAtivo = 'producao';
+function relSetMode(mode){
+  relMode = mode || 'mes';
+  ['mes','semana','dia'].forEach(m=>{
+    const btn = document.getElementById('rel-mode-' + m);
+    if(!btn) return;
+    const on = m === relMode;
+    btn.className = on ? 'btn btn-primary' : 'btn btn-ghost';
+  });
+  relPopulateFilters();
+  renderRelatorios();
+}
 
-// ── Ler filtros globais do topo ───────────────────────────────────
-function _grpFiltros() {
-  const v = id => (document.getElementById(id) || {}).value || '';
+function relNormStr(v){ return String(v || '').trim(); }
+function relNormProd(v){ return relNormStr(v).toUpperCase(); }
+
+function relFindProduto(rec){
+  const prodNome = relNormProd(rec?.produto);
+  const prodCod = relNormStr(rec?.prodCod || rec?.cod || rec?.produtoCod);
+  const all = (typeof getAllProdutos === 'function' ? getAllProdutos() : (window.PRODUTOS || [])) || [];
+  return all.find(p => relNormProd(p.descricao || p.nome) === prodNome || relNormStr(p.cod) === prodCod) || null;
+}
+
+function relFindMaquina(nome){
+  return getMaquinaData ? getMaquinaData(nome) : ((window.MAQUINAS_DATA || {})[nome] || null);
+}
+
+function relGetPcMin(rec){
+  const maq = rec?.maquina || '';
+  const prod = rec?.produto || '';
+  let pc = 0;
+  if (typeof getPcMinMaquinaProduto === 'function') pc = parseFloat(getPcMinMaquinaProduto(maq, prod)) || 0;
+  if (!pc) {
+    const p = relFindProduto(rec);
+    pc = parseFloat(p?.pc_min || p?.velocidadePadrao) || 0;
+  }
+  if (!pc) {
+    const m = relFindMaquina(maq);
+    pc = parseFloat(m?.pcMin) || 0;
+  }
+  return pc;
+}
+
+function relGetUnidades(rec){
+  const qCx = parseFloat(rec?.qntCaixas) || 0;
+  const qUn = parseFloat(rec?.qntUnid) || 0;
+  if (qUn > 0) return qUn;
+  const p = relFindProduto(rec);
+  const unid = parseFloat(p?.unid || rec?.unidPorCx) || 1;
+  return qCx * unid;
+}
+
+function relGetProducaoMin(rec, realizadoCaixas){
+  const pc = relGetPcMin(rec);
+  if (!pc || pc <= 0) return 0;
+  const unidades = (()=>{
+    const q = parseFloat(realizadoCaixas);
+    if (q > 0) {
+      const p = relFindProduto(rec);
+      const unid = parseFloat(p?.unid || rec?.unidPorCx) || 1;
+      return q * unid;
+    }
+    return relGetUnidades(rec);
+  })();
+  return unidades > 0 ? (unidades / pc) : 0;
+}
+
+function relGetDateRangeForKey(key){
+  if(!key) return null;
+  if(/^dia\|/.test(key)){
+    const ds = key.split('|')[1];
+    const d = new Date(ds + 'T12:00:00');
+    return { start: d, end: d, label: d.toLocaleDateString('pt-BR') };
+  }
+  if(/^semana\|/.test(key)){
+    const ds = key.split('|')[1];
+    const start = new Date(ds + 'T12:00:00');
+    const end = new Date(start); end.setDate(end.getDate() + 6);
+    return { start, end, label: `${start.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'})} – ${end.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'})}` };
+  }
+  if(/^mes\|/.test(key)){
+    const [,yy,mm] = key.split('|');
+    const start = new Date(parseInt(yy), parseInt(mm)-1, 1, 12, 0, 0);
+    const end = new Date(parseInt(yy), parseInt(mm), 0, 12, 0, 0);
+    return { start, end, label: start.toLocaleDateString('pt-BR',{month:'long',year:'numeric'}) };
+  }
+  return null;
+}
+
+function relBuildPeriodOptions(){
+  const map = new Map();
+  (records || []).forEach(r=>{
+    const ds = r.dtDesejada || r.dtSolicitacao;
+    if(!ds) return;
+    const d = new Date(ds + 'T12:00:00');
+    if(relMode === 'dia'){
+      map.set('dia|' + ds, ds);
+    } else if(relMode === 'semana'){
+      const mon = getWeekMonday(d);
+      map.set('semana|' + dateStr(mon), mon);
+    } else {
+      const yy = d.getFullYear();
+      const mm = String(d.getMonth()+1).padStart(2,'0');
+      map.set(`mes|${yy}|${mm}`, new Date(yy, d.getMonth(), 1, 12, 0, 0));
+    }
+  });
+  return [...map.entries()].sort((a,b)=> String(b[0]).localeCompare(String(a[0]))).map(([key,val])=>{
+    const range = relGetDateRangeForKey(key);
+    return { key, label: range?.label || key, sortVal: val };
+  }).sort((a,b)=> b.sortVal - a.sortVal);
+}
+
+function relPopulateFilters(){
+  const opts = relBuildPeriodOptions();
+  const selA = document.getElementById('rel-periodo-a');
+  const selB = document.getElementById('rel-periodo-b');
+  const prodSel = document.getElementById('rel-produto-filter');
+  const maqSel = document.getElementById('rel-maq-filter');
+  if(selA){
+    const cur = selA.value;
+    selA.innerHTML = '<option value="">— Período A —</option>' + opts.map(o=>`<option value="${o.key}">${o.label}</option>`).join('');
+    selA.value = cur && opts.some(o=>o.key===cur) ? cur : (opts[0]?.key || '');
+  }
+  if(selB){
+    const cur = selB.value;
+    selB.innerHTML = '<option value="">— Período B (opcional) —</option>' + opts.map(o=>`<option value="${o.key}">${o.label}</option>`).join('');
+    selB.value = cur && opts.some(o=>o.key===cur) ? cur : (opts[1]?.key || '');
+  }
+  if(prodSel){
+    const cur = prodSel.value;
+    const produtos = [...new Set((records||[]).map(r=>relNormStr(r.produto)).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'pt-BR'));
+    prodSel.innerHTML = '<option value="">Todos os produtos</option>' + produtos.map(p=>`<option value="${p}">${p}</option>`).join('');
+    prodSel.value = produtos.includes(cur) ? cur : '';
+  }
+  if(maqSel){
+    const cur = maqSel.value;
+    const maqs = [...new Set((records||[]).map(r=>relNormStr(r.maquina)).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'pt-BR'));
+    maqSel.innerHTML = '<option value="">Todas as máquinas</option>' + maqs.map(m=>`<option value="${m}">${m}</option>`).join('');
+    maqSel.value = maqs.includes(cur) ? cur : '';
+  }
+}
+
+function relGetPeriodoData(periodKey){
+  const range = relGetDateRangeForKey(periodKey);
+  const produtoFiltro = relNormStr(document.getElementById('rel-produto-filter')?.value);
+  const maqFiltro = relNormStr(document.getElementById('rel-maq-filter')?.value);
+  const startStr = range ? dateStr(range.start) : '';
+  const endStr = range ? dateStr(range.end) : '';
+  const recs = (records || []).filter(r=>{
+    const ds = r.dtDesejada || r.dtSolicitacao || '';
+    if(range && (!ds || ds < startStr || ds > endStr)) return false;
+    if(produtoFiltro && relNormStr(r.produto) !== produtoFiltro) return false;
+    if(maqFiltro && relNormStr(r.maquina) !== maqFiltro) return false;
+    return true;
+  }).sort((a,b)=>{
+    const da = (a.dtDesejada || a.dtSolicitacao || '') + '|' + String(a.sortOrder || a.id || 0).padStart(12,'0');
+    const db = (b.dtDesejada || b.dtSolicitacao || '') + '|' + String(b.sortOrder || b.id || 0).padStart(12,'0');
+    return da.localeCompare(db);
+  });
+
+  const byCatProd = {};
+  const byCatMaq = {};
+  const byMaq = {};
+  let totalProgCx = 0, totalRealCx = 0, totalProdMin = 0, totalSetupMin = 0, totalReg = recs.length;
+  const seqByMaq = {};
+
+  recs.forEach(r=>{
+    const realizadoCx = rptGetRealizado(r.id, range ? (()=>{
+      const arr=[]; const d=new Date(range.start); while(dateStr(d)<=endStr){ arr.push(dateStr(d)); d.setDate(d.getDate()+1);} return arr;
+    })() : [r.dtDesejada || r.dtSolicitacao].filter(Boolean)) || 0;
+    const prod = relFindProduto(r) || {};
+    const maq = relFindMaquina(r.maquina) || {};
+    const catProd = relNormStr(prod.categoria || r.categoria || 'SEM CATEGORIA');
+    const catMaq = relNormStr(maq.categoria || 'SEM CATEGORIA');
+    const prodMin = relGetProducaoMin(r, realizadoCx || (parseFloat(r.qntCaixas)||0));
+    const progCx = parseFloat(r.qntCaixas) || 0;
+    totalProgCx += progCx;
+    totalRealCx += realizadoCx;
+    totalProdMin += prodMin;
+    if(!byCatProd[catProd]) byCatProd[catProd] = { categoria: catProd, programadoCx:0, realizadoCx:0, producaoMin:0, setupMin:0, totalMin:0, registros:0 };
+    if(!byCatMaq[catMaq]) byCatMaq[catMaq] = { categoria: catMaq, programadoCx:0, realizadoCx:0, producaoMin:0, setupMin:0, totalMin:0, registros:0, horasDisponiveis:0, maquinas:new Set() };
+    if(!byMaq[r.maquina]) byMaq[r.maquina] = { maquina:r.maquina, programadoCx:0, realizadoCx:0, producaoMin:0, setupMin:0, totalMin:0, registros:0, categoria: catMaq };
+    byCatProd[catProd].programadoCx += progCx;
+    byCatProd[catProd].realizadoCx += realizadoCx;
+    byCatProd[catProd].producaoMin += prodMin;
+    byCatProd[catProd].registros += 1;
+    byCatMaq[catMaq].programadoCx += progCx;
+    byCatMaq[catMaq].realizadoCx += realizadoCx;
+    byCatMaq[catMaq].producaoMin += prodMin;
+    byCatMaq[catMaq].registros += 1;
+    byCatMaq[catMaq].maquinas.add(r.maquina);
+    byMaq[r.maquina].programadoCx += progCx;
+    byMaq[r.maquina].realizadoCx += realizadoCx;
+    byMaq[r.maquina].producaoMin += prodMin;
+    byMaq[r.maquina].registros += 1;
+    if(!seqByMaq[r.maquina]) seqByMaq[r.maquina] = [];
+    seqByMaq[r.maquina].push({ rec:r, catProd, catMaq });
+  });
+
+  Object.entries(seqByMaq).forEach(([maqNome, itens])=>{
+    let prevProd = null;
+    itens.forEach(({rec, catProd, catMaq}, idx)=>{
+      const curProd = relNormStr(rec.produto);
+      let setupMin = 0;
+      if(idx > 0 && prevProd && curProd && prevProd !== curProd && typeof getSetupMin === 'function') {
+        setupMin = parseFloat(getSetupMin(maqNome, prevProd, curProd)) || 0;
+      }
+      if(setupMin > 0){
+        totalSetupMin += setupMin;
+        byCatProd[catProd].setupMin += setupMin;
+        byCatMaq[catMaq].setupMin += setupMin;
+        byMaq[maqNome].setupMin += setupMin;
+      }
+      prevProd = curProd || prevProd;
+    });
+  });
+
+  Object.values(byCatProd).forEach(x=> x.totalMin = x.producaoMin + x.setupMin);
+  Object.values(byCatMaq).forEach(x=> x.totalMin = x.producaoMin + x.setupMin);
+  Object.values(byMaq).forEach(x=> x.totalMin = x.producaoMin + x.setupMin);
+
+  if(range){
+    Object.values(byCatMaq).forEach(cat=>{
+      let horasDisponiveis = 0;
+      const d = new Date(range.start);
+      while(dateStr(d) <= endStr){
+        [...cat.maquinas].forEach(maqNome=>{ horasDisponiveis += (typeof hoursOnMachineDay === 'function' ? hoursOnMachineDay(maqNome, d) : hoursOnDay(d)) || 0; });
+        d.setDate(d.getDate() + 1);
+      }
+      cat.horasDisponiveis = horasDisponiveis;
+      cat.ocupacaoPct = horasDisponiveis > 0 ? ((cat.totalMin / 60) / horasDisponiveis) * 100 : 0;
+      cat.maquinasCount = cat.maquinas.size;
+      delete cat.maquinas;
+    });
+    Object.values(byMaq).forEach(item=>{
+      let horasDisp = 0;
+      const d = new Date(range.start);
+      while(dateStr(d) <= endStr){
+        horasDisp += (typeof hoursOnMachineDay === 'function' ? hoursOnMachineDay(item.maquina, d) : hoursOnDay(d)) || 0;
+        d.setDate(d.getDate()+1);
+      }
+      item.horasDisponiveis = horasDisp;
+      item.ocupacaoPct = horasDisp > 0 ? ((item.totalMin / 60) / horasDisp) * 100 : 0;
+    });
+  }
+
+  const catProdRows = Object.values(byCatProd).sort((a,b)=> b.totalMin - a.totalMin);
+  const catMaqRows = Object.values(byCatMaq).sort((a,b)=> b.totalMin - a.totalMin);
+  const maqRows = Object.values(byMaq).sort((a,b)=> b.totalMin - a.totalMin);
+  catProdRows.forEach(x=> x.participacaoPct = totalProdMin + totalSetupMin > 0 ? (x.totalMin / (totalProdMin + totalSetupMin)) * 100 : 0);
+
   return {
-    dtIni:   v('grp-dt-ini'),
-    dtFim:   v('grp-dt-fim'),
-    maquina: v('grp-maq'),
-    produto: v('grp-prod'),
-    func:    v('grp-func'),
+    range,
+    recs,
+    totalProgCx,
+    totalRealCx,
+    totalProdMin,
+    totalSetupMin,
+    totalMin: totalProdMin + totalSetupMin,
+    totalReg,
+    catProdRows,
+    catMaqRows,
+    maqRows
   };
 }
 
-// ── Trocar sub-aba ────────────────────────────────────────────────
-function grpSwitchTab(id) {
-  _grpTabAtivo = id;
-
-  // Atualizar botões ativos
-  document.querySelectorAll('.grp-tab-btn, [onclick*="grpSwitchTab"]').forEach(btn => {
-    const oc = btn.getAttribute('onclick') || '';
-    const on = oc.includes("'" + id + "'") || oc.includes('"' + id + '"');
-    btn.classList.toggle('on', on);
-  });
-
-  // Esconder todos os painéis grp
-  document.querySelectorAll('.grp-panel, [id^="grp-panel-"]').forEach(p => {
-    p.classList.remove('on');
-  });
-
-  // Mostrar painel correspondente
-  const alvo = document.getElementById('grp-panel-' + id);
-  if (alvo) alvo.classList.add('on');
-
-  // Renderizar conteúdo do painel
-  grpRender();
+function relFmtMinToH(v){ return `${(v/60).toFixed(1)}h`; }
+function relFmtPct(v){ return `${(parseFloat(v)||0).toFixed(1)}%`; }
+function relSafeDelta(a,b){ return (parseFloat(a)||0) - (parseFloat(b)||0); }
+function relDeltaHtml(a,b,suffix=''){
+  const d = relSafeDelta(a,b);
+  const c = d > 0 ? 'var(--green)' : d < 0 ? 'var(--red)' : 'var(--text3)';
+  const sign = d > 0 ? '+' : '';
+  return `<span style="font-size:11px;color:${c};font-weight:700">${sign}${typeof d === 'number' ? d.toFixed ? d.toFixed(1) : d : d}${suffix}</span>`;
 }
 
-// ── Renderizar sub-aba ativa ──────────────────────────────────────
-function grpRender() {
-  switch (_grpTabAtivo) {
-    case 'producao':     _grpRenderProducao();     break;
-    case 'maquinas':     _grpRenderMaquinas();     break;
-    case 'produtos':     _grpRenderProdutos();     break;
-    case 'funcionarios': _grpRenderFuncionarios(); break;
-    case 'insumos':      _grpRenderInsumos();      break;
-    case 'gerencial':    _grpRenderGerencial();    break;
-  }
-}
+function renderRelatorios(){
+  const panel = document.getElementById('panel-relatorios');
+  if(!panel) return;
+  relPopulateFilters();
+  const periodoA = document.getElementById('rel-periodo-a')?.value;
+  const periodoB = document.getElementById('rel-periodo-b')?.value;
+  const dataA = relGetPeriodoData(periodoA);
+  const dataB = periodoB ? relGetPeriodoData(periodoB) : null;
 
-// ── Helper: filtrar records pelos filtros globais ─────────────────
-function _grpGetRecords() {
-  const f = _grpFiltros();
-  return (window.records || []).filter(r => {
-    const dt = r.dtDesejada || r.dtSolicitacao || '';
-    if (f.dtIni   && dt && dt < f.dtIni)           return false;
-    if (f.dtFim   && dt && dt > f.dtFim)            return false;
-    if (f.maquina && r.maquina !== f.maquina)       return false;
-    if (f.produto && r.produto !== f.produto)       return false;
-    return true;
-  });
-}
+  const kpis = document.getElementById('rel-kpis');
+  const chart = document.getElementById('rel-chart');
+  const chartTitle = document.getElementById('rel-chart-title');
+  const thead = document.getElementById('rel-thead');
+  const tbody = document.getElementById('rel-tbody');
+  if(!kpis || !chart || !thead || !tbody) return;
 
-// ── Helper: realizado de um record no período ─────────────────────
-function _grpRealizado(r) {
-  const f = _grpFiltros();
-  let total = 0;
-  try {
-    const suffix = '_' + r.id;
-    const keys = (window.aponGetAllKeys || (() => []))();
-    keys.forEach(k => {
-      if (!k.endsWith(suffix)) return;
-      const dt = k.slice('apon_'.length, k.length - suffix.length);
-      if (f.dtIni && dt < f.dtIni) return;
-      if (f.dtFim && dt > f.dtFim) return;
-      const d = (window.aponStorageGet || (() => null))(k);
-      if (d) [7,8,9,10,11,12,13,14,15,16,17].forEach(h => { total += parseInt(d[h])||0; });
-    });
-  } catch(e) {}
-  return total;
-}
-
-// ── Helper: renderizar tabela em um container ─────────────────────
-function _grpTabela(containerId, colunas, linhas, totais) {
-  const el = document.getElementById(containerId);
-  if (!el) return;
-  if (!linhas.length) {
-    el.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text3);font-size:12px">Sem dados no período selecionado</div>';
+  if(!dataA || !dataA.range){
+    kpis.innerHTML = '<div class="sbox" style="grid-column:1/-1;padding:18px;color:var(--text3)">Sem período disponível.</div>';
+    chart.innerHTML = '';
+    thead.innerHTML = '';
+    tbody.innerHTML = '';
     return;
   }
-  const th = colunas.map(c =>
-    `<th style="padding:9px 12px;text-align:${c.right?'right':'left'};font-family:'JetBrains Mono',monospace;font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.8px;color:var(--text3)">${c.label}</th>`
-  ).join('');
 
-  const rows = linhas.map((row, i) => {
-    const bg = i % 2 === 1 ? 'background:rgba(255,255,255,.01)' : '';
-    const cells = colunas.map(c => {
-      const v = row[c.key];
-      const cor = c.cor ? c.cor(v, row) : 'var(--text)';
-      return `<td style="padding:9px 12px;${c.right?'text-align:right;':''}font-family:${c.mono?'\'JetBrains Mono\',monospace':'inherit'};color:${cor}">${v ?? '—'}</td>`;
-    }).join('');
-    return `<tr style="${bg}">${cells}</tr>`;
+  const cards = [
+    {label:'Programado', val: dataA.totalProgCx.toLocaleString('pt-BR'), delta: dataB ? relDeltaHtml(dataA.totalProgCx, dataB.totalProgCx, ' cx') : ''},
+    {label:'Realizado', val: dataA.totalRealCx.toLocaleString('pt-BR'), delta: dataB ? relDeltaHtml(dataA.totalRealCx, dataB.totalRealCx, ' cx') : ''},
+    {label:'Produção', val: relFmtMinToH(dataA.totalProdMin), delta: dataB ? relDeltaHtml(dataA.totalProdMin/60, dataB.totalProdMin/60, 'h') : ''},
+    {label:'Setup', val: relFmtMinToH(dataA.totalSetupMin), delta: dataB ? relDeltaHtml(dataA.totalSetupMin/60, dataB.totalSetupMin/60, 'h') : ''},
+    {label:'Tempo Total', val: relFmtMinToH(dataA.totalMin), delta: dataB ? relDeltaHtml(dataA.totalMin/60, dataB.totalMin/60, 'h') : ''},
+  ];
+  kpis.innerHTML = cards.map(c=>`<div class="sbox" style="padding:14px;border:1px solid var(--border)"><div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.8px">${c.label}</div><div style="font-family:'JetBrains Mono',monospace;font-size:24px;color:var(--cyan);font-weight:700;margin-top:6px">${c.val}</div><div style="margin-top:6px">${c.delta || '&nbsp;'}</div></div>`).join('');
+
+  chartTitle.textContent = `Ocupação por categoria do produto — ${dataA.range.label}` + (dataB?.range?.label ? ` vs ${dataB.range.label}` : '');
+  const maxTotal = Math.max(...dataA.catProdRows.map(x=>x.totalMin), ...(dataB ? dataB.catProdRows.map(x=>x.totalMin) : [0]), 1);
+  const bMap = Object.fromEntries((dataB?.catProdRows || []).map(x=>[x.categoria, x]));
+  chart.innerHTML = dataA.catProdRows.slice(0,8).map(x=>{
+    const b = bMap[x.categoria];
+    const wA = Math.max(4, Math.round((x.totalMin / maxTotal) * 100));
+    const wB = b ? Math.max(4, Math.round((b.totalMin / maxTotal) * 100)) : 0;
+    return `<div style="margin-bottom:12px">
+      <div style="display:flex;justify-content:space-between;gap:12px;margin-bottom:4px"><span style="font-size:12px;color:var(--text)">${x.categoria}</span><span style="font-size:11px;color:var(--text3)">${relFmtMinToH(x.totalMin)}${b ? ' · B: ' + relFmtMinToH(b.totalMin) : ''}</span></div>
+      <div style="height:10px;background:var(--s2);border-radius:999px;overflow:hidden;position:relative">
+        <div style="width:${wA}%;height:10px;background:var(--cyan);border-radius:999px"></div>
+        ${b ? `<div style="width:${wB}%;height:4px;background:var(--amber);border-radius:999px;position:absolute;left:0;top:3px;opacity:.9"></div>` : ''}
+      </div>
+    </div>`;
+  }).join('') || '<div style="padding:12px;color:var(--text3)">Sem dados para o filtro atual.</div>';
+
+  thead.innerHTML = `<tr>
+    <th style="text-align:left;padding:10px 12px">Categoria Produto</th>
+    <th style="text-align:right;padding:10px 12px">Prog. cx</th>
+    <th style="text-align:right;padding:10px 12px">Real. cx</th>
+    <th style="text-align:right;padding:10px 12px">Produção</th>
+    <th style="text-align:right;padding:10px 12px">Setup</th>
+    <th style="text-align:right;padding:10px 12px">Total</th>
+    <th style="text-align:right;padding:10px 12px">%</th>
+    <th style="text-align:right;padding:10px 12px">Ocup. Máq. Cat.</th>
+  </tr>`;
+
+  const maqCatMap = Object.fromEntries(dataA.catMaqRows.map(x=>[x.categoria, x]));
+  tbody.innerHTML = dataA.catProdRows.map((x,i)=>{
+    const maqCat = maqCatMap[x.categoria];
+    return `<tr style="${i%2?'background:rgba(255,255,255,.02)':''}">
+      <td style="padding:10px 12px;color:var(--text);font-weight:600">${x.categoria}</td>
+      <td style="padding:10px 12px;text-align:right;font-family:'JetBrains Mono',monospace;color:var(--cyan)">${x.programadoCx.toLocaleString('pt-BR')}</td>
+      <td style="padding:10px 12px;text-align:right;font-family:'JetBrains Mono',monospace;color:var(--green)">${x.realizadoCx.toLocaleString('pt-BR')}</td>
+      <td style="padding:10px 12px;text-align:right;font-family:'JetBrains Mono',monospace">${relFmtMinToH(x.producaoMin)}</td>
+      <td style="padding:10px 12px;text-align:right;font-family:'JetBrains Mono',monospace;color:var(--amber)">${relFmtMinToH(x.setupMin)}</td>
+      <td style="padding:10px 12px;text-align:right;font-family:'JetBrains Mono',monospace;color:var(--text)">${relFmtMinToH(x.totalMin)}</td>
+      <td style="padding:10px 12px;text-align:right;font-family:'JetBrains Mono',monospace">${relFmtPct(x.participacaoPct)}</td>
+      <td style="padding:10px 12px;text-align:right;font-family:'JetBrains Mono',monospace">${maqCat ? relFmtPct(maqCat.ocupacaoPct) : '—'}</td>
+    </tr>`;
   }).join('');
 
-  const tot = totais ? `<tr style="background:rgba(242,101,34,.06);border-top:1px solid rgba(242,101,34,.2)">
-    ${colunas.map(c => `<td style="padding:9px 12px;${c.right?'text-align:right;':''}font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--cyan)">${totais[c.key] ?? ''}</td>`).join('')}
-  </tr>` : '';
+  tbody.innerHTML += `<tr style="background:rgba(0,229,204,.05);border-top:1px solid rgba(0,229,204,.18)">
+    <td style="padding:10px 12px;font-weight:700">TOTAL</td>
+    <td style="padding:10px 12px;text-align:right;font-family:'JetBrains Mono',monospace;color:var(--cyan)">${dataA.totalProgCx.toLocaleString('pt-BR')}</td>
+    <td style="padding:10px 12px;text-align:right;font-family:'JetBrains Mono',monospace;color:var(--green)">${dataA.totalRealCx.toLocaleString('pt-BR')}</td>
+    <td style="padding:10px 12px;text-align:right;font-family:'JetBrains Mono',monospace">${relFmtMinToH(dataA.totalProdMin)}</td>
+    <td style="padding:10px 12px;text-align:right;font-family:'JetBrains Mono',monospace;color:var(--amber)">${relFmtMinToH(dataA.totalSetupMin)}</td>
+    <td style="padding:10px 12px;text-align:right;font-family:'JetBrains Mono',monospace">${relFmtMinToH(dataA.totalMin)}</td>
+    <td style="padding:10px 12px;text-align:right;font-family:'JetBrains Mono',monospace">100.0%</td>
+    <td style="padding:10px 12px;text-align:right;font-family:'JetBrains Mono',monospace">—</td>
+  </tr>`;
 
-  el.innerHTML = `<div style="overflow-x:auto">
-    <table style="width:100%;border-collapse:collapse;font-size:12px">
-      <thead style="background:var(--s2);border-bottom:1px solid var(--border)"><tr>${th}</tr></thead>
-      <tbody>${rows}${tot}</tbody>
-    </table>
-  </div>`;
+  // bloco adicional por categoria de máquina abaixo da tabela principal
+  tbody.innerHTML += dataA.catMaqRows.length ? `<tr><td colspan="8" style="padding:14px 12px 6px;color:var(--text3);font-size:10px;text-transform:uppercase;letter-spacing:1px">Ocupação por categoria de máquina</td></tr>` : '';
+  tbody.innerHTML += dataA.catMaqRows.map(x=>`<tr style="background:rgba(255,255,255,.015)">
+    <td style="padding:8px 12px;color:var(--purple)">🏭 ${x.categoria}</td>
+    <td colspan="2" style="padding:8px 12px;color:var(--text3)">${x.maquinasCount || 0} máquina(s)</td>
+    <td style="padding:8px 12px;text-align:right;font-family:'JetBrains Mono',monospace">${relFmtMinToH(x.producaoMin)}</td>
+    <td style="padding:8px 12px;text-align:right;font-family:'JetBrains Mono',monospace;color:var(--amber)">${relFmtMinToH(x.setupMin)}</td>
+    <td style="padding:8px 12px;text-align:right;font-family:'JetBrains Mono',monospace">${relFmtMinToH(x.totalMin)}</td>
+    <td style="padding:8px 12px;text-align:right;font-family:'JetBrains Mono',monospace">${x.horasDisponiveis ? x.horasDisponiveis.toFixed(1)+'h' : '—'}</td>
+    <td style="padding:8px 12px;text-align:right;font-family:'JetBrains Mono',monospace">${relFmtPct(x.ocupacaoPct)}</td>
+  </tr>`).join('');
 }
 
-// ── PRODUÇÃO ──────────────────────────────────────────────────────
-function _grpRenderProducao() {
-  const body = document.getElementById('grp-panel-producao');
-  if (!body) return;
-  const recs = _grpGetRecords();
-  if (!recs.length) {
-    body.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text3);font-size:12px">Sem dados no período</div>';
-    return;
-  }
-  // Agrupar por dia
-  const porDia = {};
-  recs.forEach(r => {
-    const dt = r.dtDesejada || r.dtSolicitacao || '';
-    if (!dt) return;
-    if (!porDia[dt]) porDia[dt] = { programado: 0, realizado: 0 };
-    porDia[dt].programado += r.qntCaixas || 0;
-    porDia[dt].realizado  += _grpRealizado(r);
-  });
-  const linhas = Object.entries(porDia).sort().map(([dt, d]) => {
-    const efic = d.programado > 0 ? Math.round(d.realizado / d.programado * 100) : 0;
-    const cor  = efic >= 85 ? '#2ec97a' : efic >= 70 ? '#f5c518' : '#e8321a';
-    return { data: dt, programado: d.programado.toLocaleString('pt-BR'), realizado: d.realizado.toLocaleString('pt-BR'), efic: efic + '%', _efic: efic };
-  });
-  const totP = Object.values(porDia).reduce((a,d) => a + d.programado, 0);
-  const totR = Object.values(porDia).reduce((a,d) => a + d.realizado, 0);
-  const totE = totP > 0 ? Math.round(totR / totP * 100) : 0;
-  _grpTabela('grp-panel-producao', [
-    { key:'data',       label:'Data',        mono:true },
-    { key:'programado', label:'Programado',  right:true, mono:true },
-    { key:'realizado',  label:'Realizado',   right:true, mono:true, cor:(v,r) => r._efic >= 85 ? '#2ec97a' : r._efic >= 70 ? '#f5c518' : '#e8321a' },
-    { key:'efic',       label:'Eficiência',  right:true, mono:true, cor:(v,r) => r._efic >= 85 ? '#2ec97a' : r._efic >= 70 ? '#f5c518' : '#e8321a' },
-  ], linhas, { data:'TOTAL', programado: totP.toLocaleString('pt-BR'), realizado: totR.toLocaleString('pt-BR'), efic: totE + '%' });
+function relExportXLSX(){
+  if(typeof XLSX === 'undefined'){ toast('XLSX não disponível', 'err'); return; }
+  const dataA = relGetPeriodoData(document.getElementById('rel-periodo-a')?.value);
+  if(!dataA){ toast('Selecione um período', 'err'); return; }
+  const wb = XLSX.utils.book_new();
+  const ws1 = XLSX.utils.json_to_sheet(dataA.catProdRows.map(x=>({
+    Categoria: x.categoria,
+    Programado_Cx: x.programadoCx,
+    Realizado_Cx: x.realizadoCx,
+    Producao_h: +(x.producaoMin/60).toFixed(2),
+    Setup_h: +(x.setupMin/60).toFixed(2),
+    Total_h: +(x.totalMin/60).toFixed(2),
+    Participacao_pct: +x.participacaoPct.toFixed(2)
+  })));
+  XLSX.utils.book_append_sheet(wb, ws1, 'Cat_Produto');
+  const ws2 = XLSX.utils.json_to_sheet(dataA.catMaqRows.map(x=>({
+    Categoria_Maquina: x.categoria,
+    Maquinas: x.maquinasCount || 0,
+    Horas_Disponiveis: +(x.horasDisponiveis || 0).toFixed(2),
+    Producao_h: +(x.producaoMin/60).toFixed(2),
+    Setup_h: +(x.setupMin/60).toFixed(2),
+    Total_h: +(x.totalMin/60).toFixed(2),
+    Ocupacao_pct: +(x.ocupacaoPct || 0).toFixed(2)
+  })));
+  XLSX.utils.book_append_sheet(wb, ws2, 'Cat_Maquina');
+  const ws3 = XLSX.utils.json_to_sheet(dataA.maqRows.map(x=>({
+    Maquina: x.maquina,
+    Categoria: x.categoria,
+    Programado_Cx: x.programadoCx,
+    Realizado_Cx: x.realizadoCx,
+    Producao_h: +(x.producaoMin/60).toFixed(2),
+    Setup_h: +(x.setupMin/60).toFixed(2),
+    Total_h: +(x.totalMin/60).toFixed(2),
+    Horas_Disponiveis: +(x.horasDisponiveis || 0).toFixed(2),
+    Ocupacao_pct: +(x.ocupacaoPct || 0).toFixed(2)
+  })));
+  XLSX.utils.book_append_sheet(wb, ws3, 'Maquinas');
+  XLSX.writeFile(wb, `relatorio_categorias_${today()}.xlsx`);
+  toast('Relatório exportado!', 'ok');
 }
 
-// ── MÁQUINAS ──────────────────────────────────────────────────────
-function _grpRenderMaquinas() {
-  const recs = _grpGetRecords();
-  const porMaq = {};
-  recs.forEach(r => {
-    if (!r.maquina) return;
-    if (!porMaq[r.maquina]) porMaq[r.maquina] = { programado:0, realizado:0, ordens:0 };
-    porMaq[r.maquina].programado += r.qntCaixas || 0;
-    porMaq[r.maquina].realizado  += _grpRealizado(r);
-    porMaq[r.maquina].ordens++;
-  });
-  const linhas = Object.entries(porMaq).sort().map(([maq, d]) => {
-    const efic = d.programado > 0 ? Math.round(d.realizado / d.programado * 100) : 0;
-    return { maquina: maq, ordens: d.ordens, programado: d.programado.toLocaleString('pt-BR'), realizado: d.realizado.toLocaleString('pt-BR'), efic: efic + '%', _efic: efic };
-  });
-  const totP = Object.values(porMaq).reduce((a,d) => a + d.programado, 0);
-  const totR = Object.values(porMaq).reduce((a,d) => a + d.realizado, 0);
-  _grpTabela('grp-panel-maquinas', [
-    { key:'maquina',    label:'Máquina',     mono:true, cor:()=>'var(--cyan)' },
-    { key:'ordens',     label:'Ordens',      right:true, mono:true },
-    { key:'programado', label:'Programado',  right:true, mono:true },
-    { key:'realizado',  label:'Realizado',   right:true, mono:true, cor:(v,r) => r._efic >= 85 ? '#2ec97a' : r._efic >= 70 ? '#f5c518' : '#e8321a' },
-    { key:'efic',       label:'Eficiência',  right:true, mono:true, cor:(v,r) => r._efic >= 85 ? '#2ec97a' : r._efic >= 70 ? '#f5c518' : '#e8321a' },
-  ], linhas, { maquina:'TOTAL', programado: totP.toLocaleString('pt-BR'), realizado: totR.toLocaleString('pt-BR'), efic: '' });
-}
-
-// ── PRODUTOS ──────────────────────────────────────────────────────
-function _grpRenderProdutos() {
-  const recs = _grpGetRecords();
-  const porProd = {};
-  recs.forEach(r => {
-    if (!r.produto) return;
-    if (!porProd[r.produto]) porProd[r.produto] = { maquina: r.maquina, programado:0, realizado:0 };
-    porProd[r.produto].programado += r.qntCaixas || 0;
-    porProd[r.produto].realizado  += _grpRealizado(r);
-  });
-  const linhas = Object.entries(porProd)
-    .sort((a,b) => b[1].realizado - a[1].realizado)
-    .map(([prod, d]) => {
-      const efic = d.programado > 0 ? Math.round(d.realizado / d.programado * 100) : 0;
-      return { produto: prod, maquina: d.maquina || '—', programado: d.programado.toLocaleString('pt-BR'), realizado: d.realizado.toLocaleString('pt-BR'), efic: efic + '%', _efic: efic };
-    });
-  _grpTabela('grp-panel-produtos', [
-    { key:'produto',    label:'Produto' },
-    { key:'maquina',    label:'Máquina',     mono:true, cor:()=>'var(--cyan)' },
-    { key:'programado', label:'Programado',  right:true, mono:true },
-    { key:'realizado',  label:'Realizado',   right:true, mono:true, cor:(v,r) => r._efic >= 85 ? '#2ec97a' : r._efic >= 70 ? '#f5c518' : '#e8321a' },
-    { key:'efic',       label:'Eficiência',  right:true, mono:true, cor:(v,r) => r._efic >= 85 ? '#2ec97a' : r._efic >= 70 ? '#f5c518' : '#e8321a' },
-  ], linhas, null);
-}
-
-// ── FUNCIONÁRIOS ──────────────────────────────────────────────────
-function _grpRenderFuncionarios() {
-  const body = document.getElementById('grp-panel-funcionarios');
-  if (!body) return;
-  const f = _grpFiltros();
-  // Agrupar apontamentos por funcionário
-  const porFunc = {};
-  try {
-    const keys = (window.aponGetAllKeys || (() => []))();
-    keys.forEach(k => {
-      // chave: apon_YYYY-MM-DD_recId
-      const parts = k.split('_');
-      if (parts.length < 3 || parts[0] !== 'apon') return;
-      const dt = parts[1];
-      if (f.dtIni && dt < f.dtIni) return;
-      if (f.dtFim && dt > f.dtFim) return;
-      const d = (window.aponStorageGet || (() => null))(k);
-      if (!d) return;
-      const func = d.operador || d.funcionario || '—';
-      if (f.func && func !== f.func) return;
-      if (!porFunc[func]) porFunc[func] = { total: 0, dias: new Set() };
-      [7,8,9,10,11,12,13,14,15,16,17].forEach(h => { porFunc[func].total += parseInt(d[h])||0; });
-      porFunc[func].dias.add(dt);
-    });
-  } catch(e) {}
-  const linhas = Object.entries(porFunc)
-    .sort((a,b) => b[1].total - a[1].total)
-    .map(([func, d]) => ({
-      funcionario: func,
-      dias: d.dias.size,
-      total: d.total.toLocaleString('pt-BR') + ' cx',
-      media: d.dias.size > 0 ? Math.round(d.total / d.dias.size).toLocaleString('pt-BR') + ' cx/dia' : '—',
-    }));
-  if (!linhas.length) {
-    body.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text3);font-size:12px">Sem apontamentos no período — verifique os filtros de data</div>';
-    return;
-  }
-  _grpTabela('grp-panel-funcionarios', [
-    { key:'funcionario', label:'Funcionário' },
-    { key:'dias',        label:'Dias',         right:true, mono:true },
-    { key:'total',       label:'Total Prod.',  right:true, mono:true, cor:()=>'var(--cyan)' },
-    { key:'media',       label:'Média/Dia',    right:true, mono:true },
-  ], linhas, null);
-}
-
-// ── INSUMOS ───────────────────────────────────────────────────────
-function _grpRenderInsumos() {
-  const body = document.getElementById('grp-panel-insumos');
-  if (!body) return;
-  try {
-    const pc = window.projecaoCalculada || [];
-    if (!pc.length) {
-      body.innerHTML = '<div style="padding:24px;color:var(--text3);font-size:12px">📈 Calcule a Projeção de Vendas para ver análise de cobertura de insumos</div>';
-      return;
-    }
-    const riscoConfig = {
-      critico: { cor:'#e8321a', label:'CRÍTICO', icon:'🔴' },
-      alto:    { cor:'#f5c518', label:'ALTO',    icon:'🟡' },
-      medio:   { cor:'#f26522', label:'MÉDIO',   icon:'🟠' },
-      ok:      { cor:'#2ec97a', label:'OK',      icon:'🟢' },
-    };
-    const sorted = [...pc].sort((a,b) => {
-      const rv = {critico:0,alto:1,medio:2,ok:3};
-      return (rv[a.risco]??4) - (rv[b.risco]??4);
-    });
-    body.innerHTML = sorted.slice(0,20).map(p => {
-      const cfg = riscoConfig[p.risco] || riscoConfig.ok;
-      return `<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;border-radius:7px;margin-bottom:6px;background:rgba(255,255,255,.03);border:1px solid var(--border)">
-        <div style="display:flex;align-items:center;gap:8px;flex:1;min-width:0">
-          <span>${cfg.icon}</span>
-          <div>
-            <div style="font-size:12px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:280px">${p.produto}</div>
-            <div style="font-size:10px;color:var(--text3)">${p.maquina||'—'} · Demanda: ${p.demandaDiaria?.toFixed(0)??'?'} cx/dia</div>
-          </div>
-        </div>
-        <div style="display:flex;align-items:center;gap:12px;flex-shrink:0">
-          <div style="text-align:right">
-            <div style="font-family:'JetBrains Mono',monospace;font-size:14px;font-weight:700;color:${cfg.cor}">${p.coberturaAtual!=null?p.coberturaAtual.toFixed(1)+'d':'—'}</div>
-            <div style="font-size:9px;color:var(--text3)">COBERTURA</div>
-          </div>
-          <span style="display:inline-block;padding:2px 8px;border-radius:5px;font-size:10px;font-weight:700;background:${cfg.cor}22;color:${cfg.cor};border:1px solid ${cfg.cor}44;min-width:52px;text-align:center">${cfg.label}</span>
-        </div>
-      </div>`;
-    }).join('');
-  } catch(e) {
-    body.innerHTML = '<div style="padding:16px;color:var(--text3);font-size:12px">Erro ao carregar dados de insumos</div>';
-  }
-}
-
-// ── GERENCIAL ─────────────────────────────────────────────────────
-function _grpRenderGerencial() {
-  const recs = _grpGetRecords();
-  // KPIs gerenciais
-  let totalProg = 0, totalReal = 0;
-  const porMaq = {};
-  recs.forEach(r => {
-    const real = _grpRealizado(r);
-    totalProg += r.qntCaixas || 0;
-    totalReal += real;
-    if (!r.maquina) return;
-    if (!porMaq[r.maquina]) porMaq[r.maquina] = { prog:0, real:0 };
-    porMaq[r.maquina].prog += r.qntCaixas || 0;
-    porMaq[r.maquina].real += real;
-  });
-  const efic = totalProg > 0 ? Math.round(totalReal / totalProg * 100) : 0;
-  const eficCor = efic >= 85 ? '#2ec97a' : efic >= 70 ? '#f5c518' : '#e8321a';
-  let rupturas = 0;
-  try { rupturas = (window.projecaoCalculada||[]).filter(p => p.risco==='critico'||p.risco==='alto').length; } catch(e) {}
-
-  const kpiEl = document.getElementById('grp-panel-gerencial');
-  if (!kpiEl) return;
-
-  const kpiHtml = `
-    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px">
-      ${[
-        { label:'Produção Total',   val: totalReal.toLocaleString('pt-BR') + ' cx', cor:'var(--cyan)',  icon:'📦' },
-        { label:'Programado',       val: totalProg.toLocaleString('pt-BR') + ' cx', cor:'var(--text2)', icon:'📋' },
-        { label:'Eficiência Geral', val: efic + '%',                                 cor: eficCor,       icon:'📈' },
-        { label:'Risco Ruptura',    val: rupturas + ' prod.',                        cor: rupturas===0?'#2ec97a':'#e8321a', icon:'🚨' },
-      ].map(k => `
-        <div style="background:var(--s1);border:1px solid var(--border);border-radius:12px;padding:16px 18px;border-left:3px solid ${k.cor}">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-            <div style="font-size:10px;text-transform:uppercase;letter-spacing:.7px;color:var(--text3)">${k.label}</div>
-            <span style="font-size:18px">${k.icon}</span>
-          </div>
-          <div style="font-family:'JetBrains Mono',monospace;font-size:26px;font-weight:700;color:${k.cor}">${k.val}</div>
-        </div>`).join('')}
-    </div>`;
-
-  const linhas = Object.entries(porMaq).sort().map(([maq, d]) => {
-    const e = d.prog > 0 ? Math.round(d.real / d.prog * 100) : 0;
-    return { maquina: maq, programado: d.prog.toLocaleString('pt-BR'), realizado: d.real.toLocaleString('pt-BR'), efic: e + '%', _efic: e };
-  });
-
-  kpiEl.innerHTML = kpiHtml;
-  const tabelaId = 'grp-panel-gerencial-tabela';
-  kpiEl.insertAdjacentHTML('beforeend', `<div id="${tabelaId}"></div>`);
-  _grpTabela(tabelaId, [
-    { key:'maquina',    label:'Máquina',     mono:true, cor:()=>'var(--cyan)' },
-    { key:'programado', label:'Programado',  right:true, mono:true },
-    { key:'realizado',  label:'Realizado',   right:true, mono:true, cor:(v,r)=>r._efic>=85?'#2ec97a':r._efic>=70?'#f5c518':'#e8321a' },
-    { key:'efic',       label:'Eficiência',  right:true, mono:true, cor:(v,r)=>r._efic>=85?'#2ec97a':r._efic>=70?'#f5c518':'#e8321a' },
-  ], linhas, null);
-}
-
-// ── grpClear — botão Limpar ───────────────────────────────────────
-function grpClear() {
-  ['grp-dt-ini','grp-dt-fim','grp-maq','grp-prod','grp-func'].forEach(id => {
-    const el = document.getElementById(id); if (el) el.value = '';
-  });
-  grpRender();
-}
-
-// ── grpExport — botão Excel ───────────────────────────────────────
-function grpExport() {
-  if (window.relatorios && typeof window.relatorios.exportXLSX === 'function') {
-    window.relatorios.exportXLSX();
-    return;
-  }
-  // Fallback: exportar os dados da aba ativa
-  const recs = _grpGetRecords();
-  try {
-    const wb = XLSX.utils.book_new();
-    const rows = [['Produto','Máquina','Programado','Realizado','Data']];
-    recs.forEach(r => rows.push([r.produto||'', r.maquina||'', r.qntCaixas||0, _grpRealizado(r), r.dtDesejada||r.dtSolicitacao||'']));
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), 'Relatório');
-    XLSX.writeFile(wb, 'Relatorio_' + _grpTabAtivo + '_' + new Date().toLocaleDateString('pt-BR').replace(/\//g,'-') + '.xlsx');
-  } catch(e) { alert('Erro ao exportar: ' + e.message); }
-}
-
-window.grpRender         = grpRender;
-window.grpSwitchTab      = grpSwitchTab;
-window.grpClear          = grpClear;
-window.grpExport         = grpExport;
-
-// ═══════════════════════════════════════════════════════════════════
-// PROCESSOS DE PRODUÇÃO
-// ═══════════════════════════════════════════════════════════════════
-
-let _processosList = [];
-
-async function _loadProcessos() {
-  try {
-    const snap = await getDocs(lojaCol('processos'));
-    _processosList = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-  } catch(e) {
-    _processosList = [];
-  }
-}
-
-async function renderProcessos() {
-  await _loadProcessos();
-  const container = document.getElementById('processos-list');
-  if (!container) return;
-
-  if (!_processosList.length) {
-    container.innerHTML = `
-      <div style="padding:32px;text-align:center;color:var(--text3);font-size:12px">
-        <div style="font-size:28px;margin-bottom:8px">⚙️</div>
-        Nenhum processo cadastrado ainda.<br>Clique em <strong>Novo Processo</strong> para adicionar.
-      </div>`;
-    return;
-  }
-
-  container.innerHTML = _processosList.map(p => `
-    <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--border);gap:12px">
-      <div style="flex:1;min-width:0">
-        <div style="font-size:13px;font-weight:600;color:var(--text)">${p.nome || '—'}</div>
-        ${p.descricao ? `<div style="font-size:11px;color:var(--text3);margin-top:2px">${p.descricao}</div>` : ''}
-      </div>
-      <div style="display:flex;gap:6px;flex-shrink:0">
-        <button onclick="openModalProcesso('${p.id}')" style="background:none;border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:11px;color:var(--text2);cursor:pointer;font-family:'Space Grotesk',sans-serif">✏️ Editar</button>
-        <button onclick="deleteProcesso('${p.id}')" style="background:none;border:1px solid rgba(232,50,26,.3);border-radius:6px;padding:5px 10px;font-size:11px;color:#e8321a;cursor:pointer;font-family:'Space Grotesk',sans-serif">🗑️</button>
-      </div>
-    </div>
-  `).join('');
-}
-
-function openModalProcesso(id) {
-  const modal = document.getElementById('modal-processo');
-  if (!modal) return;
-
-  document.getElementById('processo-edit-id').value = id || '';
-  document.getElementById('processo-nome').value = '';
-  document.getElementById('processo-desc').value = '';
-  document.getElementById('processo-modal-title').textContent = id ? 'Editar Processo' : 'Novo Processo';
-
-  if (id) {
-    const p = _processosList.find(x => x.id === id);
-    if (p) {
-      document.getElementById('processo-nome').value = p.nome || '';
-      document.getElementById('processo-desc').value = p.descricao || '';
-    }
-  }
-
-  modal.style.display = 'flex';
-  setTimeout(() => document.getElementById('processo-nome')?.focus(), 80);
-}
-
-function closeModalProcesso() {
-  const modal = document.getElementById('modal-processo');
-  if (modal) modal.style.display = 'none';
-}
-
-async function salvarProcesso() {
-  const nome = (document.getElementById('processo-nome')?.value || '').trim();
-  if (!nome) { toast('Informe o nome do processo', 'err'); return; }
-
-  const descricao = (document.getElementById('processo-desc')?.value || '').trim();
-  const editId    = document.getElementById('processo-edit-id')?.value || '';
-  const payload   = { nome, descricao, atualizadoEm: new Date().toISOString() };
-
-  try {
-    if (editId) {
-      await setDoc(lojaDoc('processos', editId), payload, { merge: true });
-      toast('Processo atualizado!');
-    } else {
-      payload.criadoEm = new Date().toISOString();
-      await addDoc(lojaCol('processos'), payload);
-      toast('Processo criado!');
-    }
-    closeModalProcesso();
-    await renderProcessos();
-  } catch(e) {
-    toast('Erro ao salvar processo: ' + e.message, 'err');
-  }
-}
-
-async function deleteProcesso(id) {
-  if (!confirm('Excluir este processo?')) return;
-  try {
-    await deleteDoc(lojaDoc('processos', id));
-    toast('Processo excluído');
-    await renderProcessos();
-  } catch(e) {
-    toast('Erro ao excluir: ' + e.message, 'err');
-  }
-}
-
-window.openModalProcesso  = openModalProcesso;
-window.closeModalProcesso = closeModalProcesso;
-window.salvarProcesso     = salvarProcesso;
-window.deleteProcesso     = deleteProcesso;
-window.renderProcessos    = renderProcessos;
+window.relSetMode = relSetMode;
+window.renderRelatorios = renderRelatorios;
+window.relExportXLSX = relExportXLSX;
