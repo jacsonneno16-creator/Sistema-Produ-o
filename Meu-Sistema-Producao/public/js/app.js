@@ -2704,7 +2704,16 @@ function buildSchedule(monday){
       if(!pcMin){scheduled.push({rec,segments:[],setupMin:0,setupSegments:[]});continue;}
 
       let setupMin=0;
-      if(ri>0){
+      if(ri===0){
+        // Primeiro produto da semana nesta máquina:
+        // Cobrar setup padrão da máquina (troca de bobina / limpeza inicial)
+        // mas apenas se a máquina tem tempoSetupPadrao configurado e há
+        // mais de 1 produto nesta máquina nesta semana (vai haver troca).
+        // Para o primeiro produto não há produto "anterior" conhecido,
+        // então usamos o setup padrão como custo de início de semana.
+        const padrao = getSetupPadrao(maq);
+        if(padrao > 0 && recs.length > 1) setupMin = padrao;
+      } else {
         setupMin = getSetupMin(maq, recs[ri-1].produto, rec.produto);
       }
 
