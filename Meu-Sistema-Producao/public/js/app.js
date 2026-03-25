@@ -409,21 +409,11 @@ window.getLojaAtiva = getLojaAtiva;
 window.setLojaAtiva = setLojaAtiva;
 window.criarLoja = criarLoja;
 
-// Expor helpers de permissão globalmente para scripts não-módulo (ex: relatorios.js)
-window.can = can;
-window.canAccess = canAccess;
-
 // ===== TURNOS POR MÁQUINA (módulo de disponibilidade real) =====
 // Nota: turnosMaquinas.js é carregado como script separado no index.html
 
 // ===== FIREBASE DB REPLACEMENTS (IndexedDB → Firestore) =====
 let records = [], pg = 1;
-// Expor records globalmente para módulos externos (ex: relatorios.js)
-Object.defineProperty(window, 'records', {
-  get() { return records; },
-  set(v) { records = v; },
-  configurable: true,
-});
 const PER = 15;
 
 async function dbAll() {
@@ -476,7 +466,6 @@ let MAQUINAS = [];
 // Cache do Firestore: { maquina: { prodA_norm: { prodB_norm: minutos } } }
 // Populado por carregarSetupFirestore(). Fallback: SETUP_DATA estático abaixo.
 let SETUP_FIRESTORE = {};
-let CATEGORIAS = [];
 
 // ===================================================================
 // ===== CAMADA DE CACHE — evita leituras repetidas ao Firestore =====
@@ -491,7 +480,6 @@ const _cache = {
   _carregadoProdutos:   false,
   _carregadoSetup:      false,
   _carregadoRegistros:  false,
-  _carregadoCategorias: false,
 };
 
 // Invalida o cache de uma ou mais coleções, forçando recarga na próxima chamada
@@ -506,7 +494,6 @@ function invalidateCache(...colecoes){
     if(col === 'produtos')  _cache._carregadoProdutos  = false;
     if(col === 'setup')     _cache._carregadoSetup     = false;
     if(col === 'registros') _cache._carregadoRegistros = false;
-    if(col === 'categorias') _cache._carregadoCategorias = false;
   });
 }
 
@@ -534,122 +521,6 @@ async function carregarProdutosCached(forceReload = false) {
   _cache._carregadoProdutos = true;
 }
 
-async function carregarCategoriasCached(forceReload = false) {
-  if(!forceReload && _cache._carregadoCategorias) return;
-  await carregarCategoriasFirestore();
-  _cache._carregadoCategorias = true;
-}
-
-async function carregarCategoriasFirestore() {
-  try {
-    const snap = await getDocs(query(lojaCol('categorias'), orderBy('ordem'), orderBy('nome')));
-    CATEGORIAS = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-  } catch(e) {
-    console.warn('[CATEGORIAS] Erro ao carregar:', e.message);
-    CATEGORIAS = [];
-  }
-}
-
-function preencherSelectCategorias(selectId, valorAtual = '') {
-  const el = document.getElementById(selectId);
-  if (!el) return;
-  const atual = valorAtual || el.value || '';
-  el.innerHTML = '<option value="">Selecione</option>';
-  (CATEGORIAS || []).filter(c => c.ativo !== false).forEach(c => {
-    const opt = document.createElement('option');
-    opt.value = c.nome || '';
-    opt.textContent = c.nome || '';
-    if ((c.nome || '') === atual) opt.selected = true;
-    el.appendChild(opt);
-  });
-}
-
-function resetCategoriaForm() {
-  const ids = ['cat-edit-id','cat-nome-inp','cat-ordem-inp'];
-  ids.forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
-  const ativo = document.getElementById('cat-ativo-inp'); if (ativo) ativo.value = 'true';
-}
-
-async function saveCategoriaCfg() {
-  const nome = (document.getElementById('cat-nome-inp')?.value || '').trim();
-  const ordem = parseInt(document.getElementById('cat-ordem-inp')?.value || '0') || 0;
-  const ativo = document.getElementById('cat-ativo-inp')?.value !== 'false';
-  const editId = (document.getElementById('cat-edit-id')?.value || '').trim();
-  if (!nome) { toast('Informe o nome da categoria', 'err'); return; }
-  try {
-    const duplicada = (CATEGORIAS || []).find(c => (c.nome || '').trim().toUpperCase() === nome.toUpperCase() && c.id !== editId);
-    if (duplicada) { toast('Categoria já cadastrada', 'err'); return; }
-    const payload = { nome, ordem, ativo, atualizadoEm: new Date().toISOString() };
-    if (editId) {
-      await setDoc(lojaDoc('categorias', editId), { ...payload, criadoEm: (CATEGORIAS.find(c=>c.id===editId)||{}).criadoEm || new Date().toISOString() });
-    } else {
-      await addDoc(lojaCol('categorias'), { ...payload, criadoEm: new Date().toISOString() });
-    }
-    invalidateCache('categorias');
-    await carregarCategoriasCached(true);
-    renderCategoriasCfg();
-    preencherSelectCategorias('maq-categoria-inp');
-    preencherSelectCategorias('prod-categoria-inp');
-    resetCategoriaForm();
-    toast('Categoria salva com sucesso', 'ok');
-  } catch(e) { toast('Erro ao salvar categoria: ' + e.message, 'err'); }
-}
-
-function editarCategoriaCfg(id) {
-  const cat = (CATEGORIAS || []).find(c => c.id === id);
-  if (!cat) return;
-  document.getElementById('cat-edit-id').value = cat.id || '';
-  document.getElementById('cat-nome-inp').value = cat.nome || '';
-  document.getElementById('cat-ordem-inp').value = cat.ordem ?? '';
-  document.getElementById('cat-ativo-inp').value = cat.ativo === false ? 'false' : 'true';
-}
-
-async function excluirCategoriaCfg(id) {
-  const cat = (CATEGORIAS || []).find(c => c.id === id);
-  if (!cat) return;
-  if (!confirm('Excluir categoria "' + cat.nome + '"?')) return;
-  try {
-    await deleteDoc(lojaDoc('categorias', id));
-    invalidateCache('categorias');
-    await carregarCategoriasCached(true);
-    renderCategoriasCfg();
-    preencherSelectCategorias('maq-categoria-inp');
-    preencherSelectCategorias('prod-categoria-inp');
-    toast('Categoria excluída', 'ok');
-  } catch(e) { toast('Erro ao excluir categoria: ' + e.message, 'err'); }
-}
-
-function renderCategoriasCfg() {
-  const el = document.getElementById('cat-list');
-  const cnt = document.getElementById('cat-count');
-  if (cnt) cnt.textContent = String((CATEGORIAS || []).length);
-  if (!el) return;
-  const busca = (document.getElementById('cat-search-inp')?.value || '').trim().toLowerCase();
-  const itens = (CATEGORIAS || []).filter(c => !busca || (c.nome || '').toLowerCase().includes(busca));
-  if (!itens.length) {
-    el.innerHTML = '<div style="padding:20px;color:var(--text3);font-size:13px">Nenhuma categoria cadastrada.</div>';
-    return;
-  }
-  el.innerHTML = itens.map(c => {
-    const badge = c.ativo === false
-      ? '<span style="background:rgba(255,71,87,.12);border:1px solid rgba(255,71,87,.28);color:var(--red);padding:2px 8px;border-radius:20px;font-size:10px">Inativa</span>'
-      : '<span style="background:rgba(46,201,122,.12);border:1px solid rgba(46,201,122,.25);color:var(--green);padding:2px 8px;border-radius:20px;font-size:10px">Ativa</span>';
-    return `<div style="padding:10px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:12px">
-      <div style="min-width:0">
-        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-          <span style="font-size:12px;color:var(--text);font-weight:600">${c.nome || ''}</span>
-          ${badge}
-        </div>
-        <div style="font-size:10px;color:var(--text3);font-family:'JetBrains Mono',monospace;margin-top:4px">Ordem: ${c.ordem ?? 0}</div>
-      </div>
-      <div style="display:flex;gap:6px;flex-shrink:0">
-        <button onclick="editarCategoriaCfg('${c.id}')" class="btn btn-ghost" style="padding:4px 8px;font-size:11px;color:var(--cyan)">✏️</button>
-        <button onclick="excluirCategoriaCfg('${c.id}')" class="btn btn-ghost" style="padding:4px 8px;font-size:11px;color:#ff6b6b">🗑️</button>
-      </div>
-    </div>`;
-  }).join('');
-}
-
 // Versão cached de carregarSetupFirestore
 async function carregarSetupCached(forceReload = false) {
   if(!forceReload && _cache._carregadoSetup) return;
@@ -665,34 +536,16 @@ async function carregarSetupFirestore() {
     snap.docs.forEach(d => {
       const data = d.data();
       const maq = data.maquina || '';
-      const pAOrig = (data.produto_origem || '').trim();
-      const pBOrig = (data.produto_destino || '').trim();
-      const pA = normProd(pAOrig);
-      const pB = normProd(pBOrig);
-      // Usar parseInt mas aceitar 0 como valor válido (|| pode descartar 0)
-      const t = (data.tempo_setup != null && data.tempo_setup !== '') ? parseInt(data.tempo_setup) : null;
-      if (!maq || !pA || !pB || t == null) return;
+      const pA = normProd(data.produto_origem || '');
+      const pB = normProd(data.produto_destino || '');
+      const t = parseInt(data.tempo_setup) || 0;
+      if (!maq || !pA || !pB) return;
       if (!SETUP_FIRESTORE[maq]) SETUP_FIRESTORE[maq] = {};
-
-      // Indexar pela chave normalizada (busca principal)
       if (!SETUP_FIRESTORE[maq][pA]) SETUP_FIRESTORE[maq][pA] = {};
       SETUP_FIRESTORE[maq][pA][pB] = t;
-
-      // Indexar também pelo nome original para fallback quando normProd não bate
-      if (pAOrig !== pA) {
-        if (!SETUP_FIRESTORE[maq][pAOrig]) SETUP_FIRESTORE[maq][pAOrig] = {};
-        if (SETUP_FIRESTORE[maq][pAOrig][pBOrig] == null) SETUP_FIRESTORE[maq][pAOrig][pBOrig] = t;
-        if (SETUP_FIRESTORE[maq][pAOrig][pB] == null)     SETUP_FIRESTORE[maq][pAOrig][pB]     = t;
-      }
-
       // Bidirecional se não existir o inverso
       if (!SETUP_FIRESTORE[maq][pB]) SETUP_FIRESTORE[maq][pB] = {};
       if (SETUP_FIRESTORE[maq][pB][pA] == null) SETUP_FIRESTORE[maq][pB][pA] = t;
-      if (pBOrig !== pB) {
-        if (!SETUP_FIRESTORE[maq][pBOrig]) SETUP_FIRESTORE[maq][pBOrig] = {};
-        if (SETUP_FIRESTORE[maq][pBOrig][pAOrig] == null) SETUP_FIRESTORE[maq][pBOrig][pAOrig] = t;
-        if (SETUP_FIRESTORE[maq][pBOrig][pA] == null)     SETUP_FIRESTORE[maq][pBOrig][pA]     = t;
-      }
     });
     if (!snap.empty) console.log('[SETUP] Carregados do Firestore:', snap.size, 'registros');
   } catch(e) {
@@ -750,41 +603,15 @@ function getSetupMin(maq, prodDescA, prodDescB) {
   if (fsMaq) {
     const normA = normProd(prodDescA);
     const normB = normProd(prodDescB);
-
-    // Tentar todas as combinações: normalizado e original
-    const keysA = [...new Set([normA, prodDescA.trim()])];
-    const keysB = [...new Set([normB, prodDescB.trim()])];
-
-    for(const kA of keysA){
-      for(const kB of keysB){
-        if (fsMaq[kA] && fsMaq[kA][kB] != null) return fsMaq[kA][kB];
-        if (fsMaq[kB] && fsMaq[kB][kA] != null) return fsMaq[kB][kA];
-      }
-    }
-
-    // Diagnóstico: mostrar o que foi buscado vs o que existe no SETUP_FIRESTORE
-    if(!window._setupDiagKeys) window._setupDiagKeys = [];
-    const keyBuscada = `${normA} → ${normB}`;
-    if(!window._setupDiagKeys.includes(keyBuscada)){
-      window._setupDiagKeys.push(keyBuscada);
-      const chavesCadastradas = Object.keys(fsMaq).map(k =>
-        `${k} → [${Object.keys(fsMaq[k]||{}).join(', ')}]`
-      ).join(' | ');
-      console.warn(`[SETUP] Máquina "${maq}" — buscando: "${keyBuscada}" | Cadastrado: ${chavesCadastradas || 'nenhum'}`);
-    }
-  } else {
-    // Máquina sem nenhuma entrada no SETUP_FIRESTORE
-    if(!window._setupDiagNoMaq) window._setupDiagNoMaq = new Set();
-    if(!window._setupDiagNoMaq.has(maq)){
-      window._setupDiagNoMaq.add(maq);
-      console.warn(`[SETUP] Máquina "${maq}" não encontrada no SETUP_FIRESTORE. Chaves existentes: ${Object.keys(SETUP_FIRESTORE).join(', ') || 'nenhuma'}`);
-    }
+    if (fsMaq[normA] && fsMaq[normA][normB] != null) return fsMaq[normA][normB];
+    if (fsMaq[normB] && fsMaq[normB][normA] != null) return fsMaq[normB][normA];
   }
 
   // 2) Tempo padrão configurado na máquina (campo tempoSetupPadrao)
   const padrao = getSetupPadrao(maq);
   if (padrao > 0) return padrao;
 
+  // 3) Sem configuração → 0 minutos
   return 0;
 }
 
@@ -2631,19 +2458,7 @@ function buildSchedule(monday){
       const totalProd = (typeof calcularTotalProduzido==='function')
         ? calcularTotalProduzido(r.id) : 0;
       const remaining = (r.qntCaixas||0) - totalProd;
-      if(remaining <= 0) return false;
-      // Só entra como overflow se produção foi iniciada OU não há registro
-      // futuro para o mesmo produto+máquina (evita que S1 apareça no Gantt de S2/S3/S4
-      // quando a programação automática já criou registros separados por semana)
-      if(totalProd > 0) return true;
-      const hasFutureRecord = records.some(other =>
-        other.id !== r.id &&
-        other.maquina === r.maquina &&
-        other.produto === r.produto &&
-        other.status !== 'Concluído' &&
-        (other.dtDesejada || other.dtSolicitacao || '') >= mondayStr
-      );
-      return !hasFutureRecord;
+      return remaining > 0; // só overflow real
     }
     return false;
   });
@@ -2704,18 +2519,7 @@ function buildSchedule(monday){
       if(!pcMin){scheduled.push({rec,segments:[],setupMin:0,setupSegments:[]});continue;}
 
       let setupMin=0;
-      if(ri===0){
-        // Primeiro produto da semana nesta máquina:
-        // Cobrar setup padrão da máquina (troca de bobina / limpeza inicial)
-        // mas apenas se a máquina tem tempoSetupPadrao configurado e há
-        // mais de 1 produto nesta máquina nesta semana (vai haver troca).
-        // Para o primeiro produto não há produto "anterior" conhecido,
-        // então usamos o setup padrão como custo de início de semana.
-        const padrao = getSetupPadrao(maq);
-        if(padrao > 0 && recs.length > 1) setupMin = padrao;
-      } else {
-        setupMin = getSetupMin(maq, recs[ri-1].produto, rec.produto);
-      }
+      if(ri>0) setupMin=getSetupMin(maq, recs[ri-1].produto, rec.produto);
 
       const totalUnid=rec.qntUnid||(rec.qntCaixas*unidPorCx);
 
@@ -2778,17 +2582,8 @@ function buildSchedule(monday){
         const blkAvailMin=blkTotalMin-snap.usedMin;
         if(blkAvailMin<=0.001){snap.blkIdx++;snap.usedMin=0;continue;}
         const useMin=Math.min(remainSetupMin,blkAvailMin);
-        // Calcular posição percentual no dia (para renderização no Gantt)
-        const _setupDayCapMin=(hoursOnDayMaq(days[snap.dayIdx],maq))*60;
-        const _setupAllBlocks=getBlocks(days[snap.dayIdx],maq);
-        let _setupBlkOffset=0;
-        for(let _bi=0;_bi<snap.blkIdx;_bi++) _setupBlkOffset+=(_setupAllBlocks[_bi].fimMin-_setupAllBlocks[_bi].inicioMin);
-        const _setupAbsStart=_setupBlkOffset+snap.usedMin;
-        const _setupStartPct=_setupDayCapMin>0?(_setupAbsStart/_setupDayCapMin)*100:0;
-        const _setupEndPct=_setupDayCapMin>0?((_setupAbsStart+useMin)/_setupDayCapMin)*100:0;
         setupSegments.push({date:dateStr(days[snap.dayIdx]),dayIdx:snap.dayIdx,
-          turnoIdx:blk.turnoIdx,turnoLabel:blk.label,setupMin:useMin,
-          startPct:_setupStartPct,endPct:_setupEndPct});
+          turnoIdx:blk.turnoIdx,turnoLabel:blk.label,setupMin:useMin});
         remainSetupMin-=useMin;
         snap.usedMin+=useMin;
         if(snap.usedMin>=blkTotalMin-0.001){snap.blkIdx++;snap.usedMin=0;}
@@ -2858,10 +2653,7 @@ function buildSchedule(monday){
   return {schedule:result,days};
 }
 
-async function renderGantt(){
-  // Garantir que setup está carregado antes de renderizar
-  // (evita que o Gantt abra antes dos dados de setup chegarem do Firestore)
-  await carregarSetupCached();
+function renderGantt(){
   if(ganttMode === 'mensal'){
     renderGanttMensal();
   } else {
@@ -2952,25 +2744,6 @@ function renderGanttSemanal(){
   const {schedule,days}=buildSchedule(ganttBaseMonday);
   const today=dateStr(new Date());
 
-  // ── Diagnóstico de setup: verificar se há configuração ──────────
-  // Se nenhuma máquina tem setup padrão E SETUP_FIRESTORE está vazio,
-  // mostrar aviso visível no topo do Gantt.
-  const setupDiagEl = document.getElementById('gantt-setup-diag');
-  if(setupDiagEl){
-    const maqSemSetup = MAQUINAS.filter(m => {
-      const padrao = getSetupPadrao(m);
-      const temFS = !!(SETUP_FIRESTORE[m] && Object.keys(SETUP_FIRESTORE[m]).length > 0);
-      return padrao <= 0 && !temFS;
-    });
-    if(maqSemSetup.length > 0){
-      setupDiagEl.style.display = 'block';
-      setupDiagEl.innerHTML = `⚠ <strong>Setup não configurado</strong> nas máquinas: ${maqSemSetup.join(', ')} — a coluna SET UP mostrará "—". `
-        + `Configure o tempo padrão em <strong>Configurações → Máquinas → Setup Padrão (min)</strong>.`;
-    } else {
-      setupDiagEl.style.display = 'none';
-    }
-  }
-
   // Week label
   const mon=days[0],sun=days[6];
   document.getElementById('gantt-week-label').textContent=
@@ -3001,9 +2774,8 @@ function renderGanttSemanal(){
     </div>`).join('');
 
   // COL WIDTHS — LABEL_W é ajustável pelo usuário (salvo no localStorage)
-  const MAQ_W=72, QTY_W=48, TEMPO_W=52, SETUP_W=52, TOTMAQ_W=68, DQTY_W=36;
+  const MAQ_W=72, QTY_W=48, TEMPO_W=52, SETUP_W=52, TOTMAQ_W=68, OBS_W=140, DQTY_W=36;
   const LABEL_W = parseInt(localStorage.getItem('gantt-label-width') || '280');
-  const OBS_W   = parseInt(localStorage.getItem('gantt-obs-width')   || '140');
   const gridCols=`${MAQ_W}px ${LABEL_W}px ${QTY_W}px ${TEMPO_W}px ${SETUP_W}px ${TOTMAQ_W}px ${OBS_W}px repeat(7,1fr) repeat(7,${DQTY_W}px)`;
 
   // Pre-calculate total SCHEDULED hours per machine for THIS WEEK only
@@ -3043,11 +2815,7 @@ function renderGanttSemanal(){
     <div class="g-head-label" style="font-size:9px">Tempo<br>h</div>
     <div class="g-head-label" style="font-size:9px">Set Up<br>h</div>
     <div class="g-head-label" style="font-size:9px">H.<br>Prog.</div>
-    <div class="g-head-label" style="font-size:9px;position:relative">Obser-<br>vação
-      <div id="gantt-obs-resizer" style="position:absolute;right:0;top:0;width:6px;height:100%;cursor:col-resize;display:flex;align-items:center;justify-content:center;z-index:10" title="Arraste para redimensionar observação">
-        <div style="width:2px;height:60%;background:var(--border);border-radius:2px"></div>
-      </div>
-    </div>`;
+    <div class="g-head-label" style="font-size:9px">Obser-<br>vação</div>`;
   days.forEach(d=>{
     const isToday=dateStr(d)===today;
     const isWknd=hoursOnDay(d)===0;
@@ -3111,32 +2879,28 @@ function renderGanttSemanal(){
       const pk = obs ? (prodNorm + '||' + obs.toLowerCase()) : prodNorm;
       if(!prodMap[pk]){
         prodMap[pk] = {
-          produto:       entry.rec.produto,
-          obs:           obs,
-          maquina:       entry.rec.maquina,
-          color:         colorMap[entry.rec.id],
-          qntCaixas:     0,
-          setupMin:      0,
-          segments:      [],       // todos os segmentos de todos os registros
-          setupSegments: [],       // segmentos de setup (para renderizar no Gantt)
-          recs:          []
+          produto:    entry.rec.produto,
+          obs:        obs,
+          maquina:    entry.rec.maquina,
+          color:      colorMap[entry.rec.id],
+          qntCaixas:  0,
+          setupMin:   0,
+          segments:   [],       // todos os segmentos de todos os registros
+          recs:       []
         };
       }
-      prodMap[pk].qntCaixas    += (entry.rec.qntCaixas || 0);
-      prodMap[pk].setupMin     += (entry.setupMin || 0);   // somar setup total
-      prodMap[pk].segments     = prodMap[pk].segments.concat(entry.segments || []);
-      prodMap[pk].setupSegments= (prodMap[pk].setupSegments||[]).concat(entry.setupSegments||[]);
+      prodMap[pk].qntCaixas += (entry.rec.qntCaixas || 0);
+      prodMap[pk].setupMin  += (entry.setupMin || 0);   // somar setup total
+      prodMap[pk].segments  = prodMap[pk].segments.concat(entry.segments || []);
       prodMap[pk].recs.push(entry.rec);
     }
     const prodEntries = Object.values(prodMap);
 
     for(const prodEntry of prodEntries){
-      const { produto, obs, maquina: recMaq, color, qntCaixas, setupMin, segments, setupSegments: prodSetupSegs, recs } = prodEntry;
+      const { produto, obs, maquina: recMaq, color, qntCaixas, setupMin, segments, recs } = prodEntry;
 
-      // ── Não renderizar produtos sem nenhuma produção nesta semana
-      // (máquina cheia — não cabe na capacidade disponível)
+      // Calcular horas de produção totais (soma de todos os segmentos)
       const prodHrs = segments.reduce((a, sg) => a + (sg.hrsNoDia || 0), 0);
-      if(prodHrs <= 0 && setupMin <= 0) continue;
       const prodHrsStr = fmtHrs(prodHrs);
 
       html+=`<div class="gantt-row" style="grid-template-columns:${gridCols}">`;
@@ -3150,26 +2914,14 @@ function renderGanttSemanal(){
       // Qtd cx col — soma de todos os registros
       html+=`<div class="g-col-qty"><div class="g-col-qty-txt">${qntCaixas}<br><span style="font-size:9px;color:var(--text3);font-weight:400">cx</span></div></div>`;
 
-      // Tempo col — só produção; tooltip mostra total com setup
-      const totalHrsComSetup = prodHrs + setupMin/60;
-      const totalHrsTooltip = setupMin > 0
-        ? `Produção: ${prodHrsStr} + Setup: ${fmtHrs(setupMin/60)} = Total: ${fmtHrs(totalHrsComSetup)}`
-        : `Produção: ${prodHrsStr}`;
-      html+=`<div style="display:flex;align-items:center;justify-content:center;border-left:1px solid var(--border);background:var(--s1);font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:600;color:var(--warn);padding:4px 2px;text-align:center" title="${totalHrsTooltip}">${prodHrsStr}</div>`;
+      // Tempo col
+      html+=`<div style="display:flex;align-items:center;justify-content:center;border-left:1px solid var(--border);background:var(--s1);font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:600;color:var(--warn);padding:4px 2px;text-align:center">${prodHrsStr}</div>`;
 
       // Set Up col — setup total (apenas o primeiro registro tem setup real)
       const setupHrs=setupMin/60;
       const setupStr=setupMin>0?fmtHrs(setupHrs):'—';
       const setupColor=setupMin>0?'var(--orange)':'var(--text3)';
-      // Verificar se setup não está configurado (para tooltip diagnóstico)
-      const setupPadrao=getSetupPadrao(recMaq);
-      const temSetupFS=!!(SETUP_FIRESTORE[recMaq] && Object.keys(SETUP_FIRESTORE[recMaq]).length>0);
-      const setupTooltip=setupMin>0
-        ? `Setup: ${setupStr}`
-        : (setupPadrao>0||temSetupFS
-            ? `Setup: ${setupStr} (produto único na máquina, sem troca)`
-            : `⚠ Setup padrão não configurado — defina em Configurações → Máquinas`);
-      html+=`<div style="display:flex;align-items:center;justify-content:center;border-left:1px solid var(--border);background:var(--s1);font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:${setupMin>0?'600':'400'};color:${setupColor};padding:4px 2px;text-align:center" title="${setupTooltip}">${setupStr}</div>`;
+      html+=`<div style="display:flex;align-items:center;justify-content:center;border-left:1px solid var(--border);background:var(--s1);font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:${setupMin>0?'600':'400'};color:${setupColor};padding:4px 2px;text-align:center" title="Setup: ${setupStr}">${setupStr}</div>`;
 
       // H. Prog. col — total scheduled hours for this machine this week (only first row)
       const weekProgStr=firstRowOfMaq?fmtHrs(maqTotH):'';
@@ -3189,13 +2941,12 @@ function renderGanttSemanal(){
         const isWknd=hoursOnDayMaq(day,maq)===0 && hoursOnDay(day)===0;
         const isToday=dateStr(day)===today;
         const daySeg=segments.filter(s=>s.dayIdx===di);
-        const daySetupSeg=(prodSetupSegs||[]).filter(s=>s.dayIdx===di);
         const blocks=ganttGetBlocks(day,maq);
         const dayCapMin=(hoursOnDayMaq(day,maq))*60;
 
         html+=`<div class="g-day ${isWknd?'weekend':''}" style="${isToday?'background:rgba(0,229,204,.04)':''}">`;
 
-        if((daySeg.length||daySetupSeg.length) && dayCapMin>0){
+        if(daySeg.length && dayCapMin>0){
           // Show bars for each segment (one per shift block used)
           html+=`<div class="g-bar-wrap" style="position:relative;width:100%;height:100%">`;
 
@@ -3210,17 +2961,6 @@ function renderGanttSemanal(){
             html+=`<div style="position:absolute;left:${blkLeft.toFixed(1)}%;width:${blkW.toFixed(1)}%;top:0;bottom:0;background:${blkColors[blk.turnoIdx]||''};border-left:1px dashed rgba(255,255,255,.06)"></div>`;
           });
 
-          // ── Setup bars (laranja, menor altura, atrás da produção) ──
-          daySetupSeg.forEach(seg=>{
-            const leftPct=seg.startPct.toFixed(1);
-            const widthPct=Math.max(0.5,(seg.endPct-seg.startPct)).toFixed(1);
-            const setupLabel=fmtHrs(seg.setupMin/60);
-            html+=`<div style="left:${leftPct}%;width:${widthPct}%;background:var(--orange,#ff9900);opacity:0.85;position:absolute;top:0;height:30%;border-radius:2px 2px 0 0"
-              title="⚙ Setup: ${setupLabel}${seg.turnoLabel?' · '+seg.turnoLabel:''}">
-              ${parseFloat(widthPct)>8?`<span style="font-size:7px;color:#000;padding:0 2px;white-space:nowrap;overflow:hidden;display:block">⚙ ${setupLabel}</span>`:''}
-            </div>`;
-          });
-
           daySeg.forEach(seg=>{
             const leftPct=seg.startPct.toFixed(1);
             const widthPct=(seg.endPct-seg.startPct).toFixed(1);
@@ -3228,7 +2968,7 @@ function renderGanttSemanal(){
             const hrsLabel=fmtHrs(seg.hrsNoDia);
             const turnoTip=seg.turnoLabel?` · ${seg.turnoLabel}`:'';
             const obsTip=obs?` — ${obs}`:'';
-            html+=`<div class="g-bar" style="left:${leftPct}%;width:${widthPct}%;background:${color};opacity:0.9;position:absolute;top:30%;height:70%"
+            html+=`<div class="g-bar" style="left:${leftPct}%;width:${widthPct}%;background:${color};opacity:0.9;position:absolute;top:15%;height:70%"
               title="${produto}${obsTip}${turnoTip} · ${cx} cx · ${hrsLabel}">
               <div class="g-bar-tip">${produto.substring(0,40)}${obs?'<br><span style=\"font-size:9px;opacity:.8\">'+obs+'</span>':''}<br>${cx} cx · ${hrsLabel}${seg.turnoLabel?' · '+seg.turnoLabel:''}</div>
             </div>`;
@@ -3262,18 +3002,6 @@ function renderGanttSemanal(){
   document.getElementById('gantt-table').innerHTML=html;
   document.getElementById('gantt-summary').innerHTML='';
 
-  // ── Helper: recalcula o gridTemplateColumns a partir dos valores atuais ──
-  function _buildGanttGrid(){
-    const MAQ_W=72,QTY_W=48,TEMPO_W=52,SETUP_W=52,TOTMAQ_W=68,DQTY_W=36;
-    const lw=parseInt(localStorage.getItem('gantt-label-width')||'280');
-    const ow=parseInt(localStorage.getItem('gantt-obs-width')||'140');
-    return `${MAQ_W}px ${lw}px ${QTY_W}px ${TEMPO_W}px ${SETUP_W}px ${TOTMAQ_W}px ${ow}px repeat(7,1fr) repeat(7,${DQTY_W}px)`;
-  }
-  function _applyGanttGrid(){
-    const g=_buildGanttGrid();
-    document.querySelectorAll('.gantt-row, .gantt-head-row').forEach(el=>el.style.gridTemplateColumns=g);
-  }
-
   // ── Resize da coluna Produto do Gantt ──
   (function initGanttLabelResizer(){
     const resizer = document.getElementById('gantt-label-resizer');
@@ -3287,32 +3015,11 @@ function renderGanttSemanal(){
         const delta = ev.clientX - startX;
         const newW = Math.max(120, Math.min(520, startW + delta));
         localStorage.setItem('gantt-label-width', newW);
-        _applyGanttGrid();
-      }
-      function onUp(){
-        resizer.querySelector('div').style.background = 'var(--border)';
-        document.removeEventListener('mousemove', onMove);
-        document.removeEventListener('mouseup', onUp);
-      }
-      document.addEventListener('mousemove', onMove);
-      document.addEventListener('mouseup', onUp);
-    });
-  })();
-
-  // ── Resize da coluna Observação do Gantt ──
-  (function initGanttObsResizer(){
-    const resizer = document.getElementById('gantt-obs-resizer');
-    if(!resizer) return;
-    resizer.addEventListener('mousedown', function(e){
-      e.preventDefault();
-      const startX = e.clientX;
-      const startW = parseInt(localStorage.getItem('gantt-obs-width') || '140');
-      resizer.querySelector('div').style.background = 'var(--cyan)';
-      function onMove(ev){
-        const delta = ev.clientX - startX;
-        const newW = Math.max(60, Math.min(400, startW + delta));
-        localStorage.setItem('gantt-obs-width', newW);
-        _applyGanttGrid();
+        const MAQ_W=72, QTY_W=48, TEMPO_W=52, SETUP_W=52, TOTMAQ_W=68, OBS_W=140, DQTY_W=36;
+        const newGrid=`${MAQ_W}px ${newW}px ${QTY_W}px ${TEMPO_W}px ${SETUP_W}px ${TOTMAQ_W}px ${OBS_W}px repeat(7,1fr) repeat(7,${DQTY_W}px)`;
+        document.querySelectorAll('.gantt-row, .gantt-head-row').forEach(el=>{
+          el.style.gridTemplateColumns = newGrid;
+        });
       }
       function onUp(){
         resizer.querySelector('div').style.background = 'var(--border)';
@@ -3717,7 +3424,7 @@ function getInsumos(prodDesc){
   if(typeof fichaTecnicaData !== 'undefined'){
     const ftEntry=fichaTecnicaData.find(x=>x.desc && x.desc.trim()===d);
     if(ftEntry && ftEntry.insumos && ftEntry.insumos.length>0){
-      return ftEntry.insumos.map(i=>({n:i.insumo, c:i.cat||inferCatInsumo(i.insumo), q:i.qty}));
+      return ftEntry.insumos.map(i=>({n:i.insumo, c:inferCatInsumo(i.insumo), q:i.qty}));
     }
     // Also try matching by code prefix
     const codeMatch=d.match(/^(\d{5})/);
@@ -3725,7 +3432,7 @@ function getInsumos(prodDesc){
       const code=codeMatch[1];
       const ftByCode=fichaTecnicaData.find(x=>x.desc && x.desc.trim().startsWith(code));
       if(ftByCode && ftByCode.insumos && ftByCode.insumos.length>0){
-        return ftByCode.insumos.map(i=>({n:i.insumo, c:i.cat||inferCatInsumo(i.insumo), q:i.qty}));
+        return ftByCode.insumos.map(i=>({n:i.insumo, c:inferCatInsumo(i.insumo), q:i.qty}));
       }
     }
   }
@@ -4740,7 +4447,7 @@ async function saveFichaByCod(cod){
   rows.forEach(row=>{
     const qty = parseFloat(row.querySelector('.fte-qty').value)||0;
     const name = row.querySelector('.fte-name').value.trim();
-    if(name) newInsumos.push({insumo:name, qty, cat:inferCatInsumo(name)});
+    if(name) newInsumos.push({insumo:name, qty});
   });
 
   // Atualiza TODOS os registros com o mesmo cod na memória
@@ -6778,7 +6485,6 @@ function openSettings(){
   sp.style.display='flex';
   renderCadastroMaquinas();
   renderProdutosCfg();
-  carregarCategoriasCached().then(()=>{ renderCategoriasCfg(); preencherSelectCategorias('maq-categoria-inp'); preencherSelectCategorias('prod-categoria-inp'); }).catch(()=>{});
   renderFuncionariosProducao();
   renderJornadaDays();
   // Renderiza config de turnos por máquina
@@ -6791,12 +6497,6 @@ function openSettings(){
   if(snavFunc) snavFunc.style.display = can('funcionarios','visualizar') ? '' : 'none';
   if(snavUsuarios) snavUsuarios.style.display = can('usuarios','visualizar') ? '' : 'none';
   settingsNav('cadastro-maquinas');
-  const prodSubmenu=document.getElementById('snav-produtos-submenu');
-  const prodChevron=document.getElementById('snav-produtos-chevron');
-  const catBtn=document.getElementById('snav-categoria');
-  if(prodSubmenu){ prodSubmenu.style.display='flex'; prodSubmenu.dataset.open='true'; }
-  if(prodChevron) prodChevron.style.transform='rotate(180deg)';
-  if(catBtn) catBtn.style.display='';
   setTimeout(()=>{ if(typeof renderApiSync==='function') renderApiSync(); }, 50);
 }
 function closeSettings(){
@@ -6822,10 +6522,6 @@ function toggleSnavGroup(group){
 }
 
 function settingsNav(section){
-  const requestedSection = section;
-  const targetSection = section === 'categoria' ? 'produtos' : section;
-  const catBtnEnsure = document.getElementById('snav-categoria');
-  if (catBtnEnsure) catBtnEnsure.style.display = '';
   // Esconde todos os conteúdos
   document.querySelectorAll('.scontent').forEach(el=>{
     el.style.display='none';
@@ -6841,11 +6537,10 @@ function settingsNav(section){
     }
   });
   // Mostra a seção correta
-  const content=document.getElementById('scontent-'+targetSection);
+  const content=document.getElementById('scontent-'+section);
   if(content) content.style.display='flex';
-  if(targetSection==='produtos') setTimeout(async()=>{ try { await carregarCategoriasCached(); renderCategoriasCfg(); preencherSelectCategorias('prod-categoria-inp'); preencherSelectCategorias('maq-categoria-inp'); } catch(e){} }, 30);
   // Ativa o botão nav correspondente
-  const navBtn=document.getElementById('snav-'+requestedSection);
+  const navBtn=document.getElementById('snav-'+section);
   if(navBtn){
     navBtn.classList.add('snav-active');
     navBtn.style.background='rgba(0,212,255,.1)';
@@ -6874,12 +6569,12 @@ function settingsNav(section){
   }
 
   // ── Grupo Produtos ──
-  const prodGroupSections=['produtos','ficha-tecnica-cfg','categoria'];
+  const prodGroupSections=['produtos','ficha-tecnica-cfg'];
   const prodGroupBtn=document.getElementById('snav-produtos-group-btn');
   const prodSubmenu=document.getElementById('snav-produtos-submenu');
   const prodChevron=document.getElementById('snav-produtos-chevron');
   if(prodGroupBtn){
-    if(prodGroupSections.includes(requestedSection) || prodGroupSections.includes(targetSection)){
+    if(prodGroupSections.includes(section)){
       prodGroupBtn.style.background='rgba(0,212,255,.1)';
       prodGroupBtn.style.border='1px solid rgba(0,212,255,.25)';
       prodGroupBtn.style.color='var(--cyan)';
@@ -6902,9 +6597,7 @@ function settingsNav(section){
   if(section==='setup-maquinas') setTimeout(()=>renderSetupMaquinas(), 50);
   if(section==='gestao-lojas') setTimeout(()=>renderGestaoLojas(), 50);
   if(section==='ficha-tecnica-cfg') setTimeout(()=>renderFichaTecnicaCfg(), 50);
-  if(targetSection==='produtos') setTimeout(()=>renderProdutosCfg(), 50);
-  if(section==='categoria') setTimeout(()=>{ const card=document.getElementById('prod-categorias-card'); if(card) card.scrollIntoView({behavior:'smooth', block:'start'}); const el=document.getElementById('cat-nome-inp'); if(el) el.focus(); }, 80);
-  if(section==='processos') setTimeout(()=>renderProcessos(), 50);
+  if(section==='produtos') setTimeout(()=>renderProdutosCfg(), 50);
 }
 
 function handleImportZip(file){
@@ -7017,8 +6710,6 @@ async function salvarMaquinaFirestore(dados) {
     codigo: (dados.codigo||'').trim(),
     tipo: (dados.tipo||'').trim(),
     setor: (dados.setor||'').trim(),
-    categoria: (dados.categoria||'').trim(),
-    classificacao: (dados.classificacao||'').trim(),
     status: dados.status || 'ativa',
     pcMin: parseFloat(dados.pcMin) || 0,
     eficiencia: parseFloat(dados.eficiencia) || 100,
@@ -7076,7 +6767,6 @@ function renderCadastroMaquinas() {
     const capHora = cap ? cap.porHora.toLocaleString('pt-BR') + ' saq' : '<span style="color:var(--text3)">—</span>';
     const capDia = cap ? cap.porDia.toLocaleString('pt-BR') + ' saq' : '<span style="color:var(--text3)">—</span>';
     const tipoSetor = [d.tipo, d.setor].filter(Boolean).join(' / ') || '<span style="color:var(--text3)">—</span>';
-    const catClass = [d.categoria, d.classificacao].filter(Boolean).join(' / ');
     const nProds = Array.isArray(d.produtosCompativeis) ? d.produtosCompativeis.length : 0;
     const prodsBadge = nProds > 0
       ? `<span style="background:rgba(139,92,246,.15);color:var(--purple);border:1px solid rgba(139,92,246,.3);border-radius:4px;padding:2px 6px;font-size:10px;font-weight:700">${nProds} prod.</span>`
@@ -7119,7 +6809,7 @@ function renderCadastroMaquinas() {
     }
     return `<tr style="border-bottom:1px solid var(--border)" onmouseover="this.style.background='var(--s2)'" onmouseout="this.style.background=''">
       <td style="padding:10px 14px;font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--text1);font-weight:600">${m}${d.codigo ? `<span style="font-size:10px;color:var(--text3);font-weight:400;margin-left:6px">${d.codigo}</span>` : ''}</td>
-      <td style="padding:10px 10px;font-size:12px;color:var(--text2)">${tipoSetor}${catClass ? `<div style="font-size:10px;color:var(--text3);margin-top:4px">${catClass}</div>` : ''}</td>
+      <td style="padding:10px 10px;font-size:12px;color:var(--text2)">${tipoSetor}</td>
       <td style="padding:10px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--warn)">${d.pcMin ? d.pcMin + ' und/min' : '<span style="color:var(--text3)">—</span>'}</td>
       <td style="padding:10px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--cyan)">${capHora}</td>
       <td style="padding:10px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--cyan)">${capDia}</td>
@@ -7156,8 +6846,6 @@ function openAddMaquina() {
   document.getElementById('maq-cod-inp').value = '';
   document.getElementById('maq-tipo-inp').value = '';
   document.getElementById('maq-setor-inp').value = '';
-  if (document.getElementById('maq-categoria-inp')) document.getElementById('maq-categoria-inp').value = '';
-  if (document.getElementById('maq-classificacao-inp')) document.getElementById('maq-classificacao-inp').value = '';
   document.getElementById('maq-status-inp').value = 'ativa';
   document.getElementById('maq-pcmin-inp').value = '';
   document.getElementById('maq-efic-inp').value = '';
@@ -7169,7 +6857,6 @@ function openAddMaquina() {
   document.getElementById('maq-pcturno-inp').value = '';
   document.getElementById('maq-pcdia-inp').value = '';
   switchMaqTab('dados');
-  carregarCategoriasCached().then(()=>preencherSelectCategorias('maq-categoria-inp',''));
   populateMaqProdSel();
   renderMaqProdsLista();
   document.getElementById('maq-modal').style.display = 'flex';
@@ -7185,7 +6872,6 @@ function openEditMaquina(nome) {
   document.getElementById('maq-cod-inp').value = d.codigo || '';
   document.getElementById('maq-tipo-inp').value = d.tipo || '';
   document.getElementById('maq-setor-inp').value = d.setor || '';
-  if (document.getElementById('maq-classificacao-inp')) document.getElementById('maq-classificacao-inp').value = d.classificacao || '';
   document.getElementById('maq-status-inp').value = d.status || 'ativa';
   // Usar != null para não confundir 0 com vazio
   document.getElementById('maq-pcmin-inp').value = (d.pcMin != null && d.pcMin !== '') ? d.pcMin : '';
@@ -7195,7 +6881,6 @@ function openEditMaquina(nome) {
   const setupInp = document.getElementById('maq-setup-inp');
   if (setupInp) setupInp.value = (d.tempoSetupPadrao != null && d.tempoSetupPadrao !== '') ? d.tempoSetupPadrao : '';
   calcMaqCapacidade();
-  carregarCategoriasCached().then(()=>preencherSelectCategorias('maq-categoria-inp', d.categoria || ''));
   switchMaqTab('dados');
   populateMaqProdSel();
   renderMaqProdsLista();
@@ -7359,8 +7044,6 @@ async function importarMaquinasExcel(file) {
       else if (/^n_?turnos$|^turnos$/i.test(h)) colMap.nTurnos = i;
       else if (/^setup$/i.test(h)) colMap.setup = i;
       else if (/^produtos$/i.test(h)) colMap.produtos = i;
-      else if (/^categoria$/i.test(h)) colMap.categoria = i;
-      else if (/^classificacao$|^classificação$/i.test(h)) colMap.classificacao = i;
     });
     
     if (colMap.nome === undefined) {
@@ -7394,8 +7077,6 @@ async function importarMaquinasExcel(file) {
         codigo: String(row[colMap.codigo]||'').trim(),
         tipo: String(row[colMap.tipo]||'Empacotadeira').trim(),
         setor: String(row[colMap.setor]||'').trim(),
-        categoria: String(row[colMap.categoria]||'').trim(),
-        classificacao: String(row[colMap.classificacao]||'').trim(),
         status: String(row[colMap.status]||'ativa').trim(),
         pcMin: parseFloat(row[colMap.pcMin]) || 0,
         eficiencia: parseFloat(row[colMap.eficiencia]) || 100,
@@ -7554,7 +7235,6 @@ function normalizeProdutoFirestore(data) {
     maquina: data.maquinaPadrao || data.maquina || '',
     kg_fd: data.kg_fd || 0,
     categoria: data.categoria || '',
-    classificacao: data.classificacao || '',
     coberturaDias: data.coberturaDias || 0,
     estoqueMinimo: data.estoqueMinimo || 0,
     ativo: data.ativo !== false,
@@ -7625,7 +7305,6 @@ async function salvarProdutoFirestore(dados) {
     maquinaPadrao: dados.maquina || '',
     kg_fd: 0,
     categoria: dados.categoria || '',
-    classificacao: dados.classificacao || '',
     coberturaDias: parseInt(dados.coberturaDias) || 0,
     estoqueMinimo: parseFloat(dados.estoqueMinimo) || 0,
     ativo: dados.ativo !== false,
@@ -7736,8 +7415,6 @@ function renderProdutosCfg() {
         <div style="display:flex;align-items:center;gap:6px;margin-top:5px;flex-wrap:wrap">
           <span style="font-size:10px;color:${desativado?'var(--text4)':'var(--warn)'};font-family:'JetBrains Mono',monospace">${p.pc_min} und/min</span>
           <span style="font-size:10px;color:var(--text3);font-family:'JetBrains Mono',monospace">${p.unid}un/cx</span>
-          ${p.categoria ? `<span style="font-size:10px;color:var(--text3)">${p.categoria}</span>` : ''}
-          ${p.classificacao ? `<span style="font-size:10px;color:var(--text3)">/ ${p.classificacao}</span>` : ''}
           <span style="color:var(--text3);font-size:10px">·</span>
           ${maqTags}
         </div>
@@ -7797,17 +7474,6 @@ function toggleAtivoProduto(cod, maquina, estaDesativado){
 let _produtoEditando = null;
 
 // Adiciona uma linha de insumo no modal de cadastro de produto
-function _findFichaProdutoModal(cod, maquina, desc='') {
-  const codNum = parseInt(cod);
-  const descNorm = String(desc || '').trim();
-  const maqNorm = String(maquina || '').trim();
-  const arr = Array.isArray(fichaTecnicaData) ? fichaTecnicaData : [];
-  return arr.find(f => String(f.cod) === String(codNum) && String(f.maquina || '').trim() === maqNorm)
-      || arr.find(f => String(f.cod) === String(codNum) && String(f.desc || '').trim() === descNorm)
-      || arr.find(f => String(f.cod) === String(codNum))
-      || null;
-}
-
 function pmAddInsumoRow() {
   const container = document.getElementById('pm-insumos-list');
   if (!container) return;
@@ -7830,10 +7496,7 @@ function openAddProduto() {
   ['pm-cobertura','pm-prod-min','pm-multiplo','pm-prioridade'].forEach(id => { const el = document.getElementById(id); if(el) el.value = ''; });
   const tipoMin = document.getElementById('pm-tipo-min'); if(tipoMin) tipoMin.value = '';
   const pmAtivo = document.getElementById('pm-ativo'); if(pmAtivo) pmAtivo.value = 'true';
-  if (document.getElementById('prod-categoria-inp')) document.getElementById('prod-categoria-inp').value = '';
-  if (document.getElementById('prod-classificacao-inp')) document.getElementById('prod-classificacao-inp').value = '';
   const pmInsumos = document.getElementById('pm-insumos-list'); if(pmInsumos) pmInsumos.innerHTML = '';
-  carregarCategoriasCached().then(()=>preencherSelectCategorias('prod-categoria-inp',''));
   const titleEl = document.getElementById('prod-modal-title') || document.getElementById('maq-modal-title');
   if(titleEl) titleEl.textContent = 'Novo Produto';
   document.getElementById('prod-modal').style.display = 'flex';
@@ -7864,19 +7527,17 @@ function editarProduto(cod, maquina, descricao) {
   const elTipo = document.getElementById('pm-tipo-min');   if(elTipo) elTipo.value  = produto.tipoMinimo          || '';
   const elPrio = document.getElementById('pm-prioridade'); if(elPrio) elPrio.value  = produto.prioridadeProducao  || '';
   const elAtivo= document.getElementById('pm-ativo');      if(elAtivo) elAtivo.value = (produto.produtoAtivo !== false) ? 'true' : 'false';
-  if (document.getElementById('prod-classificacao-inp')) document.getElementById('prod-classificacao-inp').value = produto.classificacao || '';
   
   // Popular máquinas no select
   const sel = document.getElementById('pm-maq');
   if (sel) {
     sel.innerHTML = MAQUINAS.map(m => `<option value="${m}" ${m === maquina ? 'selected' : ''}>${m}</option>`).join('');
   }
-  carregarCategoriasCached().then(()=>preencherSelectCategorias('prod-categoria-inp', produto.categoria || ''));
 
   // Popular insumos existentes da ficha técnica
   const pmInsumos = document.getElementById('pm-insumos-list');
   if (pmInsumos) {
-    const ficha = _findFichaProdutoModal(cod, maquina, produto.descricao);
+    const ficha = fichaTecnicaData.find(f => f.cod === parseInt(cod));
     pmInsumos.innerHTML = ficha && ficha.insumos && ficha.insumos.length
       ? fteRenderInsumos(ficha.insumos)
       : '';
@@ -7972,8 +7633,6 @@ async function saveProdModal() {
   const unid  = parseInt(document.getElementById('pm-unid').value);
   const pcmin = parseFloat(document.getElementById('pm-pcmin').value);
   const maq   = document.getElementById('pm-maq').value;
-  const categoria = (document.getElementById('prod-categoria-inp')?.value || '').trim();
-  const classificacao = (document.getElementById('prod-classificacao-inp')?.value || '').trim();
 
   if (!cod || !desc || !unid || !pcmin || !maq) {
     toast('Preencha todos os campos obrigatórios', 'err');
@@ -7995,7 +7654,7 @@ async function saveProdModal() {
   const produtoAtivo       = document.getElementById('pm-ativo')?.value !== 'false';
 
   const dados = {
-    cod, descricao: desc, unid, kg_fd: 0, pc_min: pcmin, maquina: maq, categoria, classificacao,
+    cod, descricao: desc, unid, kg_fd: 0, pc_min: pcmin, maquina: maq,
     metaCoberturaDias, producaoMinima, multiploProducao, tipoMinimo, prioridadeProducao, produtoAtivo
   };
 
@@ -8008,7 +7667,7 @@ async function saveProdModal() {
     pmInsRows.forEach(row => {
       const qty  = parseFloat(row.querySelector('.fte-qty')?.value) || 0;
       const name = row.querySelector('.fte-name')?.value.trim() || '';
-      if (name) insumosDoModal.push({ insumo: name, qty, cat: inferCatInsumo(name) });
+      if (name) insumosDoModal.push({ insumo: name, qty });
     });
 
     // ── 2. Salvar produto no Firestore e atualizar cache em memória ──
@@ -8042,7 +7701,7 @@ async function saveProdModal() {
     // IMPORTANTE: fazer isso DEPOIS de salvarProdutoFirestore (que não
     // mais sobrescreve fichaTecnicaData, então não há race condition).
     const codNum = parseInt(cod);
-    let fichaObj = _findFichaProdutoModal(codNum, maq, desc);
+    let fichaObj = fichaTecnicaData.find(f => f.cod === codNum);
     if (!fichaObj) {
       // Ficha nova: criar em memória IMEDIATAMENTE (garante que aparece na aba)
       fichaObj = {
@@ -8067,7 +7726,7 @@ async function saveProdModal() {
       fichaObj.pc_min = pcmin  || fichaObj.pc_min;
       if (insumosDoModal.length > 0) fichaObj.insumos = insumosDoModal;
       // Sincronizar com FICHA_TECNICA (array separado)
-      const ftIdx = FICHA_TECNICA.findIndex(f => String(f.cod) === String(codNum) && String(f.maquina || '') === String(maq || ''));
+      const ftIdx = FICHA_TECNICA.findIndex(f => f.cod === codNum);
       if (ftIdx >= 0) { FICHA_TECNICA[ftIdx] = { ...fichaObj }; }
       // Persistir no Firestore
       try {
@@ -8080,7 +7739,7 @@ async function saveProdModal() {
           await setDoc(lojaDoc('fichaTecnica', fichaObj._firestoreId), fichaPayload);
         } else {
           // Fallback: busca pelo cod (raro — só se _firestoreId não foi populado no boot)
-          const snap = await getDocs(query(lojaCol('fichaTecnica'), where('cod', '==', codNum), where('maquina', '==', maq)));
+          const snap = await getDocs(query(lojaCol('fichaTecnica'), where('cod', '==', codNum)));
           if (!snap.empty) {
             fichaObj._firestoreId = snap.docs[0].id;
             await setDoc(lojaDoc('fichaTecnica', snap.docs[0].id), fichaPayload);
@@ -8208,7 +7867,6 @@ function importProdutosExcel(input) {
         const pcmin = parseFloat(row['pc_min'] || row['velocidadePadrao'] || row['PcMin'] || row['PC_MIN'] || 0);
         const unid = parseInt(row['unid'] || row['Unid'] || row['UNID'] || 0);
         const categoria = (row['categoria'] || row['Categoria'] || '').toString().trim();
-        const classificacao = (row['classificacao'] || row['Classificacao'] || row['Classificação'] || '').toString().trim();
         const coberturaDias = parseInt(row['coberturaDias'] || row['CobDias'] || 0);
         const estoqueMinimo = parseFloat(row['estoqueMinimo'] || row['EstMin'] || 0);
         
@@ -8225,7 +7883,7 @@ function importProdutosExcel(input) {
         
         maquinasMap.get(maqUpper).produtos.push({
           cod, descricao: desc, unid, pc_min: pcmin, maquina: maq, 
-          categoria, classificacao, coberturaDias, estoqueMinimo, ativo: true
+          categoria, coberturaDias, estoqueMinimo, ativo: true
         });
         
         if (pcmin > 0) {
@@ -8299,7 +7957,6 @@ function importProdutosExcel(input) {
               existente.unid        !== produto.unid         ||
               existente.pc_min      !== produto.pc_min       ||
               existente.categoria   !== (produto.categoria || '') ||
-              (existente.classificacao || '') !== (produto.classificacao || '') ||
               (existente.coberturaDias  || 0) !== (produto.coberturaDias || 0) ||
               (existente.estoqueMinimo  || 0) !== (produto.estoqueMinimo || 0);
 
@@ -8344,11 +8001,11 @@ function importProdutosExcel(input) {
 function downloadProdTemplate(e) {
   e.preventDefault();
   const ws = XLSX.utils.aoa_to_sheet([
-    ['cod','descricao','maquina','pc_min','unid','categoria','classificacao','coberturaDias','estoqueMinimo'],
-    [12345,'POLVILHO AZEDO 500G - CX 12','SELGRON 01',46.75,12,'ESPECIARIA','PÓ',15,100],
-    [12346,'COCO RALADO 100G - CX 24','SELGRON 01',52.30,24,'ESPECIARIA','RALADOS',10,50],
-    [12347,'FARINHA MILHO 1KG - CX 10','ALFATECK 14',28.05,10,'FARINHA','FARINÁCEOS',20,75],
-    [12348,'BICARBONATO 250G - CX 20','ALFATECK 14',31.80,20,'ESPECIARIA','PÓ',12,40]
+    ['cod','descricao','maquina','pc_min','unid','categoria','coberturaDias','estoqueMinimo'],
+    [12345,'POLVILHO AZEDO 500G - CX 12','SELGRON 01',46.75,12,'ESPECIARIA',15,100],
+    [12346,'COCO RALADO 100G - CX 24','SELGRON 01',52.30,24,'ESPECIARIA',10,50],
+    [12347,'FARINHA MILHO 1KG - CX 10','ALFATECK 14',28.05,10,'FARINHA',20,75],
+    [12348,'BICARBONATO 250G - CX 20','ALFATECK 14',31.80,20,'ESPECIARIA',12,40]
   ]);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Produtos');
@@ -8524,7 +8181,7 @@ async function importarArquivoPadrao(input) {
           const qty      = parseFloat(r[3]) || 0;
           if (!prodNome || !insNome) return;
           if (!insumosPorProduto[prodNome]) insumosPorProduto[prodNome] = [];
-          insumosPorProduto[prodNome].push({ insumo: insNome, qty, cat: inferCatInsumo(insNome) });
+          insumosPorProduto[prodNome].push({ insumo: insNome, qty });
         });
 
         // Setup
@@ -8584,7 +8241,7 @@ async function importarArquivoPadrao(input) {
             const qty      = parseFloat(r[3]) || 0;
             if (!prodNome || !insNome) return;
             if (!insumosPorProduto[prodNome]) insumosPorProduto[prodNome] = [];
-            insumosPorProduto[prodNome].push({ insumo: insNome, qty, cat: inferCatInsumo(insNome) });
+            insumosPorProduto[prodNome].push({ insumo: insNome, qty });
           });
         }
       }
@@ -8677,7 +8334,7 @@ async function importarArquivoPadrao(input) {
         unid:    p.unid,
         pc_min:  p.pc_min,
         maquina: p.maquina,
-        insumos: (insumosPorProduto[p.descricao] || []).map(i => ({ insumo: i.insumo, qty: i.qty, cat: inferCatInsumo(i.insumo) })),
+        insumos: (insumosPorProduto[p.descricao] || []).map(i => ({ insumo: i.insumo, qty: i.qty })),
         criadoEm: new Date().toISOString(),
         atualizadoEm: new Date().toISOString()
       }));
@@ -9111,7 +8768,6 @@ const MODULO_ACOES = {
   configuracoes: ['visualizar','editar','administrar'],
   funcionarios : ['visualizar','editar','criar','excluir'],
   usuarios     : ['visualizar','editar','criar','excluir','administrar'],
-  relatorios   : ['visualizar','exportar'],
 };
 
 // Descrição detalhada do que cada ação libera em cada módulo
@@ -9184,10 +8840,6 @@ const MODULO_ACOES_DESC = {
     criar      : 'Criar novos usuários com acesso ao sistema',
     excluir    : 'Excluir usuários permanentemente',
     administrar: 'Forçar reset de senha e ativar/desativar contas',
-  },
-  relatorios   : {
-    visualizar : 'Ver a aba de relatórios',
-    exportar   : 'Exportar relatórios em Excel, PDF e Imagem',
   },
 };
 
@@ -9687,7 +9339,6 @@ function buildSidebar(user) {
     { tab:'api-sync',      icon:'🔌', label:'Importação/API',    modulo:'importacao' },
     { tab:'funcionarios',  icon:'👷', label:'Funcionários',      modulo:'funcionarios' },
     { tab:'usuarios',      icon:'👥', label:'Usuários',          modulo:'usuarios' },
-    { tab:'relatorios',    icon:'📊', label:'Relatórios',        modulo:'relatorios' },
   ];
 
   // Filtra apenas os que o perfil pode visualizar
@@ -9707,8 +9358,7 @@ function switchTabSidebar(name) {
     'dashboard':'dashboard','programacao':'programacao','maquinas':'maquinas',
     'gantt':'gantt','apontamento':'realizado','insumos-maq':'insumos_maq',
     'insumos-geral':'insumos_geral','calculos':'calculos','prog-auto':'calculos',
-    'projecao':'projecao','ficha-tecnica':'ficha_tecnica','api-sync':'importacao',
-    'relatorios':'relatorios'
+    'projecao':'projecao','ficha-tecnica':'ficha_tecnica','api-sync':'importacao'
   };
   const modulo = moduloMap[name];
   if (modulo && !canAccess(modulo)) {
@@ -9738,8 +9388,7 @@ function switchTabSidebar(name) {
     'dashboard':'Dashboard','programacao':'Programação','maquinas':'Máquinas',
     'gantt':'Prog. Visual','apontamento':'Realizado','insumos-maq':'Insumos / Máq.',
     'insumos-geral':'Insumos Geral','ficha-tecnica':'Ficha Técnica',
-    'api-sync':'Importação/API','calculos':'Prog. Automática','projecao':'Projeção de Vendas',
-    'relatorios':'Relatórios'
+    'api-sync':'Importação/API','calculos':'Prog. Automática','projecao':'Projeção de Vendas'
   };
   if(bc) bc.innerHTML = `<span>PROGPROD MES</span> <span style="opacity:.4">/</span> <span class="cur">${labels[name]||name}</span>`;
   // Tab-specific renders
@@ -9753,23 +9402,7 @@ function switchTabSidebar(name) {
   if(name==='api-sync') renderApiSync();
   if(name==='calculos'||name==='prog-auto') renderCalculos();
   if(name==='projecao') renderProjecao();
-  if(name==='relatorios') {
-    // Garantir que o painel existe antes de inicializar
-    let rPanel = document.getElementById('panel-relatorios');
-    if (!rPanel) {
-      rPanel = document.createElement('div');
-      rPanel.id = 'panel-relatorios';
-      rPanel.className = 'panel';
-      const container = document.getElementById('main-content')
-        || document.getElementById('content')
-        || document.getElementById('app')
-        || document.body;
-      container.appendChild(rPanel);
-    }
-    rPanel.classList.add('on');
-    // Renderizar o sub-tab ativo ao entrar na aba
-    setTimeout(() => grpRender(), 80);
-  }
+  if(name==='relatorios') { if(window.relatorios) { setTimeout(()=>window.relatorios.init(), 50); } }
   if(name==='usuarios') { openSettings(); setTimeout(()=>settingsNav('usuarios'), 80); }
 }
 
@@ -11554,35 +11187,25 @@ function gerarProgAutomarica(){
 
         let cxRestante = cxNecessario;
 
-        // ── CONCENTRAÇÃO: preferir SEMPRE uma única máquina que absorva tudo.
-        // Só divide em 2 máquinas se NENHUMA consegue produzir a quantidade
-        // inteira sozinha nesta semana.
-        //
-        // Buscar a máquina com maior score que cabe o produto inteiro.
-        // Se não existir nenhuma, usar a principal com split mínimo.
-        const maqQueAbsorve = maqsOrdenadas.find(mc => {
-          const hrsNec = (cxRestante * c.unid) / (mc.pc_min * 60);
-          return maqHrsRestantes[sem][mc.maquina] >= hrsNec - 0.01;
-        });
-
-        // Reordenar: se existe máquina que absorve tudo, colocá-la na frente
-        const maqsParaAlocar = maqQueAbsorve
-          ? [maqQueAbsorve, ...maqsOrdenadas.filter(mc => mc.maquina !== maqQueAbsorve.maquina)]
-          : maqsOrdenadas;
-
-        const maqPrinc       = maqsParaAlocar[0];
-        const hrsNecPrinc    = (cxRestante * c.unid) / (maqPrinc.pc_min * 60);
-        const maxHrsPrinc    = maqHrsRestantes[sem][maqPrinc.maquina];
-        const hrsAlocarPrinc = Math.min(hrsNecPrinc, maxHrsPrinc);
-        const cxAlocarPrinc  = Math.floor(hrsAlocarPrinc * 60 * maqPrinc.pc_min / c.unid);
+        // FIX 2 — validar capacidade real antes de confirmar alocação.
+        // Tentar alocar na máquina principal primeiro. Se não couber tudo,
+        // só divide em uma segunda máquina. O que ainda sobrar (excedente)
+        // é marcado em c._carryover para ser considerado na próxima semana.
+        const maqPrinc = maqsOrdenadas[0];
+        const hrsNecPrinc = (cxRestante * c.unid) / (maqPrinc.pc_min * 60);
+        // maxHrsPrinc = hrsRestantes já incorpora maxPctMaq (aplicado na inicialização)
+        const maxHrsPrinc = maqHrsRestantes[sem][maqPrinc.maquina];
+        const hrsJaAlocPrinc = 0; // redundante: maqHrsRestantes já desconta alocações via registrarAlocacao
+        const hrsPermitPrinc   = maxHrsPrinc;
+        const hrsAlocarPrinc   = Math.min(hrsNecPrinc, hrsPermitPrinc);
+        const cxAlocarPrinc    = Math.floor(hrsAlocarPrinc * 60 * maqPrinc.pc_min / c.unid);
         const principalAbsorve = cxAlocarPrinc >= cxRestante;
 
-        // Só divide se NENHUMA máquina absorve o produto inteiro esta semana
-        const maxMaquinas = (principalAbsorve || maqQueAbsorve) ? 1 : Math.min(2, maqsParaAlocar.length);
+        const maxMaquinas = principalAbsorve ? 1 : Math.min(2, maqsOrdenadas.length);
 
         let cxEfetivamenteAlocado = 0;
         for(let mi = 0; mi < maxMaquinas && cxRestante > 0; mi++){
-          const mc        = maqsParaAlocar[mi];
+          const mc        = maqsOrdenadas[mi];
           const hrsNec    = (cxRestante * c.unid) / (mc.pc_min * 60);
           // maqHrsRestantes já inclui o cap de maxPctMaq
           const hrsAlocar = Math.min(hrsNec, maqHrsRestantes[sem][mc.maquina]);
@@ -11756,11 +11379,7 @@ function gerarProgAutomarica(){
           if(!maqAlts.length) continue;
 
           for(const maqAlt of maqAlts){
-            // ── Não mover parcial se isso gera o mesmo produto em 2 máquinas
-            // (já existe alocação deste produto na máquina alternativa)
-            const jaExisteNaAlt = allocations[c.prod].detalhes[sem].some(d => d.maq === maqAlt.maquina);
-
-            // Tentar mover o lote inteiro primeiro (sem criar split)
+            // Tentar mover o lote inteiro primeiro
             const redistTotal = calcRedistribuicao(c, det, maqAlt, sem, det.cx);
             if(redistTotal){
               removerAlocacao(c.prod, sem, det);
@@ -11770,11 +11389,8 @@ function gerarProgAutomarica(){
             }
 
             // Se o lote inteiro não cabe, tentar mover metade (split entre máquinas)
-            // Só permitido se: volume grande (> 1 dia) E produto ainda não está na outra máquina
             const cxMetade = Math.floor(det.cx / 2);
-            // ── Fix 2: não dividir se o produto cabe em ≤ 1 dia — volume pequeno não merece split
-            const hrsUmDiaA = (maqCapPorSemana[sem]?.[maqSrc] || maqCapacidades[maqSrc] || 44) / 5;
-            if(cxMetade > 0 && det.hrs > hrsUmDiaA + 0.5 && !jaExisteNaAlt){
+            if(cxMetade > 0){
               const redistMetade = calcRedistribuicao(c, det, maqAlt, sem, cxMetade);
               if(redistMetade){
                 // Atualizar alocação na máquina original com a metade restante
@@ -11943,15 +11559,6 @@ function gerarProgAutomarica(){
             return d.maq !== maqOciosa.maq && (maqHrsUsadas[sem][d.maq] / capD) > 0.60;
           });
           if(!detSrc || detSrc.cx < 2) continue;
-
-          // ── Não mover se o produto já está na máquina ociosa (evita duplicar)
-          const jaExisteNaOciosa = allocations[c.prod].detalhes[sem].some(d => d.maq === maqOciosa.maq);
-          if(jaExisteNaOciosa) continue;
-
-          // ── Fix 2: não dividir se o produto cabe em menos de 1 dia útil na
-          // máquina de origem — é pouco volume e dividir gera 2 registros desnecessários.
-          const hrsUmDiaSrc = (maqCapPorSemana[sem]?.[detSrc.maq] || maqCapacidades[detSrc.maq] || 44) / 5;
-          if(detSrc.hrs <= hrsUmDiaSrc + 0.5) continue; // cabe em ~1 dia, não divide
 
           // Velocidade nesta máquina ociosa
           const mcOciosa = c.maquinasCompativeis.find(mc => mc.maquina === maqOciosa.maq);
@@ -14941,10 +14548,6 @@ window.filterMaqWeek = filterMaqWeek;
 window.ganttSetWeek = ganttSetWeek;
 window.aponSaveFunc = aponSaveFunc;
 window.aponRecalcRow = aponRecalcRow;
-// Expor funções de apontamento para relatorios.js e outros módulos externos
-window.aponGetAllKeys  = aponGetAllKeys;
-window.aponStorageGet  = aponStorageGet;
-window.aponStorageSet  = aponStorageSet;
 window.pdFinalize = pdFinalize;
 window.editFichaByCod = editFichaByCod;
 window.saveFichaByCod = saveFichaByCod;
@@ -15005,496 +14608,3 @@ window.pa_onModoChange   = pa_onModoChange;
 window.pa_onMesChange    = function(){ if(paResultados.length) renderProgAutomaticaResultado(); };
 window.paToggleInsumos = paToggleInsumos;
 window.progToggleInsumos = progToggleInsumos;
-
-// ═══════════════════════════════════════════════════════════════════
-// HANDLERS GRP* — Sub-abas de Relatórios
-// Compatível com o HTML: grp-panel-producao / maquinas / produtos /
-// funcionarios / insumos / gerencial
-// Filtros globais: grp-dt-ini, grp-dt-fim, grp-maq, grp-prod, grp-func
-// ═══════════════════════════════════════════════════════════════════
-
-let _grpTabAtivo = 'producao';
-
-// ── Ler filtros globais do topo ───────────────────────────────────
-function _grpFiltros() {
-  const v = id => (document.getElementById(id) || {}).value || '';
-  return {
-    dtIni:   v('grp-dt-ini'),
-    dtFim:   v('grp-dt-fim'),
-    maquina: v('grp-maq'),
-    produto: v('grp-prod'),
-    func:    v('grp-func'),
-  };
-}
-
-// ── Trocar sub-aba ────────────────────────────────────────────────
-function grpSwitchTab(id) {
-  _grpTabAtivo = id;
-
-  // Atualizar botões ativos
-  document.querySelectorAll('.grp-tab-btn, [onclick*="grpSwitchTab"]').forEach(btn => {
-    const oc = btn.getAttribute('onclick') || '';
-    const on = oc.includes("'" + id + "'") || oc.includes('"' + id + '"');
-    btn.classList.toggle('on', on);
-  });
-
-  // Esconder todos os painéis grp
-  document.querySelectorAll('.grp-panel, [id^="grp-panel-"]').forEach(p => {
-    p.classList.remove('on');
-  });
-
-  // Mostrar painel correspondente
-  const alvo = document.getElementById('grp-panel-' + id);
-  if (alvo) alvo.classList.add('on');
-
-  // Renderizar conteúdo do painel
-  grpRender();
-}
-
-// ── Renderizar sub-aba ativa ──────────────────────────────────────
-function grpRender() {
-  switch (_grpTabAtivo) {
-    case 'producao':     _grpRenderProducao();     break;
-    case 'maquinas':     _grpRenderMaquinas();     break;
-    case 'produtos':     _grpRenderProdutos();     break;
-    case 'funcionarios': _grpRenderFuncionarios(); break;
-    case 'insumos':      _grpRenderInsumos();      break;
-    case 'gerencial':    _grpRenderGerencial();    break;
-  }
-}
-
-// ── Helper: filtrar records pelos filtros globais ─────────────────
-function _grpGetRecords() {
-  const f = _grpFiltros();
-  return (window.records || []).filter(r => {
-    const dt = r.dtDesejada || r.dtSolicitacao || '';
-    if (f.dtIni   && dt && dt < f.dtIni)           return false;
-    if (f.dtFim   && dt && dt > f.dtFim)            return false;
-    if (f.maquina && r.maquina !== f.maquina)       return false;
-    if (f.produto && r.produto !== f.produto)       return false;
-    return true;
-  });
-}
-
-// ── Helper: realizado de um record no período ─────────────────────
-function _grpRealizado(r) {
-  const f = _grpFiltros();
-  let total = 0;
-  try {
-    const suffix = '_' + r.id;
-    const keys = (window.aponGetAllKeys || (() => []))();
-    keys.forEach(k => {
-      if (!k.endsWith(suffix)) return;
-      const dt = k.slice('apon_'.length, k.length - suffix.length);
-      if (f.dtIni && dt < f.dtIni) return;
-      if (f.dtFim && dt > f.dtFim) return;
-      const d = (window.aponStorageGet || (() => null))(k);
-      if (d) [7,8,9,10,11,12,13,14,15,16,17].forEach(h => { total += parseInt(d[h])||0; });
-    });
-  } catch(e) {}
-  return total;
-}
-
-// ── Helper: renderizar tabela em um container ─────────────────────
-function _grpTabela(containerId, colunas, linhas, totais) {
-  const el = document.getElementById(containerId);
-  if (!el) return;
-  if (!linhas.length) {
-    el.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text3);font-size:12px">Sem dados no período selecionado</div>';
-    return;
-  }
-  const th = colunas.map(c =>
-    `<th style="padding:9px 12px;text-align:${c.right?'right':'left'};font-family:'JetBrains Mono',monospace;font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.8px;color:var(--text3)">${c.label}</th>`
-  ).join('');
-
-  const rows = linhas.map((row, i) => {
-    const bg = i % 2 === 1 ? 'background:rgba(255,255,255,.01)' : '';
-    const cells = colunas.map(c => {
-      const v = row[c.key];
-      const cor = c.cor ? c.cor(v, row) : 'var(--text)';
-      return `<td style="padding:9px 12px;${c.right?'text-align:right;':''}font-family:${c.mono?'\'JetBrains Mono\',monospace':'inherit'};color:${cor}">${v ?? '—'}</td>`;
-    }).join('');
-    return `<tr style="${bg}">${cells}</tr>`;
-  }).join('');
-
-  const tot = totais ? `<tr style="background:rgba(242,101,34,.06);border-top:1px solid rgba(242,101,34,.2)">
-    ${colunas.map(c => `<td style="padding:9px 12px;${c.right?'text-align:right;':''}font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--cyan)">${totais[c.key] ?? ''}</td>`).join('')}
-  </tr>` : '';
-
-  el.innerHTML = `<div style="overflow-x:auto">
-    <table style="width:100%;border-collapse:collapse;font-size:12px">
-      <thead style="background:var(--s2);border-bottom:1px solid var(--border)"><tr>${th}</tr></thead>
-      <tbody>${rows}${tot}</tbody>
-    </table>
-  </div>`;
-}
-
-// ── PRODUÇÃO ──────────────────────────────────────────────────────
-function _grpRenderProducao() {
-  const body = document.getElementById('grp-panel-producao');
-  if (!body) return;
-  const recs = _grpGetRecords();
-  if (!recs.length) {
-    body.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text3);font-size:12px">Sem dados no período</div>';
-    return;
-  }
-  // Agrupar por dia
-  const porDia = {};
-  recs.forEach(r => {
-    const dt = r.dtDesejada || r.dtSolicitacao || '';
-    if (!dt) return;
-    if (!porDia[dt]) porDia[dt] = { programado: 0, realizado: 0 };
-    porDia[dt].programado += r.qntCaixas || 0;
-    porDia[dt].realizado  += _grpRealizado(r);
-  });
-  const linhas = Object.entries(porDia).sort().map(([dt, d]) => {
-    const efic = d.programado > 0 ? Math.round(d.realizado / d.programado * 100) : 0;
-    const cor  = efic >= 85 ? '#2ec97a' : efic >= 70 ? '#f5c518' : '#e8321a';
-    return { data: dt, programado: d.programado.toLocaleString('pt-BR'), realizado: d.realizado.toLocaleString('pt-BR'), efic: efic + '%', _efic: efic };
-  });
-  const totP = Object.values(porDia).reduce((a,d) => a + d.programado, 0);
-  const totR = Object.values(porDia).reduce((a,d) => a + d.realizado, 0);
-  const totE = totP > 0 ? Math.round(totR / totP * 100) : 0;
-  _grpTabela('grp-panel-producao', [
-    { key:'data',       label:'Data',        mono:true },
-    { key:'programado', label:'Programado',  right:true, mono:true },
-    { key:'realizado',  label:'Realizado',   right:true, mono:true, cor:(v,r) => r._efic >= 85 ? '#2ec97a' : r._efic >= 70 ? '#f5c518' : '#e8321a' },
-    { key:'efic',       label:'Eficiência',  right:true, mono:true, cor:(v,r) => r._efic >= 85 ? '#2ec97a' : r._efic >= 70 ? '#f5c518' : '#e8321a' },
-  ], linhas, { data:'TOTAL', programado: totP.toLocaleString('pt-BR'), realizado: totR.toLocaleString('pt-BR'), efic: totE + '%' });
-}
-
-// ── MÁQUINAS ──────────────────────────────────────────────────────
-function _grpRenderMaquinas() {
-  const recs = _grpGetRecords();
-  const porMaq = {};
-  recs.forEach(r => {
-    if (!r.maquina) return;
-    if (!porMaq[r.maquina]) porMaq[r.maquina] = { programado:0, realizado:0, ordens:0 };
-    porMaq[r.maquina].programado += r.qntCaixas || 0;
-    porMaq[r.maquina].realizado  += _grpRealizado(r);
-    porMaq[r.maquina].ordens++;
-  });
-  const linhas = Object.entries(porMaq).sort().map(([maq, d]) => {
-    const efic = d.programado > 0 ? Math.round(d.realizado / d.programado * 100) : 0;
-    return { maquina: maq, ordens: d.ordens, programado: d.programado.toLocaleString('pt-BR'), realizado: d.realizado.toLocaleString('pt-BR'), efic: efic + '%', _efic: efic };
-  });
-  const totP = Object.values(porMaq).reduce((a,d) => a + d.programado, 0);
-  const totR = Object.values(porMaq).reduce((a,d) => a + d.realizado, 0);
-  _grpTabela('grp-panel-maquinas', [
-    { key:'maquina',    label:'Máquina',     mono:true, cor:()=>'var(--cyan)' },
-    { key:'ordens',     label:'Ordens',      right:true, mono:true },
-    { key:'programado', label:'Programado',  right:true, mono:true },
-    { key:'realizado',  label:'Realizado',   right:true, mono:true, cor:(v,r) => r._efic >= 85 ? '#2ec97a' : r._efic >= 70 ? '#f5c518' : '#e8321a' },
-    { key:'efic',       label:'Eficiência',  right:true, mono:true, cor:(v,r) => r._efic >= 85 ? '#2ec97a' : r._efic >= 70 ? '#f5c518' : '#e8321a' },
-  ], linhas, { maquina:'TOTAL', programado: totP.toLocaleString('pt-BR'), realizado: totR.toLocaleString('pt-BR'), efic: '' });
-}
-
-// ── PRODUTOS ──────────────────────────────────────────────────────
-function _grpRenderProdutos() {
-  const recs = _grpGetRecords();
-  const porProd = {};
-  recs.forEach(r => {
-    if (!r.produto) return;
-    if (!porProd[r.produto]) porProd[r.produto] = { maquina: r.maquina, programado:0, realizado:0 };
-    porProd[r.produto].programado += r.qntCaixas || 0;
-    porProd[r.produto].realizado  += _grpRealizado(r);
-  });
-  const linhas = Object.entries(porProd)
-    .sort((a,b) => b[1].realizado - a[1].realizado)
-    .map(([prod, d]) => {
-      const efic = d.programado > 0 ? Math.round(d.realizado / d.programado * 100) : 0;
-      return { produto: prod, maquina: d.maquina || '—', programado: d.programado.toLocaleString('pt-BR'), realizado: d.realizado.toLocaleString('pt-BR'), efic: efic + '%', _efic: efic };
-    });
-  _grpTabela('grp-panel-produtos', [
-    { key:'produto',    label:'Produto' },
-    { key:'maquina',    label:'Máquina',     mono:true, cor:()=>'var(--cyan)' },
-    { key:'programado', label:'Programado',  right:true, mono:true },
-    { key:'realizado',  label:'Realizado',   right:true, mono:true, cor:(v,r) => r._efic >= 85 ? '#2ec97a' : r._efic >= 70 ? '#f5c518' : '#e8321a' },
-    { key:'efic',       label:'Eficiência',  right:true, mono:true, cor:(v,r) => r._efic >= 85 ? '#2ec97a' : r._efic >= 70 ? '#f5c518' : '#e8321a' },
-  ], linhas, null);
-}
-
-// ── FUNCIONÁRIOS ──────────────────────────────────────────────────
-function _grpRenderFuncionarios() {
-  const body = document.getElementById('grp-panel-funcionarios');
-  if (!body) return;
-  const f = _grpFiltros();
-  // Agrupar apontamentos por funcionário
-  const porFunc = {};
-  try {
-    const keys = (window.aponGetAllKeys || (() => []))();
-    keys.forEach(k => {
-      // chave: apon_YYYY-MM-DD_recId
-      const parts = k.split('_');
-      if (parts.length < 3 || parts[0] !== 'apon') return;
-      const dt = parts[1];
-      if (f.dtIni && dt < f.dtIni) return;
-      if (f.dtFim && dt > f.dtFim) return;
-      const d = (window.aponStorageGet || (() => null))(k);
-      if (!d) return;
-      const func = d.operador || d.funcionario || '—';
-      if (f.func && func !== f.func) return;
-      if (!porFunc[func]) porFunc[func] = { total: 0, dias: new Set() };
-      [7,8,9,10,11,12,13,14,15,16,17].forEach(h => { porFunc[func].total += parseInt(d[h])||0; });
-      porFunc[func].dias.add(dt);
-    });
-  } catch(e) {}
-  const linhas = Object.entries(porFunc)
-    .sort((a,b) => b[1].total - a[1].total)
-    .map(([func, d]) => ({
-      funcionario: func,
-      dias: d.dias.size,
-      total: d.total.toLocaleString('pt-BR') + ' cx',
-      media: d.dias.size > 0 ? Math.round(d.total / d.dias.size).toLocaleString('pt-BR') + ' cx/dia' : '—',
-    }));
-  if (!linhas.length) {
-    body.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text3);font-size:12px">Sem apontamentos no período — verifique os filtros de data</div>';
-    return;
-  }
-  _grpTabela('grp-panel-funcionarios', [
-    { key:'funcionario', label:'Funcionário' },
-    { key:'dias',        label:'Dias',         right:true, mono:true },
-    { key:'total',       label:'Total Prod.',  right:true, mono:true, cor:()=>'var(--cyan)' },
-    { key:'media',       label:'Média/Dia',    right:true, mono:true },
-  ], linhas, null);
-}
-
-// ── INSUMOS ───────────────────────────────────────────────────────
-function _grpRenderInsumos() {
-  const body = document.getElementById('grp-panel-insumos');
-  if (!body) return;
-  try {
-    const pc = window.projecaoCalculada || [];
-    if (!pc.length) {
-      body.innerHTML = '<div style="padding:24px;color:var(--text3);font-size:12px">📈 Calcule a Projeção de Vendas para ver análise de cobertura de insumos</div>';
-      return;
-    }
-    const riscoConfig = {
-      critico: { cor:'#e8321a', label:'CRÍTICO', icon:'🔴' },
-      alto:    { cor:'#f5c518', label:'ALTO',    icon:'🟡' },
-      medio:   { cor:'#f26522', label:'MÉDIO',   icon:'🟠' },
-      ok:      { cor:'#2ec97a', label:'OK',      icon:'🟢' },
-    };
-    const sorted = [...pc].sort((a,b) => {
-      const rv = {critico:0,alto:1,medio:2,ok:3};
-      return (rv[a.risco]??4) - (rv[b.risco]??4);
-    });
-    body.innerHTML = sorted.slice(0,20).map(p => {
-      const cfg = riscoConfig[p.risco] || riscoConfig.ok;
-      return `<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;border-radius:7px;margin-bottom:6px;background:rgba(255,255,255,.03);border:1px solid var(--border)">
-        <div style="display:flex;align-items:center;gap:8px;flex:1;min-width:0">
-          <span>${cfg.icon}</span>
-          <div>
-            <div style="font-size:12px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:280px">${p.produto}</div>
-            <div style="font-size:10px;color:var(--text3)">${p.maquina||'—'} · Demanda: ${p.demandaDiaria?.toFixed(0)??'?'} cx/dia</div>
-          </div>
-        </div>
-        <div style="display:flex;align-items:center;gap:12px;flex-shrink:0">
-          <div style="text-align:right">
-            <div style="font-family:'JetBrains Mono',monospace;font-size:14px;font-weight:700;color:${cfg.cor}">${p.coberturaAtual!=null?p.coberturaAtual.toFixed(1)+'d':'—'}</div>
-            <div style="font-size:9px;color:var(--text3)">COBERTURA</div>
-          </div>
-          <span style="display:inline-block;padding:2px 8px;border-radius:5px;font-size:10px;font-weight:700;background:${cfg.cor}22;color:${cfg.cor};border:1px solid ${cfg.cor}44;min-width:52px;text-align:center">${cfg.label}</span>
-        </div>
-      </div>`;
-    }).join('');
-  } catch(e) {
-    body.innerHTML = '<div style="padding:16px;color:var(--text3);font-size:12px">Erro ao carregar dados de insumos</div>';
-  }
-}
-
-// ── GERENCIAL ─────────────────────────────────────────────────────
-function _grpRenderGerencial() {
-  const recs = _grpGetRecords();
-  // KPIs gerenciais
-  let totalProg = 0, totalReal = 0;
-  const porMaq = {};
-  recs.forEach(r => {
-    const real = _grpRealizado(r);
-    totalProg += r.qntCaixas || 0;
-    totalReal += real;
-    if (!r.maquina) return;
-    if (!porMaq[r.maquina]) porMaq[r.maquina] = { prog:0, real:0 };
-    porMaq[r.maquina].prog += r.qntCaixas || 0;
-    porMaq[r.maquina].real += real;
-  });
-  const efic = totalProg > 0 ? Math.round(totalReal / totalProg * 100) : 0;
-  const eficCor = efic >= 85 ? '#2ec97a' : efic >= 70 ? '#f5c518' : '#e8321a';
-  let rupturas = 0;
-  try { rupturas = (window.projecaoCalculada||[]).filter(p => p.risco==='critico'||p.risco==='alto').length; } catch(e) {}
-
-  const kpiEl = document.getElementById('grp-panel-gerencial');
-  if (!kpiEl) return;
-
-  const kpiHtml = `
-    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px">
-      ${[
-        { label:'Produção Total',   val: totalReal.toLocaleString('pt-BR') + ' cx', cor:'var(--cyan)',  icon:'📦' },
-        { label:'Programado',       val: totalProg.toLocaleString('pt-BR') + ' cx', cor:'var(--text2)', icon:'📋' },
-        { label:'Eficiência Geral', val: efic + '%',                                 cor: eficCor,       icon:'📈' },
-        { label:'Risco Ruptura',    val: rupturas + ' prod.',                        cor: rupturas===0?'#2ec97a':'#e8321a', icon:'🚨' },
-      ].map(k => `
-        <div style="background:var(--s1);border:1px solid var(--border);border-radius:12px;padding:16px 18px;border-left:3px solid ${k.cor}">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-            <div style="font-size:10px;text-transform:uppercase;letter-spacing:.7px;color:var(--text3)">${k.label}</div>
-            <span style="font-size:18px">${k.icon}</span>
-          </div>
-          <div style="font-family:'JetBrains Mono',monospace;font-size:26px;font-weight:700;color:${k.cor}">${k.val}</div>
-        </div>`).join('')}
-    </div>`;
-
-  const linhas = Object.entries(porMaq).sort().map(([maq, d]) => {
-    const e = d.prog > 0 ? Math.round(d.real / d.prog * 100) : 0;
-    return { maquina: maq, programado: d.prog.toLocaleString('pt-BR'), realizado: d.real.toLocaleString('pt-BR'), efic: e + '%', _efic: e };
-  });
-
-  kpiEl.innerHTML = kpiHtml;
-  const tabelaId = 'grp-panel-gerencial-tabela';
-  kpiEl.insertAdjacentHTML('beforeend', `<div id="${tabelaId}"></div>`);
-  _grpTabela(tabelaId, [
-    { key:'maquina',    label:'Máquina',     mono:true, cor:()=>'var(--cyan)' },
-    { key:'programado', label:'Programado',  right:true, mono:true },
-    { key:'realizado',  label:'Realizado',   right:true, mono:true, cor:(v,r)=>r._efic>=85?'#2ec97a':r._efic>=70?'#f5c518':'#e8321a' },
-    { key:'efic',       label:'Eficiência',  right:true, mono:true, cor:(v,r)=>r._efic>=85?'#2ec97a':r._efic>=70?'#f5c518':'#e8321a' },
-  ], linhas, null);
-}
-
-// ── grpClear — botão Limpar ───────────────────────────────────────
-function grpClear() {
-  ['grp-dt-ini','grp-dt-fim','grp-maq','grp-prod','grp-func'].forEach(id => {
-    const el = document.getElementById(id); if (el) el.value = '';
-  });
-  grpRender();
-}
-
-// ── grpExport — botão Excel ───────────────────────────────────────
-function grpExport() {
-  if (window.relatorios && typeof window.relatorios.exportXLSX === 'function') {
-    window.relatorios.exportXLSX();
-    return;
-  }
-  // Fallback: exportar os dados da aba ativa
-  const recs = _grpGetRecords();
-  try {
-    const wb = XLSX.utils.book_new();
-    const rows = [['Produto','Máquina','Programado','Realizado','Data']];
-    recs.forEach(r => rows.push([r.produto||'', r.maquina||'', r.qntCaixas||0, _grpRealizado(r), r.dtDesejada||r.dtSolicitacao||'']));
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), 'Relatório');
-    XLSX.writeFile(wb, 'Relatorio_' + _grpTabAtivo + '_' + new Date().toLocaleDateString('pt-BR').replace(/\//g,'-') + '.xlsx');
-  } catch(e) { alert('Erro ao exportar: ' + e.message); }
-}
-
-window.grpRender         = grpRender;
-window.grpSwitchTab      = grpSwitchTab;
-window.grpClear          = grpClear;
-window.grpExport         = grpExport;
-
-// ═══════════════════════════════════════════════════════════════════
-// PROCESSOS DE PRODUÇÃO
-// ═══════════════════════════════════════════════════════════════════
-
-let _processosList = [];
-
-async function _loadProcessos() {
-  try {
-    const snap = await getDocs(lojaCol('processos'));
-    _processosList = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-  } catch(e) {
-    _processosList = [];
-  }
-}
-
-async function renderProcessos() {
-  await _loadProcessos();
-  const container = document.getElementById('processos-list');
-  if (!container) return;
-
-  if (!_processosList.length) {
-    container.innerHTML = `
-      <div style="padding:32px;text-align:center;color:var(--text3);font-size:12px">
-        <div style="font-size:28px;margin-bottom:8px">⚙️</div>
-        Nenhum processo cadastrado ainda.<br>Clique em <strong>Novo Processo</strong> para adicionar.
-      </div>`;
-    return;
-  }
-
-  container.innerHTML = _processosList.map(p => `
-    <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--border);gap:12px">
-      <div style="flex:1;min-width:0">
-        <div style="font-size:13px;font-weight:600;color:var(--text)">${p.nome || '—'}</div>
-        ${p.descricao ? `<div style="font-size:11px;color:var(--text3);margin-top:2px">${p.descricao}</div>` : ''}
-      </div>
-      <div style="display:flex;gap:6px;flex-shrink:0">
-        <button onclick="openModalProcesso('${p.id}')" style="background:none;border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:11px;color:var(--text2);cursor:pointer;font-family:'Space Grotesk',sans-serif">✏️ Editar</button>
-        <button onclick="deleteProcesso('${p.id}')" style="background:none;border:1px solid rgba(232,50,26,.3);border-radius:6px;padding:5px 10px;font-size:11px;color:#e8321a;cursor:pointer;font-family:'Space Grotesk',sans-serif">🗑️</button>
-      </div>
-    </div>
-  `).join('');
-}
-
-function openModalProcesso(id) {
-  const modal = document.getElementById('modal-processo');
-  if (!modal) return;
-
-  document.getElementById('processo-edit-id').value = id || '';
-  document.getElementById('processo-nome').value = '';
-  document.getElementById('processo-desc').value = '';
-  document.getElementById('processo-modal-title').textContent = id ? 'Editar Processo' : 'Novo Processo';
-
-  if (id) {
-    const p = _processosList.find(x => x.id === id);
-    if (p) {
-      document.getElementById('processo-nome').value = p.nome || '';
-      document.getElementById('processo-desc').value = p.descricao || '';
-    }
-  }
-
-  modal.style.display = 'flex';
-  setTimeout(() => document.getElementById('processo-nome')?.focus(), 80);
-}
-
-function closeModalProcesso() {
-  const modal = document.getElementById('modal-processo');
-  if (modal) modal.style.display = 'none';
-}
-
-async function salvarProcesso() {
-  const nome = (document.getElementById('processo-nome')?.value || '').trim();
-  if (!nome) { toast('Informe o nome do processo', 'err'); return; }
-
-  const descricao = (document.getElementById('processo-desc')?.value || '').trim();
-  const editId    = document.getElementById('processo-edit-id')?.value || '';
-  const payload   = { nome, descricao, atualizadoEm: new Date().toISOString() };
-
-  try {
-    if (editId) {
-      await setDoc(lojaDoc('processos', editId), payload, { merge: true });
-      toast('Processo atualizado!');
-    } else {
-      payload.criadoEm = new Date().toISOString();
-      await addDoc(lojaCol('processos'), payload);
-      toast('Processo criado!');
-    }
-    closeModalProcesso();
-    await renderProcessos();
-  } catch(e) {
-    toast('Erro ao salvar processo: ' + e.message, 'err');
-  }
-}
-
-async function deleteProcesso(id) {
-  if (!confirm('Excluir este processo?')) return;
-  try {
-    await deleteDoc(lojaDoc('processos', id));
-    toast('Processo excluído');
-    await renderProcessos();
-  } catch(e) {
-    toast('Erro ao excluir: ' + e.message, 'err');
-  }
-}
-
-window.openModalProcesso  = openModalProcesso;
-window.closeModalProcesso = closeModalProcesso;
-window.salvarProcesso     = salvarProcesso;
-window.deleteProcesso     = deleteProcesso;
-window.renderProcessos    = renderProcessos;
