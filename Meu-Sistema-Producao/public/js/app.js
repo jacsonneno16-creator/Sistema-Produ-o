@@ -8885,6 +8885,7 @@ const MODULO_ACOES = {
   configuracoes: ['visualizar','editar','administrar'],
   funcionarios : ['visualizar','editar','criar','excluir'],
   usuarios     : ['visualizar','editar','criar','excluir','administrar'],
+  relatorios   : ['visualizar','exportar'],
 };
 
 // Descrição detalhada do que cada ação libera em cada módulo
@@ -8957,6 +8958,10 @@ const MODULO_ACOES_DESC = {
     criar      : 'Criar novos usuários com acesso ao sistema',
     excluir    : 'Excluir usuários permanentemente',
     administrar: 'Forçar reset de senha e ativar/desativar contas',
+  },
+  relatorios   : {
+    visualizar : 'Ver a aba de relatórios',
+    exportar   : 'Exportar relatórios em Excel, PDF e Imagem',
   },
 };
 
@@ -9456,6 +9461,7 @@ function buildSidebar(user) {
     { tab:'api-sync',      icon:'🔌', label:'Importação/API',    modulo:'importacao' },
     { tab:'funcionarios',  icon:'👷', label:'Funcionários',      modulo:'funcionarios' },
     { tab:'usuarios',      icon:'👥', label:'Usuários',          modulo:'usuarios' },
+    { tab:'relatorios',    icon:'📊', label:'Relatórios',        modulo:'relatorios' },
   ];
 
   // Filtra apenas os que o perfil pode visualizar
@@ -9475,7 +9481,8 @@ function switchTabSidebar(name) {
     'dashboard':'dashboard','programacao':'programacao','maquinas':'maquinas',
     'gantt':'gantt','apontamento':'realizado','insumos-maq':'insumos_maq',
     'insumos-geral':'insumos_geral','calculos':'calculos','prog-auto':'calculos',
-    'projecao':'projecao','ficha-tecnica':'ficha_tecnica','api-sync':'importacao'
+    'projecao':'projecao','ficha-tecnica':'ficha_tecnica','api-sync':'importacao',
+    'relatorios':'relatorios'
   };
   const modulo = moduloMap[name];
   if (modulo && !canAccess(modulo)) {
@@ -9505,7 +9512,8 @@ function switchTabSidebar(name) {
     'dashboard':'Dashboard','programacao':'Programação','maquinas':'Máquinas',
     'gantt':'Prog. Visual','apontamento':'Realizado','insumos-maq':'Insumos / Máq.',
     'insumos-geral':'Insumos Geral','ficha-tecnica':'Ficha Técnica',
-    'api-sync':'Importação/API','calculos':'Prog. Automática','projecao':'Projeção de Vendas'
+    'api-sync':'Importação/API','calculos':'Prog. Automática','projecao':'Projeção de Vendas',
+    'relatorios':'Relatórios'
   };
   if(bc) bc.innerHTML = `<span>PROGPROD MES</span> <span style="opacity:.4">/</span> <span class="cur">${labels[name]||name}</span>`;
   // Tab-specific renders
@@ -9519,6 +9527,23 @@ function switchTabSidebar(name) {
   if(name==='api-sync') renderApiSync();
   if(name==='calculos'||name==='prog-auto') renderCalculos();
   if(name==='projecao') renderProjecao();
+  if(name==='relatorios') {
+    // Garantir que o painel existe antes de inicializar
+    let rPanel = document.getElementById('panel-relatorios');
+    if (!rPanel) {
+      rPanel = document.createElement('div');
+      rPanel.id = 'panel-relatorios';
+      rPanel.className = 'panel';
+      const container = document.getElementById('main-content')
+        || document.getElementById('content')
+        || document.getElementById('app')
+        || document.body;
+      container.appendChild(rPanel);
+    }
+    rPanel.classList.add('on');
+    // Renderizar o sub-tab ativo ao entrar na aba
+    setTimeout(() => grpRender(), 80);
+  }
   if(name==='usuarios') { openSettings(); setTimeout(()=>settingsNav('usuarios'), 80); }
 }
 
@@ -12409,7 +12434,7 @@ function renderCalculos(){
 
 window.toggleSidebar = toggleSidebar;
 window.toggleTopbarMenu = toggleTopbarMenu;
-window.toggleTema = toggleTema;
+if(typeof toggleTema === 'function') window.toggleTema = toggleTema;
 window.handleLogin = handleLogin;
 window.logout = () => import('./auth.js').then(m => m.logout());
 
@@ -14718,7 +14743,7 @@ window.tableWeekReset = tableWeekReset;
 window.tableWeekNav = tableWeekNav;
 window.toggleHdMenu = toggleHdMenu;
 window.toggleTopbarMenu = toggleTopbarMenu;
-window.toggleTema = toggleTema;
+if(typeof toggleTema === 'function') window.toggleTema = toggleTema;
 window.goPg = goPg;
 window.editRec = editRec;
 window.askDel = askDel;
@@ -14797,3 +14822,365 @@ window.pa_onModoChange   = pa_onModoChange;
 window.pa_onMesChange    = function(){ if(paResultados.length) renderProgAutomaticaResultado(); };
 window.paToggleInsumos = paToggleInsumos;
 window.progToggleInsumos = progToggleInsumos;
+
+function grpSwitchTab(id) {
+  _grpTabAtivo = id;
+
+  // Atualizar botões ativos
+  document.querySelectorAll('.grp-tab-btn, [onclick*="grpSwitchTab"]').forEach(btn => {
+    const oc = btn.getAttribute('onclick') || '';
+    const on = oc.includes("'" + id + "'") || oc.includes('"' + id + '"');
+    btn.classList.toggle('on', on);
+  });
+
+  // Esconder todos os painéis grp
+  document.querySelectorAll('.grp-panel, [id^="grp-panel-"]').forEach(p => {
+    p.classList.remove('on');
+  });
+
+  // Mostrar painel correspondente
+  const alvo = document.getElementById('grp-panel-' + id);
+  if (alvo) alvo.classList.add('on');
+
+  // Renderizar conteúdo do painel
+  grpRender();
+}
+
+// ── Renderizar sub-aba ativa ──────────────────────────────────────
+function grpRender() {
+  switch (_grpTabAtivo) {
+    case 'producao':     _grpRenderProducao();     break;
+    case 'maquinas':     _grpRenderMaquinas();     break;
+    case 'produtos':     _grpRenderProdutos();     break;
+    case 'funcionarios': _grpRenderFuncionarios(); break;
+    case 'insumos':      _grpRenderInsumos();      break;
+    case 'gerencial':    _grpRenderGerencial();    break;
+  }
+}
+
+// ── Helper: filtrar records pelos filtros globais ─────────────────
+function _grpGetRecords() {
+  const f = _grpFiltros();
+  return (window.records || []).filter(r => {
+    const dt = r.dtDesejada || r.dtSolicitacao || '';
+    if (f.dtIni   && dt && dt < f.dtIni)           return false;
+    if (f.dtFim   && dt && dt > f.dtFim)            return false;
+    if (f.maquina && r.maquina !== f.maquina)       return false;
+    if (f.produto && r.produto !== f.produto)       return false;
+    return true;
+  });
+}
+
+// ── Helper: realizado de um record no período ─────────────────────
+function _grpRealizado(r) {
+  const f = _grpFiltros();
+  let total = 0;
+  try {
+    const suffix = '_' + r.id;
+    const keys = (window.aponGetAllKeys || (() => []))();
+    keys.forEach(k => {
+      if (!k.endsWith(suffix)) return;
+      const dt = k.slice('apon_'.length, k.length - suffix.length);
+      if (f.dtIni && dt < f.dtIni) return;
+      if (f.dtFim && dt > f.dtFim) return;
+      const d = (window.aponStorageGet || (() => null))(k);
+      if (d) [7,8,9,10,11,12,13,14,15,16,17].forEach(h => { total += parseInt(d[h])||0; });
+    });
+  } catch(e) {}
+  return total;
+}
+
+// ── Helper: renderizar tabela em um container ─────────────────────
+function _grpTabela(containerId, colunas, linhas, totais) {
+  const el = document.getElementById(containerId);
+  if (!el) return;
+  if (!linhas.length) {
+    el.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text3);font-size:12px">Sem dados no período selecionado</div>';
+    return;
+  }
+  const th = colunas.map(c =>
+    `<th style="padding:9px 12px;text-align:${c.right?'right':'left'};font-family:'JetBrains Mono',monospace;font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.8px;color:var(--text3)">${c.label}</th>`
+  ).join('');
+
+  const rows = linhas.map((row, i) => {
+    const bg = i % 2 === 1 ? 'background:rgba(255,255,255,.01)' : '';
+    const cells = colunas.map(c => {
+      const v = row[c.key];
+      const cor = c.cor ? c.cor(v, row) : 'var(--text)';
+      return `<td style="padding:9px 12px;${c.right?'text-align:right;':''}font-family:${c.mono?'\'JetBrains Mono\',monospace':'inherit'};color:${cor}">${v ?? '—'}</td>`;
+    }).join('');
+    return `<tr style="${bg}">${cells}</tr>`;
+  }).join('');
+
+  const tot = totais ? `<tr style="background:rgba(242,101,34,.06);border-top:1px solid rgba(242,101,34,.2)">
+    ${colunas.map(c => `<td style="padding:9px 12px;${c.right?'text-align:right;':''}font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--cyan)">${totais[c.key] ?? ''}</td>`).join('')}
+  </tr>` : '';
+
+  el.innerHTML = `<div style="overflow-x:auto">
+    <table style="width:100%;border-collapse:collapse;font-size:12px">
+      <thead style="background:var(--s2);border-bottom:1px solid var(--border)"><tr>${th}</tr></thead>
+      <tbody>${rows}${tot}</tbody>
+    </table>
+  </div>`;
+}
+
+// ── PRODUÇÃO ──────────────────────────────────────────────────────
+function _grpRenderProducao() {
+  const body = document.getElementById('grp-panel-producao');
+  if (!body) return;
+  const recs = _grpGetRecords();
+  if (!recs.length) {
+    body.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text3);font-size:12px">Sem dados no período</div>';
+    return;
+  }
+  // Agrupar por dia
+  const porDia = {};
+  recs.forEach(r => {
+    const dt = r.dtDesejada || r.dtSolicitacao || '';
+    if (!dt) return;
+    if (!porDia[dt]) porDia[dt] = { programado: 0, realizado: 0 };
+    porDia[dt].programado += r.qntCaixas || 0;
+    porDia[dt].realizado  += _grpRealizado(r);
+  });
+  const linhas = Object.entries(porDia).sort().map(([dt, d]) => {
+    const efic = d.programado > 0 ? Math.round(d.realizado / d.programado * 100) : 0;
+    const cor  = efic >= 85 ? '#2ec97a' : efic >= 70 ? '#f5c518' : '#e8321a';
+    return { data: dt, programado: d.programado.toLocaleString('pt-BR'), realizado: d.realizado.toLocaleString('pt-BR'), efic: efic + '%', _efic: efic };
+  });
+  const totP = Object.values(porDia).reduce((a,d) => a + d.programado, 0);
+  const totR = Object.values(porDia).reduce((a,d) => a + d.realizado, 0);
+  const totE = totP > 0 ? Math.round(totR / totP * 100) : 0;
+  _grpTabela('grp-panel-producao', [
+    { key:'data',       label:'Data',        mono:true },
+    { key:'programado', label:'Programado',  right:true, mono:true },
+    { key:'realizado',  label:'Realizado',   right:true, mono:true, cor:(v,r) => r._efic >= 85 ? '#2ec97a' : r._efic >= 70 ? '#f5c518' : '#e8321a' },
+    { key:'efic',       label:'Eficiência',  right:true, mono:true, cor:(v,r) => r._efic >= 85 ? '#2ec97a' : r._efic >= 70 ? '#f5c518' : '#e8321a' },
+  ], linhas, { data:'TOTAL', programado: totP.toLocaleString('pt-BR'), realizado: totR.toLocaleString('pt-BR'), efic: totE + '%' });
+}
+
+// ── MÁQUINAS ──────────────────────────────────────────────────────
+function _grpRenderMaquinas() {
+  const recs = _grpGetRecords();
+  const porMaq = {};
+  recs.forEach(r => {
+    if (!r.maquina) return;
+    if (!porMaq[r.maquina]) porMaq[r.maquina] = { programado:0, realizado:0, ordens:0 };
+    porMaq[r.maquina].programado += r.qntCaixas || 0;
+    porMaq[r.maquina].realizado  += _grpRealizado(r);
+    porMaq[r.maquina].ordens++;
+  });
+  const linhas = Object.entries(porMaq).sort().map(([maq, d]) => {
+    const efic = d.programado > 0 ? Math.round(d.realizado / d.programado * 100) : 0;
+    return { maquina: maq, ordens: d.ordens, programado: d.programado.toLocaleString('pt-BR'), realizado: d.realizado.toLocaleString('pt-BR'), efic: efic + '%', _efic: efic };
+  });
+  const totP = Object.values(porMaq).reduce((a,d) => a + d.programado, 0);
+  const totR = Object.values(porMaq).reduce((a,d) => a + d.realizado, 0);
+  _grpTabela('grp-panel-maquinas', [
+    { key:'maquina',    label:'Máquina',     mono:true, cor:()=>'var(--cyan)' },
+    { key:'ordens',     label:'Ordens',      right:true, mono:true },
+    { key:'programado', label:'Programado',  right:true, mono:true },
+    { key:'realizado',  label:'Realizado',   right:true, mono:true, cor:(v,r) => r._efic >= 85 ? '#2ec97a' : r._efic >= 70 ? '#f5c518' : '#e8321a' },
+    { key:'efic',       label:'Eficiência',  right:true, mono:true, cor:(v,r) => r._efic >= 85 ? '#2ec97a' : r._efic >= 70 ? '#f5c518' : '#e8321a' },
+  ], linhas, { maquina:'TOTAL', programado: totP.toLocaleString('pt-BR'), realizado: totR.toLocaleString('pt-BR'), efic: '' });
+}
+
+// ── PRODUTOS ──────────────────────────────────────────────────────
+function _grpRenderProdutos() {
+  const recs = _grpGetRecords();
+  const porProd = {};
+  recs.forEach(r => {
+    if (!r.produto) return;
+    if (!porProd[r.produto]) porProd[r.produto] = { maquina: r.maquina, programado:0, realizado:0 };
+    porProd[r.produto].programado += r.qntCaixas || 0;
+    porProd[r.produto].realizado  += _grpRealizado(r);
+  });
+  const linhas = Object.entries(porProd)
+    .sort((a,b) => b[1].realizado - a[1].realizado)
+    .map(([prod, d]) => {
+      const efic = d.programado > 0 ? Math.round(d.realizado / d.programado * 100) : 0;
+      return { produto: prod, maquina: d.maquina || '—', programado: d.programado.toLocaleString('pt-BR'), realizado: d.realizado.toLocaleString('pt-BR'), efic: efic + '%', _efic: efic };
+    });
+  _grpTabela('grp-panel-produtos', [
+    { key:'produto',    label:'Produto' },
+    { key:'maquina',    label:'Máquina',     mono:true, cor:()=>'var(--cyan)' },
+    { key:'programado', label:'Programado',  right:true, mono:true },
+    { key:'realizado',  label:'Realizado',   right:true, mono:true, cor:(v,r) => r._efic >= 85 ? '#2ec97a' : r._efic >= 70 ? '#f5c518' : '#e8321a' },
+    { key:'efic',       label:'Eficiência',  right:true, mono:true, cor:(v,r) => r._efic >= 85 ? '#2ec97a' : r._efic >= 70 ? '#f5c518' : '#e8321a' },
+  ], linhas, null);
+}
+
+// ── FUNCIONÁRIOS ──────────────────────────────────────────────────
+function _grpRenderFuncionarios() {
+  const body = document.getElementById('grp-panel-funcionarios');
+  if (!body) return;
+  const f = _grpFiltros();
+  // Agrupar apontamentos por funcionário
+  const porFunc = {};
+  try {
+    const keys = (window.aponGetAllKeys || (() => []))();
+    keys.forEach(k => {
+      // chave: apon_YYYY-MM-DD_recId
+      const parts = k.split('_');
+      if (parts.length < 3 || parts[0] !== 'apon') return;
+      const dt = parts[1];
+      if (f.dtIni && dt < f.dtIni) return;
+      if (f.dtFim && dt > f.dtFim) return;
+      const d = (window.aponStorageGet || (() => null))(k);
+      if (!d) return;
+      const func = d.operador || d.funcionario || '—';
+      if (f.func && func !== f.func) return;
+      if (!porFunc[func]) porFunc[func] = { total: 0, dias: new Set() };
+      [7,8,9,10,11,12,13,14,15,16,17].forEach(h => { porFunc[func].total += parseInt(d[h])||0; });
+      porFunc[func].dias.add(dt);
+    });
+  } catch(e) {}
+  const linhas = Object.entries(porFunc)
+    .sort((a,b) => b[1].total - a[1].total)
+    .map(([func, d]) => ({
+      funcionario: func,
+      dias: d.dias.size,
+      total: d.total.toLocaleString('pt-BR') + ' cx',
+      media: d.dias.size > 0 ? Math.round(d.total / d.dias.size).toLocaleString('pt-BR') + ' cx/dia' : '—',
+    }));
+  if (!linhas.length) {
+    body.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text3);font-size:12px">Sem apontamentos no período — verifique os filtros de data</div>';
+    return;
+  }
+  _grpTabela('grp-panel-funcionarios', [
+    { key:'funcionario', label:'Funcionário' },
+    { key:'dias',        label:'Dias',         right:true, mono:true },
+    { key:'total',       label:'Total Prod.',  right:true, mono:true, cor:()=>'var(--cyan)' },
+    { key:'media',       label:'Média/Dia',    right:true, mono:true },
+  ], linhas, null);
+}
+
+// ── INSUMOS ───────────────────────────────────────────────────────
+function _grpRenderInsumos() {
+  const body = document.getElementById('grp-panel-insumos');
+  if (!body) return;
+  try {
+    const pc = window.projecaoCalculada || [];
+    if (!pc.length) {
+      body.innerHTML = '<div style="padding:24px;color:var(--text3);font-size:12px">📈 Calcule a Projeção de Vendas para ver análise de cobertura de insumos</div>';
+      return;
+    }
+    const riscoConfig = {
+      critico: { cor:'#e8321a', label:'CRÍTICO', icon:'🔴' },
+      alto:    { cor:'#f5c518', label:'ALTO',    icon:'🟡' },
+      medio:   { cor:'#f26522', label:'MÉDIO',   icon:'🟠' },
+      ok:      { cor:'#2ec97a', label:'OK',      icon:'🟢' },
+    };
+    const sorted = [...pc].sort((a,b) => {
+      const rv = {critico:0,alto:1,medio:2,ok:3};
+      return (rv[a.risco]??4) - (rv[b.risco]??4);
+    });
+    body.innerHTML = sorted.slice(0,20).map(p => {
+      const cfg = riscoConfig[p.risco] || riscoConfig.ok;
+      return `<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;border-radius:7px;margin-bottom:6px;background:rgba(255,255,255,.03);border:1px solid var(--border)">
+        <div style="display:flex;align-items:center;gap:8px;flex:1;min-width:0">
+          <span>${cfg.icon}</span>
+          <div>
+            <div style="font-size:12px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:280px">${p.produto}</div>
+            <div style="font-size:10px;color:var(--text3)">${p.maquina||'—'} · Demanda: ${p.demandaDiaria?.toFixed(0)??'?'} cx/dia</div>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:12px;flex-shrink:0">
+          <div style="text-align:right">
+            <div style="font-family:'JetBrains Mono',monospace;font-size:14px;font-weight:700;color:${cfg.cor}">${p.coberturaAtual!=null?p.coberturaAtual.toFixed(1)+'d':'—'}</div>
+            <div style="font-size:9px;color:var(--text3)">COBERTURA</div>
+          </div>
+          <span style="display:inline-block;padding:2px 8px;border-radius:5px;font-size:10px;font-weight:700;background:${cfg.cor}22;color:${cfg.cor};border:1px solid ${cfg.cor}44;min-width:52px;text-align:center">${cfg.label}</span>
+        </div>
+      </div>`;
+    }).join('');
+  } catch(e) {
+    body.innerHTML = '<div style="padding:16px;color:var(--text3);font-size:12px">Erro ao carregar dados de insumos</div>';
+  }
+}
+
+// ── GERENCIAL ─────────────────────────────────────────────────────
+function _grpRenderGerencial() {
+  const recs = _grpGetRecords();
+  // KPIs gerenciais
+  let totalProg = 0, totalReal = 0;
+  const porMaq = {};
+  recs.forEach(r => {
+    const real = _grpRealizado(r);
+    totalProg += r.qntCaixas || 0;
+    totalReal += real;
+    if (!r.maquina) return;
+    if (!porMaq[r.maquina]) porMaq[r.maquina] = { prog:0, real:0 };
+    porMaq[r.maquina].prog += r.qntCaixas || 0;
+    porMaq[r.maquina].real += real;
+  });
+  const efic = totalProg > 0 ? Math.round(totalReal / totalProg * 100) : 0;
+  const eficCor = efic >= 85 ? '#2ec97a' : efic >= 70 ? '#f5c518' : '#e8321a';
+  let rupturas = 0;
+  try { rupturas = (window.projecaoCalculada||[]).filter(p => p.risco==='critico'||p.risco==='alto').length; } catch(e) {}
+
+  const kpiEl = document.getElementById('grp-panel-gerencial');
+  if (!kpiEl) return;
+
+  const kpiHtml = `
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px">
+      ${[
+        { label:'Produção Total',   val: totalReal.toLocaleString('pt-BR') + ' cx', cor:'var(--cyan)',  icon:'📦' },
+        { label:'Programado',       val: totalProg.toLocaleString('pt-BR') + ' cx', cor:'var(--text2)', icon:'📋' },
+        { label:'Eficiência Geral', val: efic + '%',                                 cor: eficCor,       icon:'📈' },
+        { label:'Risco Ruptura',    val: rupturas + ' prod.',                        cor: rupturas===0?'#2ec97a':'#e8321a', icon:'🚨' },
+      ].map(k => `
+        <div style="background:var(--s1);border:1px solid var(--border);border-radius:12px;padding:16px 18px;border-left:3px solid ${k.cor}">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+            <div style="font-size:10px;text-transform:uppercase;letter-spacing:.7px;color:var(--text3)">${k.label}</div>
+            <span style="font-size:18px">${k.icon}</span>
+          </div>
+          <div style="font-family:'JetBrains Mono',monospace;font-size:26px;font-weight:700;color:${k.cor}">${k.val}</div>
+        </div>`).join('')}
+    </div>`;
+
+  const linhas = Object.entries(porMaq).sort().map(([maq, d]) => {
+    const e = d.prog > 0 ? Math.round(d.real / d.prog * 100) : 0;
+    return { maquina: maq, programado: d.prog.toLocaleString('pt-BR'), realizado: d.real.toLocaleString('pt-BR'), efic: e + '%', _efic: e };
+  });
+
+  kpiEl.innerHTML = kpiHtml;
+  const tabelaId = 'grp-panel-gerencial-tabela';
+  kpiEl.insertAdjacentHTML('beforeend', `<div id="${tabelaId}"></div>`);
+  _grpTabela(tabelaId, [
+    { key:'maquina',    label:'Máquina',     mono:true, cor:()=>'var(--cyan)' },
+    { key:'programado', label:'Programado',  right:true, mono:true },
+    { key:'realizado',  label:'Realizado',   right:true, mono:true, cor:(v,r)=>r._efic>=85?'#2ec97a':r._efic>=70?'#f5c518':'#e8321a' },
+    { key:'efic',       label:'Eficiência',  right:true, mono:true, cor:(v,r)=>r._efic>=85?'#2ec97a':r._efic>=70?'#f5c518':'#e8321a' },
+  ], linhas, null);
+}
+
+// ── grpClear — botão Limpar ───────────────────────────────────────
+function grpClear() {
+  ['grp-dt-ini','grp-dt-fim','grp-maq','grp-prod','grp-func'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.value = '';
+  });
+  grpRender();
+}
+
+// ── grpExport — botão Excel ───────────────────────────────────────
+function grpExport() {
+  if (window.relatorios && typeof window.relatorios.exportXLSX === 'function') {
+    window.relatorios.exportXLSX();
+    return;
+  }
+  // Fallback: exportar os dados da aba ativa
+  const recs = _grpGetRecords();
+  try {
+    const wb = XLSX.utils.book_new();
+    const rows = [['Produto','Máquina','Programado','Realizado','Data']];
+    recs.forEach(r => rows.push([r.produto||'', r.maquina||'', r.qntCaixas||0, _grpRealizado(r), r.dtDesejada||r.dtSolicitacao||'']));
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), 'Relatório');
+    XLSX.writeFile(wb, 'Relatorio_' + _grpTabAtivo + '_' + new Date().toLocaleDateString('pt-BR').replace(/\//g,'-') + '.xlsx');
+  } catch(e) { alert('Erro ao exportar: ' + e.message); }
+}
+
+window.grpRender         = grpRender;
+window.grpSwitchTab      = grpSwitchTab;
+window.grpClear          = grpClear;
+window.grpExport         = grpExport;
+
