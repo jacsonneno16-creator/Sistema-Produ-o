@@ -535,7 +535,7 @@ async function carregarSetupFirestore() {
     SETUP_FIRESTORE = {};
     snap.docs.forEach(d => {
       const data = d.data();
-      const maq = data.maquina || '';
+      const maq = (data.maquina || '').toUpperCase().trim();
       const pA = normProd(data.produto_origem || '');
       const pB = normProd(data.produto_destino || '');
       const t = parseInt(data.tempo_setup) || 0;
@@ -612,9 +612,10 @@ const SETUP_DATA = {};
 function getSetupMin(maq, prodDescA, prodDescB) {
   if (!maq || !prodDescA || !prodDescB) return 0;
   if (prodDescA === prodDescB) return 0;
+  const maqNorm = (maq || '').toUpperCase().trim();
 
   // 1) Firestore (carregarSetupFirestore populou SETUP_FIRESTORE)
-  const fsMaq = SETUP_FIRESTORE[maq];
+  const fsMaq = SETUP_FIRESTORE[maqNorm];
   if (fsMaq) {
     const normA = normProd(prodDescA);
     const normB = normProd(prodDescB);
@@ -2971,7 +2972,7 @@ function renderGanttSemanal(){
       const setupColor=setupMin>0?'var(--orange)':'var(--text3)';
       // Verificar se setup não está configurado (para tooltip diagnóstico)
       const setupPadrao=getSetupPadrao(recMaq);
-      const temSetupFS=!!(SETUP_FIRESTORE[recMaq] && Object.keys(SETUP_FIRESTORE[recMaq]).length>0);
+      const temSetupFS=!!(SETUP_FIRESTORE[(recMaq||'').toUpperCase().trim()] && Object.keys(SETUP_FIRESTORE[(recMaq||'').toUpperCase().trim()]).length>0);
       const setupTooltip=setupMin>0
         ? `Setup: ${setupStr}`
         : (setupPadrao>0||temSetupFS
