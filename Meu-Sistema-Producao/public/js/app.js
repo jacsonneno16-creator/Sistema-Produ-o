@@ -570,7 +570,7 @@ function resetCategoriaForm() {
   const ativo = document.getElementById('cat-ativo-inp'); if (ativo) ativo.value = 'true';
 }
 
-function saveCategoriaCfg() {
+async function saveCategoriaCfg() {
   const nome = (document.getElementById('cat-nome-inp')?.value || '').trim();
   const ordem = parseInt(document.getElementById('cat-ordem-inp')?.value || '0') || 0;
   const ativo = document.getElementById('cat-ativo-inp')?.value !== 'false';
@@ -604,7 +604,7 @@ function editarCategoriaCfg(id) {
   document.getElementById('cat-ativo-inp').value = cat.ativo === false ? 'false' : 'true';
 }
 
-function excluirCategoriaCfg(id) {
+async function excluirCategoriaCfg(id) {
   const cat = (CATEGORIAS || []).find(c => c.id === id);
   if (!cat) return;
   if (!confirm('Excluir categoria "' + cat.nome + '"?')) return;
