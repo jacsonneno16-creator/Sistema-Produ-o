@@ -3717,7 +3717,7 @@ function getInsumos(prodDesc){
   if(typeof fichaTecnicaData !== 'undefined'){
     const ftEntry=fichaTecnicaData.find(x=>x.desc && x.desc.trim()===d);
     if(ftEntry && ftEntry.insumos && ftEntry.insumos.length>0){
-      return ftEntry.insumos.map(i=>({n:i.insumo, c:inferCatInsumo(i.insumo), q:i.qty}));
+      return ftEntry.insumos.map(i=>({n:i.insumo, c:i.cat||inferCatInsumo(i.insumo), q:i.qty}));
     }
     // Also try matching by code prefix
     const codeMatch=d.match(/^(\d{5})/);
@@ -3725,7 +3725,7 @@ function getInsumos(prodDesc){
       const code=codeMatch[1];
       const ftByCode=fichaTecnicaData.find(x=>x.desc && x.desc.trim().startsWith(code));
       if(ftByCode && ftByCode.insumos && ftByCode.insumos.length>0){
-        return ftByCode.insumos.map(i=>({n:i.insumo, c:inferCatInsumo(i.insumo), q:i.qty}));
+        return ftByCode.insumos.map(i=>({n:i.insumo, c:i.cat||inferCatInsumo(i.insumo), q:i.qty}));
       }
     }
   }
@@ -4740,7 +4740,7 @@ async function saveFichaByCod(cod){
   rows.forEach(row=>{
     const qty = parseFloat(row.querySelector('.fte-qty').value)||0;
     const name = row.querySelector('.fte-name').value.trim();
-    if(name) newInsumos.push({insumo:name, qty});
+    if(name) newInsumos.push({insumo:name, qty, cat:inferCatInsumo(name)});
   });
 
   // Atualiza TODOS os registros com o mesmo cod na memória
@@ -6791,6 +6791,12 @@ function openSettings(){
   if(snavFunc) snavFunc.style.display = can('funcionarios','visualizar') ? '' : 'none';
   if(snavUsuarios) snavUsuarios.style.display = can('usuarios','visualizar') ? '' : 'none';
   settingsNav('cadastro-maquinas');
+  const prodSubmenu=document.getElementById('snav-produtos-submenu');
+  const prodChevron=document.getElementById('snav-produtos-chevron');
+  const catBtn=document.getElementById('snav-categoria');
+  if(prodSubmenu){ prodSubmenu.style.display='flex'; prodSubmenu.dataset.open='true'; }
+  if(prodChevron) prodChevron.style.transform='rotate(180deg)';
+  if(catBtn) catBtn.style.display='';
   setTimeout(()=>{ if(typeof renderApiSync==='function') renderApiSync(); }, 50);
 }
 function closeSettings(){
@@ -6816,6 +6822,10 @@ function toggleSnavGroup(group){
 }
 
 function settingsNav(section){
+  const requestedSection = section;
+  const targetSection = section === 'categoria' ? 'produtos' : section;
+  const catBtnEnsure = document.getElementById('snav-categoria');
+  if (catBtnEnsure) catBtnEnsure.style.display = '';
   // Esconde todos os conteúdos
   document.querySelectorAll('.scontent').forEach(el=>{
     el.style.display='none';
@@ -6831,11 +6841,11 @@ function settingsNav(section){
     }
   });
   // Mostra a seção correta
-  const content=document.getElementById('scontent-'+section);
+  const content=document.getElementById('scontent-'+targetSection);
   if(content) content.style.display='flex';
-  if(section==='produtos') setTimeout(async()=>{ try { await carregarCategoriasCached(); renderCategoriasCfg(); preencherSelectCategorias('prod-categoria-inp'); preencherSelectCategorias('maq-categoria-inp'); } catch(e){} }, 30);
+  if(targetSection==='produtos') setTimeout(async()=>{ try { await carregarCategoriasCached(); renderCategoriasCfg(); preencherSelectCategorias('prod-categoria-inp'); preencherSelectCategorias('maq-categoria-inp'); } catch(e){} }, 30);
   // Ativa o botão nav correspondente
-  const navBtn=document.getElementById('snav-'+section);
+  const navBtn=document.getElementById('snav-'+requestedSection);
   if(navBtn){
     navBtn.classList.add('snav-active');
     navBtn.style.background='rgba(0,212,255,.1)';
@@ -6864,12 +6874,12 @@ function settingsNav(section){
   }
 
   // ── Grupo Produtos ──
-  const prodGroupSections=['produtos','ficha-tecnica-cfg'];
+  const prodGroupSections=['produtos','ficha-tecnica-cfg','categoria'];
   const prodGroupBtn=document.getElementById('snav-produtos-group-btn');
   const prodSubmenu=document.getElementById('snav-produtos-submenu');
   const prodChevron=document.getElementById('snav-produtos-chevron');
   if(prodGroupBtn){
-    if(prodGroupSections.includes(section)){
+    if(prodGroupSections.includes(requestedSection) || prodGroupSections.includes(targetSection)){
       prodGroupBtn.style.background='rgba(0,212,255,.1)';
       prodGroupBtn.style.border='1px solid rgba(0,212,255,.25)';
       prodGroupBtn.style.color='var(--cyan)';
@@ -6892,7 +6902,8 @@ function settingsNav(section){
   if(section==='setup-maquinas') setTimeout(()=>renderSetupMaquinas(), 50);
   if(section==='gestao-lojas') setTimeout(()=>renderGestaoLojas(), 50);
   if(section==='ficha-tecnica-cfg') setTimeout(()=>renderFichaTecnicaCfg(), 50);
-  if(section==='produtos') setTimeout(()=>renderProdutosCfg(), 50);
+  if(targetSection==='produtos') setTimeout(()=>renderProdutosCfg(), 50);
+  if(section==='categoria') setTimeout(()=>{ const card=document.getElementById('prod-categorias-card'); if(card) card.scrollIntoView({behavior:'smooth', block:'start'}); const el=document.getElementById('cat-nome-inp'); if(el) el.focus(); }, 80);
   if(section==='processos') setTimeout(()=>renderProcessos(), 50);
 }
 
@@ -7186,7 +7197,6 @@ function openEditMaquina(nome) {
   calcMaqCapacidade();
   carregarCategoriasCached().then(()=>preencherSelectCategorias('maq-categoria-inp', d.categoria || ''));
   switchMaqTab('dados');
-  carregarCategoriasCached().then(()=>preencherSelectCategorias('maq-categoria-inp',''));
   populateMaqProdSel();
   renderMaqProdsLista();
   document.getElementById('maq-modal').style.display = 'flex';
@@ -7787,6 +7797,17 @@ function toggleAtivoProduto(cod, maquina, estaDesativado){
 let _produtoEditando = null;
 
 // Adiciona uma linha de insumo no modal de cadastro de produto
+function _findFichaProdutoModal(cod, maquina, desc='') {
+  const codNum = parseInt(cod);
+  const descNorm = String(desc || '').trim();
+  const maqNorm = String(maquina || '').trim();
+  const arr = Array.isArray(fichaTecnicaData) ? fichaTecnicaData : [];
+  return arr.find(f => String(f.cod) === String(codNum) && String(f.maquina || '').trim() === maqNorm)
+      || arr.find(f => String(f.cod) === String(codNum) && String(f.desc || '').trim() === descNorm)
+      || arr.find(f => String(f.cod) === String(codNum))
+      || null;
+}
+
 function pmAddInsumoRow() {
   const container = document.getElementById('pm-insumos-list');
   if (!container) return;
@@ -7855,14 +7876,13 @@ function editarProduto(cod, maquina, descricao) {
   // Popular insumos existentes da ficha técnica
   const pmInsumos = document.getElementById('pm-insumos-list');
   if (pmInsumos) {
-    const ficha = fichaTecnicaData.find(f => f.cod === parseInt(cod));
+    const ficha = _findFichaProdutoModal(cod, maquina, produto.descricao);
     pmInsumos.innerHTML = ficha && ficha.insumos && ficha.insumos.length
       ? fteRenderInsumos(ficha.insumos)
       : '';
   }
 
   // Mudar título do modal
-  carregarCategoriasCached().then(()=>preencherSelectCategorias('prod-categoria-inp',''));
   const titleEl = document.getElementById('prod-modal-title') || document.getElementById('maq-modal-title');
   if (titleEl) titleEl.textContent = 'Editar Produto';
 
@@ -7988,7 +8008,7 @@ async function saveProdModal() {
     pmInsRows.forEach(row => {
       const qty  = parseFloat(row.querySelector('.fte-qty')?.value) || 0;
       const name = row.querySelector('.fte-name')?.value.trim() || '';
-      if (name) insumosDoModal.push({ insumo: name, qty });
+      if (name) insumosDoModal.push({ insumo: name, qty, cat: inferCatInsumo(name) });
     });
 
     // ── 2. Salvar produto no Firestore e atualizar cache em memória ──
@@ -8022,7 +8042,7 @@ async function saveProdModal() {
     // IMPORTANTE: fazer isso DEPOIS de salvarProdutoFirestore (que não
     // mais sobrescreve fichaTecnicaData, então não há race condition).
     const codNum = parseInt(cod);
-    let fichaObj = fichaTecnicaData.find(f => f.cod === codNum);
+    let fichaObj = _findFichaProdutoModal(codNum, maq, desc);
     if (!fichaObj) {
       // Ficha nova: criar em memória IMEDIATAMENTE (garante que aparece na aba)
       fichaObj = {
@@ -8047,7 +8067,7 @@ async function saveProdModal() {
       fichaObj.pc_min = pcmin  || fichaObj.pc_min;
       if (insumosDoModal.length > 0) fichaObj.insumos = insumosDoModal;
       // Sincronizar com FICHA_TECNICA (array separado)
-      const ftIdx = FICHA_TECNICA.findIndex(f => f.cod === codNum);
+      const ftIdx = FICHA_TECNICA.findIndex(f => String(f.cod) === String(codNum) && String(f.maquina || '') === String(maq || ''));
       if (ftIdx >= 0) { FICHA_TECNICA[ftIdx] = { ...fichaObj }; }
       // Persistir no Firestore
       try {
@@ -8060,7 +8080,7 @@ async function saveProdModal() {
           await setDoc(lojaDoc('fichaTecnica', fichaObj._firestoreId), fichaPayload);
         } else {
           // Fallback: busca pelo cod (raro — só se _firestoreId não foi populado no boot)
-          const snap = await getDocs(query(lojaCol('fichaTecnica'), where('cod', '==', codNum)));
+          const snap = await getDocs(query(lojaCol('fichaTecnica'), where('cod', '==', codNum), where('maquina', '==', maq)));
           if (!snap.empty) {
             fichaObj._firestoreId = snap.docs[0].id;
             await setDoc(lojaDoc('fichaTecnica', snap.docs[0].id), fichaPayload);
@@ -8504,7 +8524,7 @@ async function importarArquivoPadrao(input) {
           const qty      = parseFloat(r[3]) || 0;
           if (!prodNome || !insNome) return;
           if (!insumosPorProduto[prodNome]) insumosPorProduto[prodNome] = [];
-          insumosPorProduto[prodNome].push({ insumo: insNome, qty });
+          insumosPorProduto[prodNome].push({ insumo: insNome, qty, cat: inferCatInsumo(insNome) });
         });
 
         // Setup
@@ -8564,7 +8584,7 @@ async function importarArquivoPadrao(input) {
             const qty      = parseFloat(r[3]) || 0;
             if (!prodNome || !insNome) return;
             if (!insumosPorProduto[prodNome]) insumosPorProduto[prodNome] = [];
-            insumosPorProduto[prodNome].push({ insumo: insNome, qty });
+            insumosPorProduto[prodNome].push({ insumo: insNome, qty, cat: inferCatInsumo(insNome) });
           });
         }
       }
@@ -8657,7 +8677,7 @@ async function importarArquivoPadrao(input) {
         unid:    p.unid,
         pc_min:  p.pc_min,
         maquina: p.maquina,
-        insumos: (insumosPorProduto[p.descricao] || []).map(i => ({ insumo: i.insumo, qty: i.qty })),
+        insumos: (insumosPorProduto[p.descricao] || []).map(i => ({ insumo: i.insumo, qty: i.qty, cat: inferCatInsumo(i.insumo) })),
         criadoEm: new Date().toISOString(),
         atualizadoEm: new Date().toISOString()
       }));
