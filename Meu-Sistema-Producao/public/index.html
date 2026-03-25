@@ -1024,7 +1024,7 @@
       </div>
 
       <!-- SEÇÃO PRODUTOS -->
-      <div id="scontent-produtos" class="scontent" style="display:none;flex-direction:column;gap:0">
+      <div id="scontent-produtos" class="scontent" style="display:none;flex-direction:column;gap:14px">
         <div style="background:var(--s1);border:1px solid var(--border);border-radius:10px;overflow:hidden">
           <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between">
             <div style="display:flex;align-items:center;gap:8px">
@@ -1049,54 +1049,42 @@
           </div>
           <div id="prod-list" style="max-height:380px;overflow-y:auto"></div>
         </div>
-      </div>
+      
 
-      <!-- SEÇÃO CATEGORIAS -->
-      <div id="scontent-categoria" class="scontent" style="display:none;flex-direction:column;gap:12px">
-        <div style="display:grid;grid-template-columns:minmax(280px,360px) 1fr;gap:12px">
-          <div style="background:var(--s1);border:1px solid var(--border);border-radius:10px;overflow:hidden">
-            <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between">
-              <div style="display:flex;align-items:center;gap:8px">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--cyan)" stroke-width="2" stroke-linecap="round"><path d="M20 7h-9"/><path d="M14 17H5"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/></svg>
-                <span style="font-size:13px;font-weight:700;color:var(--text)">Categoria</span>
-              </div>
-              <button onclick="resetCategoriaForm()" class="btn btn-ghost" style="padding:4px 10px;font-size:11px">Novo</button>
+        <div style="background:var(--s1);border:1px solid var(--border);border-radius:10px;overflow:hidden">
+          <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+            <div style="display:flex;align-items:center;gap:8px">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--cyan)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21V8a2 2 0 0 0-2-2h-4l-2-3H6a2 2 0 0 0-2 2v16"/><path d="M8 10h8"/><path d="M8 14h8"/><path d="M8 18h5"/></svg>
+              <span style="font-size:13px;font-weight:700;color:var(--text)">Categorias</span>
+              <span style="font-size:11px;color:var(--text3)">(<span id="cat-count">0</span>)</span>
             </div>
-            <div style="padding:14px 16px;display:flex;flex-direction:column;gap:12px">
-              <input type="hidden" id="cat-edit-id">
-              <div>
-                <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:5px">Nome da categoria</label>
-                <input id="cat-nome-inp" type="text" placeholder="Ex: Especiarias" style="width:100%;background:var(--s2);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-size:13px;outline:none;box-sizing:border-box">
-              </div>
-              <div>
-                <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:5px">Ordem</label>
-                <input id="cat-ordem-inp" type="number" min="0" step="1" placeholder="0" style="width:100%;background:var(--s2);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-size:13px;outline:none;box-sizing:border-box">
-              </div>
-              <div>
-                <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:5px">Status</label>
-                <select id="cat-ativo-inp" style="width:100%;background:var(--s2);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-size:13px;outline:none;box-sizing:border-box">
-                  <option value="true">✅ Ativa</option>
-                  <option value="false">⛔ Inativa</option>
-                </select>
-              </div>
-              <div style="display:flex;gap:8px;justify-content:flex-end">
-                <button onclick="resetCategoriaForm()" class="btn btn-ghost">Cancelar</button>
-                <button onclick="saveCategoriaCfg()" class="btn btn-primary">💾 Salvar</button>
-              </div>
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+              <button onclick="resetCategoriaForm()" style="background:var(--s2);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:11px;color:var(--text);cursor:pointer">Novo</button>
+              <button onclick="saveCategoriaCfg()" style="background:var(--cyan);color:#000;border:none;border-radius:6px;padding:5px 12px;font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:11px;cursor:pointer">💾 Salvar categoria</button>
             </div>
           </div>
-          <div style="background:var(--s1);border:1px solid var(--border);border-radius:10px;overflow:hidden">
-            <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between">
-              <div style="display:flex;align-items:center;gap:8px">
-                <span style="font-size:13px;font-weight:700;color:var(--text)">Categorias cadastradas</span>
-                <span style="font-size:11px;color:var(--text3)">(<span id="cat-count">0</span>)</span>
-              </div>
+          <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:grid;grid-template-columns:1.4fr .7fr .7fr;gap:10px;align-items:end">
+            <input type="hidden" id="cat-edit-id">
+            <div>
+              <label style="font-size:11px;color:var(--text3);display:block;margin-bottom:5px">Nome da categoria</label>
+              <input id="cat-nome-inp" type="text" placeholder="Ex: ESPECIARIAS" style="width:100%;background:var(--s2);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:12px;outline:none;box-sizing:border-box">
             </div>
-            <div style="padding:8px 12px;border-bottom:1px solid var(--border)">
-              <input id="cat-search-inp" type="text" placeholder="Filtrar categorias..." oninput="renderCategoriasCfg()" style="width:100%;background:var(--s2);border:1px solid var(--border);border-radius:6px;padding:7px 12px;color:var(--text);font-family:'Space Grotesk',sans-serif;font-size:12px;outline:none;box-sizing:border-box">
+            <div>
+              <label style="font-size:11px;color:var(--text3);display:block;margin-bottom:5px">Ordem</label>
+              <input id="cat-ordem-inp" type="number" min="0" placeholder="0" style="width:100%;background:var(--s2);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:12px;outline:none;box-sizing:border-box">
             </div>
-            <div id="cat-list" style="max-height:420px;overflow-y:auto"></div>
+            <div>
+              <label style="font-size:11px;color:var(--text3);display:block;margin-bottom:5px">Status</label>
+              <select id="cat-ativo-inp" style="width:100%;background:var(--s2);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:12px;outline:none;box-sizing:border-box">
+                <option value="true">Ativa</option>
+                <option value="false">Inativa</option>
+              </select>
+            </div>
           </div>
+          <div style="padding:8px 12px;border-bottom:1px solid var(--border)">
+            <input id="cat-search-inp" type="text" placeholder="Filtrar categorias..." oninput="renderCategoriasCfg()" style="width:100%;background:var(--s2);border:1px solid var(--border);border-radius:6px;padding:7px 12px;color:var(--text);font-family:'Space Grotesk',sans-serif;font-size:12px;outline:none;box-sizing:border-box">
+          </div>
+          <div id="cat-list" style="max-height:260px;overflow-y:auto"></div>
         </div>
       </div>
 
@@ -1441,7 +1429,7 @@
         </div>
         <div>
           <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:5px">Classificação</label>
-          <input id="maq-classificacao-inp" type="text" placeholder="Ex: Especiarias, Grãos..." style="width:100%;background:var(--s2);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-size:13px;outline:none;box-sizing:border-box">
+          <input id="maq-classificacao-inp" type="text" placeholder="Ex: Linha premium" style="width:100%;background:var(--s2);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-size:13px;outline:none;box-sizing:border-box">
         </div>
         <div>
           <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:5px">Status</label>
@@ -1545,7 +1533,7 @@
       </div>
       <div>
         <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:5px">Classificação</label>
-        <input id="prod-classificacao-inp" type="text" placeholder="Ex: Pó, Grão, Mistura..." style="width:100%;background:var(--s2);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-size:13px;outline:none;box-sizing:border-box">
+        <input id="prod-classificacao-inp" type="text" placeholder="Ex: Pó, Grão, Mistura" style="width:100%;background:var(--s2);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-size:13px;outline:none;box-sizing:border-box">
       </div>
 
       <!-- ── Cobertura de Estoque ─────────────────────────────────── -->

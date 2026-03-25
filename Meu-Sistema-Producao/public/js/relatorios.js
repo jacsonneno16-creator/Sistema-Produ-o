@@ -190,18 +190,6 @@ function buildRelatoriosHTML() {
     </div>
   </div>
 
-  <!-- OCUPAÇÃO POR CATEGORIA -->
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px">
-    <div class="rel2-card">
-      <div class="rel2-card-hd"><span>🧩 Categoria de Produto</span></div>
-      <div id="rel2-cat-prod" style="padding:14px 16px"></div>
-    </div>
-    <div class="rel2-card">
-      <div class="rel2-card-hd"><span>🏷️ Categoria de Máquina</span></div>
-      <div id="rel2-cat-maq" style="padding:14px 16px"></div>
-    </div>
-  </div>
-
   <!-- PLANEJADO vs REALIZADO -->
   <div class="rel2-card" style="margin-bottom:20px">
     <div class="rel2-card-hd"><span>🎯 Planejado vs Realizado por Máquina</span></div>
@@ -237,6 +225,17 @@ function buildRelatoriosHTML() {
       </table>
     </div>
     <div id="rel2-tabela-footer" style="padding:8px 12px;font-size:11px;color:var(--text3);border-top:1px solid var(--border)"></div>
+  </div>
+
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px">
+    <div class="rel2-card">
+      <div class="rel2-card-hd"><span>🏷 Ocupação por Categoria de Produto</span></div>
+      <div id="rel2-cat-prod"></div>
+    </div>
+    <div class="rel2-card">
+      <div class="rel2-card-hd"><span>🏭 Ocupação por Categoria de Máquina</span></div>
+      <div id="rel2-cat-maq"></div>
+    </div>
   </div>
 
   <!-- COBERTURA DE ESTOQUE -->
@@ -387,6 +386,7 @@ function renderRelatorios() {
   _renderChartOciosidade(dados);
   _renderPlanejadoRealizado(dados);
   _renderTabela(dados);
+  _renderCategorias(dados);
   _renderCobertura();
 }
 
@@ -394,72 +394,70 @@ function renderRelatorios() {
 // CÁLCULO DE DADOS — usa getDadosFiltrados() como base única
 // ─────────────────────────────────────────────────────────────────
 function _calcularDados() {
-  // Retornar cache se disponível
   if (_dadosCache) return _dadosCache;
-
   const { recs, realizadoMap } = getDadosFiltrados();
   const inicio = _relFiltros.dataInicio;
   const fim    = _relFiltros.dataFim;
-
-  // ── Produção real por dia (usando realizadoMap do cache) ──────
   const producaoPorDia = _calcPorDiaFiltrado(recs, inicio, fim);
-
-  // ── Dias com produção no período ──────────────────────────────
   const diasComProducao = Math.max(1, Object.values(producaoPorDia).filter(v => v > 0).length);
-
-  // ── Produção por máquina ──────────────────────────────────────
+  const setupPorRegistro = _calcSetupPorSequencia(recs);
   const porMaquina = {};
   recs.forEach(r => {
     if (!r.maquina) return;
-    if (!porMaquina[r.maquina]) {
-      porMaquina[r.maquina] = { programado: 0, realizado: 0, setup: 0, registros: [] };
-    }
+    if (!porMaquina[r.maquina]) porMaquina[r.maquina] = { programado: 0, realizado: 0, setup: 0, registros: [] };
     porMaquina[r.maquina].programado += r.qntCaixas || 0;
     porMaquina[r.maquina].realizado  += realizadoMap[r.id] || 0;
-    // setup por sequência calculado depois
+    porMaquina[r.maquina].setup      += setupPorRegistro[r.id] || 0;
     porMaquina[r.maquina].registros.push(r);
   });
-
-  // ── Produção por produto ──────────────────────────────────────
   const porProduto = {};
   recs.forEach(r => {
     if (!r.produto) return;
-    if (!porProduto[r.produto]) {
-      porProduto[r.produto] = { programado: 0, realizado: 0, maquina: r.maquina };
-    }
+    if (!porProduto[r.produto]) porProduto[r.produto] = { programado: 0, realizado: 0, maquina: r.maquina, setupMin: 0, totalMin: 0 };
     porProduto[r.produto].programado += r.qntCaixas || 0;
     porProduto[r.produto].realizado  += realizadoMap[r.id] || 0;
+    porProduto[r.produto].setupMin   += setupPorRegistro[r.id] || 0;
   });
-
-  // ── KPIs globais ─────────────────────────────────────────────
-  // Produção total = soma dos apontamentos filtrados
-  let totalRealizado  = 0;
+  const porCategoriaProduto = {};
+  const porCategoriaMaquina = {};
+  recs.forEach(r => {
+    const categoriaProduto = _getCategoriaProduto(r);
+    const categoriaMaquina = _getCategoriaMaquina(r.maquina);
+    const setupMin = setupPorRegistro[r.id] || 0;
+    const vel = _getVelMaquina(r.maquina);
+    const producaoMin = vel > 0 ? ((realizadoMap[r.id] || 0) / vel) : 0;
+    const totalMin = producaoMin + setupMin;
+    if (!porCategoriaProduto[categoriaProduto]) porCategoriaProduto[categoriaProduto] = { programado: 0, realizado: 0, producaoMin: 0, setupMin: 0, totalMin: 0, registros: 0 };
+    porCategoriaProduto[categoriaProduto].programado += r.qntCaixas || 0;
+    porCategoriaProduto[categoriaProduto].realizado += realizadoMap[r.id] || 0;
+    porCategoriaProduto[categoriaProduto].producaoMin += producaoMin;
+    porCategoriaProduto[categoriaProduto].setupMin += setupMin;
+    porCategoriaProduto[categoriaProduto].totalMin += totalMin;
+    porCategoriaProduto[categoriaProduto].registros += 1;
+    if (!porCategoriaMaquina[categoriaMaquina]) porCategoriaMaquina[categoriaMaquina] = { horasDisponiveis: 0, horasUsadas: 0, setupMin: 0, totalMin: 0, maquinas: new Set(), registros: 0 };
+    porCategoriaMaquina[categoriaMaquina].horasUsadas += producaoMin / 60;
+    porCategoriaMaquina[categoriaMaquina].setupMin += setupMin;
+    porCategoriaMaquina[categoriaMaquina].totalMin += totalMin;
+    porCategoriaMaquina[categoriaMaquina].maquinas.add(r.maquina);
+    porCategoriaMaquina[categoriaMaquina].registros += 1;
+  });
+  Object.keys(porCategoriaMaquina).forEach(cat => {
+    const item = porCategoriaMaquina[cat];
+    item.horasDisponiveis = (item.maquinas.size || 0) * diasComProducao * MINUTOS_DIA / 60;
+    item.ocupacaoPct = item.horasDisponiveis > 0 ? Math.round(((item.totalMin / 60) / item.horasDisponiveis) * 100) : 0;
+    item.maquinas = [...item.maquinas].sort();
+  });
+  let totalRealizado = 0;
   let totalCapacidade = 0;
-
   Object.entries(porMaquina).forEach(([maq, m]) => {
     const vel = _getVelMaquina(maq);
     totalRealizado += m.realizado;
-    // Capacidade real = velocidade × minutos disponíveis no período
-    if (vel > 0) {
-      totalCapacidade += vel * MINUTOS_DIA * diasComProducao;
-    } else {
-      // Sem velocidade cadastrada: usar programado como proxy de capacidade
-      totalCapacidade += m.programado;
-    }
+    totalCapacidade += vel > 0 ? vel * MINUTOS_DIA * diasComProducao : m.programado;
   });
-
-  // Eficiência = produzido / capacidade real no período filtrado
-  const eficienciaMedia = totalCapacidade > 0
-    ? Math.min(100, Math.round(totalRealizado / totalCapacidade * 100))
-    : 0;
-
-  // Programado total (para KPI de comparação)
+  const eficienciaMedia = totalCapacidade > 0 ? Math.min(100, Math.round(totalRealizado / totalCapacidade * 100)) : 0;
   const totalProgramado = recs.reduce((a, r) => a + (r.qntCaixas || 0), 0);
-
-  // ── Ociosidade = tempo parado / tempo total disponível ────────
   const numMaquinas = Math.max(1, Object.keys(porMaquina).length);
   const minutosTotalDisponiveis = diasComProducao * MINUTOS_DIA * numMaquinas;
-
   let minutosProdutivos = 0;
   let minutosSetupTotal = 0;
   Object.entries(porMaquina).forEach(([maq, m]) => {
@@ -467,62 +465,27 @@ function _calcularDados() {
     minutosProdutivos += vel > 0 ? m.realizado / vel : 0;
     minutosSetupTotal += m.setup;
   });
-
-  const minutosOciosos = Math.max(0, minutosTotalDisponiveis - minutosProdutivos - minutosSetupTotal);
-  const pctOcupado = minutosTotalDisponiveis > 0 ? Math.round(minutosProdutivos  / minutosTotalDisponiveis * 100) : 0;
-  const pctSetup   = minutosTotalDisponiveis > 0 ? Math.round(minutosSetupTotal  / minutosTotalDisponiveis * 100) : 0;
+  const pctOcupado = minutosTotalDisponiveis > 0 ? Math.round(minutosProdutivos / minutosTotalDisponiveis * 100) : 0;
+  const pctSetup   = minutosTotalDisponiveis > 0 ? Math.round(minutosSetupTotal / minutosTotalDisponiveis * 100) : 0;
   const pctOcioso  = Math.max(0, 100 - pctOcupado - pctSetup);
-
-  // ── Ruptura / cobertura ───────────────────────────────────────
   let rupturas = 0;
-  try {
-    const pc = window.projecaoCalculada || [];
-    rupturas = pc.filter(p => p.risco === 'critico' || p.risco === 'alto').length;
-  } catch(e) {}
-
-  // ── Tabela analítica — eficiência por capacidade real ─────────
+  try { const pc = window.projecaoCalculada || []; rupturas = pc.filter(p => p.risco === 'critico' || p.risco === 'alto').length; } catch(e) {}
   const tabelaRows = Object.entries(porMaquina).map(([maq, dados]) => {
     const real = dados.realizado;
-    const vel  = _getVelMaquina(maq);
-    const setup = _getSetupMin(maq);
-
-    // Capacidade real da máquina no período
-    const capReal = vel > 0
-      ? vel * MINUTOS_DIA * diasComProducao
-      : dados.programado;
-
-    // Eficiência = produzido / capacidade real
+    const vel = _getVelMaquina(maq);
+    const setup = dados.setup || 0;
+    const capReal = vel > 0 ? vel * MINUTOS_DIA * diasComProducao : dados.programado;
     const efic = capReal > 0 ? Math.min(100, Math.round(real / capReal * 100)) : 0;
-
-    // Ociosidade = tempo parado / tempo total disponível
     const minsDispMaq = diasComProducao * MINUTOS_DIA;
-    const minsProd    = vel > 0 ? real / vel : 0;
-    const minsOciosos = Math.max(0, minsDispMaq - minsProd - setup);
-    const pctOc       = minsDispMaq > 0 ? Math.round(minsOciosos / minsDispMaq * 100) : 0;
-
+    const minsProd = vel > 0 ? real / vel : 0;
+    const pctOc = minsDispMaq > 0 ? Math.round(Math.max(0, minsDispMaq - minsProd - setup) / minsDispMaq * 100) : 0;
     const topProd = dados.registros.reduce((best, r) => {
       const rv = realizadoMap[r.id] || 0;
       return rv > (best.v || 0) ? { nome: r.produto, v: rv } : best;
     }, {});
-
-    return {
-      maquina: maq,
-      produto: topProd.nome || '—',
-      programado: dados.programado,
-      realizado: real,
-      eficiencia: efic,
-      setup,
-      pctOcioso: pctOc,
-    };
+    return { maquina: maq, produto: topProd.nome || '—', programado: dados.programado, realizado: real, eficiencia: efic, setup, pctOcioso: pctOc };
   });
-
-  _dadosCache = {
-    recs, realizadoMap, porMaquina, porProduto, producaoPorDia,
-    totalProgramado, totalRealizado, eficienciaMedia,
-    pctOcupado, pctSetup, pctOcioso,
-    diasComProducao, numMaquinas, rupturas, tabelaRows,
-    minutosProdutivos, minutosSetupTotal
-  };
+  _dadosCache = { recs, realizadoMap, porMaquina, porProduto, porCategoriaProduto, porCategoriaMaquina, producaoPorDia, setupPorRegistro, totalProgramado, totalRealizado, eficienciaMedia, pctOcupado, pctSetup, pctOcioso, diasComProducao, numMaquinas, rupturas, tabelaRows, minutosProdutivos, minutosSetupTotal };
   return _dadosCache;
 }
 
@@ -599,7 +562,7 @@ function _renderAlertas(d) {
     const minsDisp = d.diasComProducao * MINUTOS_DIA;
     const minsProd = vel > 0 ? m.realizado / vel : 0;
     const pctOcMaq = minsDisp > 0
-      ? Math.round(Math.max(0, minsDisp - minsProd - _getSetupMin(maq)) / minsDisp * 100)
+      ? Math.round(Math.max(0, minsDisp - minsProd - (m.setup || 0)) / minsDisp * 100)
       : 0;
     if (pctOcMaq > 30) {
       alertas.push({
@@ -609,7 +572,7 @@ function _renderAlertas(d) {
     }
 
     // Setup alto: > 45 min
-    const setupMin = _getSetupMin(maq);
+    const setupMin = m.setup || 0;
     if (setupMin > 45) {
       alertas.push({
         tipo: 'aviso',
@@ -1090,14 +1053,12 @@ function _renderCategorias(d) {
   const prodEl = document.getElementById('rel2-cat-prod');
   const maqEl = document.getElementById('rel2-cat-maq');
   if (prodEl) {
-    const rows = Object.values(d.porCategoriaProduto || {}).sort((a,b)=> (b.totalMin||0) - (a.totalMin||0));
-    if (!rows.length) prodEl.innerHTML = '<div style="color:var(--text3);font-size:12px">Sem dados</div>';
-    else prodEl.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr><th class="rel2-th">Categoria</th><th class="rel2-th" style="text-align:right">Programado</th><th class="rel2-th" style="text-align:right">Setup</th><th class="rel2-th" style="text-align:right">Total</th></tr></thead><tbody>${rows.map(r=>`<tr><td class="rel2-td">${r.categoria}</td><td class="rel2-td" style="text-align:right">${_fmtNum(r.programado)}</td><td class="rel2-td" style="text-align:right">${Math.round(r.setupMin||0)} min</td><td class="rel2-td" style="text-align:right">${Math.round(r.totalMin||0)} min</td></tr>`).join('')}</tbody></table>`;
+    const rows = Object.entries(d.porCategoriaProduto || {}).map(([categoria, v]) => ({ categoria, ...v })).sort((a,b) => (b.totalMin || 0) - (a.totalMin || 0));
+    prodEl.innerHTML = !rows.length ? '<div style="padding:20px;color:var(--text3);font-size:12px">Sem dados no período.</div>' : `<table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr><th class="rel2-sort-th">Categoria</th><th class="rel2-sort-th" style="text-align:right">Programado</th><th class="rel2-sort-th" style="text-align:right">Produção</th><th class="rel2-sort-th" style="text-align:right">Setup</th><th class="rel2-sort-th" style="text-align:right">Total</th></tr></thead><tbody>${rows.map(r=>`<tr><td class="rel2-td">${r.categoria}</td><td class="rel2-td" style="text-align:right">${_fmtNum(r.programado)}</td><td class="rel2-td" style="text-align:right">${Math.round(r.producaoMin||0)} min</td><td class="rel2-td" style="text-align:right">${Math.round(r.setupMin||0)} min</td><td class="rel2-td" style="text-align:right">${Math.round(r.totalMin||0)} min</td></tr>`).join('')}</tbody></table>`;
   }
   if (maqEl) {
-    const rows = Object.values(d.porCategoriaMaquina || {}).sort((a,b)=> (b.ocupacaoPct||0) - (a.ocupacaoPct||0));
-    if (!rows.length) maqEl.innerHTML = '<div style="color:var(--text3);font-size:12px">Sem dados</div>';
-    else maqEl.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr><th class="rel2-th">Categoria</th><th class="rel2-th" style="text-align:right">Máq.</th><th class="rel2-th" style="text-align:right">Setup</th><th class="rel2-th" style="text-align:right">Ocup.</th></tr></thead><tbody>${rows.map(r=>`<tr><td class="rel2-td">${r.categoria}</td><td class="rel2-td" style="text-align:right">${(r.maquinas||[]).length}</td><td class="rel2-td" style="text-align:right">${Math.round(r.setupMin||0)} min</td><td class="rel2-td" style="text-align:right">${r.ocupacaoPct||0}%</td></tr>`).join('')}</tbody></table>`;
+    const rows = Object.entries(d.porCategoriaMaquina || {}).map(([categoria, v]) => ({ categoria, ...v })).sort((a,b) => (b.totalMin || 0) - (a.totalMin || 0));
+    maqEl.innerHTML = !rows.length ? '<div style="padding:20px;color:var(--text3);font-size:12px">Sem dados no período.</div>' : `<table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr><th class="rel2-sort-th">Categoria</th><th class="rel2-sort-th" style="text-align:right">Máquinas</th><th class="rel2-sort-th" style="text-align:right">Setup</th><th class="rel2-sort-th" style="text-align:right">Total</th><th class="rel2-sort-th" style="text-align:right">Ocup.</th></tr></thead><tbody>${rows.map(r=>`<tr><td class="rel2-td">${r.categoria}</td><td class="rel2-td" style="text-align:right">${(r.maquinas||[]).length}</td><td class="rel2-td" style="text-align:right">${Math.round(r.setupMin||0)} min</td><td class="rel2-td" style="text-align:right">${Math.round(r.totalMin||0)} min</td><td class="rel2-td" style="text-align:right">${r.ocupacaoPct||0}%</td></tr>`).join('')}</tbody></table>`;
   }
 }
 
@@ -1143,6 +1104,14 @@ function exportXLSX() {
       prodRows.push([prod, m.maquina||'—', m.programado, m.realizado, efic]);
     });
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(prodRows), 'Por Produto');
+
+    const catProdRows = [['Categoria','Programado (cx)','Realizado (cx)','Produção (min)','Setup (min)','Total (min)']];
+    Object.entries(dados.porCategoriaProduto || {}).forEach(([cat, v]) => { catProdRows.push([cat, v.programado || 0, v.realizado || 0, Math.round(v.producaoMin || 0), Math.round(v.setupMin || 0), Math.round(v.totalMin || 0)]); });
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(catProdRows), 'Cat Produto');
+
+    const catMaqRows = [['Categoria','Máquinas','Horas Disponíveis','Horas Usadas','Setup (min)','Total (min)','Ocupação (%)']];
+    Object.entries(dados.porCategoriaMaquina || {}).forEach(([cat, v]) => { catMaqRows.push([cat, (v.maquinas || []).join(', '), v.horasDisponiveis || 0, v.horasUsadas || 0, Math.round(v.setupMin || 0), Math.round(v.totalMin || 0), v.ocupacaoPct || 0]); });
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(catMaqRows), 'Cat Máquina');
 
     // Aba 4: Produção por dia
     const diaRows = [['Data','Caixas Realizadas']];
@@ -1393,11 +1362,54 @@ function _calcPorDia(recs, inicio, fim) {
   return porDia;
 }
 
-function _getSetupMin(maquina) {
+function _getCategoriaProduto(r) {
   try {
+    const produtos = (typeof window.getAllProdutos === 'function' ? window.getAllProdutos() : (window.PRODUTOS || [])) || [];
+    const prod = produtos.find(p => (String(p.cod||'') && String(p.cod) === String(r.codProduto || r.cod || '')) || (p.descricao || '') === (r.produto || '')) || {};
+    return (prod.categoria || 'SEM CATEGORIA').trim() || 'SEM CATEGORIA';
+  } catch(e) { return 'SEM CATEGORIA'; }
+}
+function _getCategoriaMaquina(maquina) {
+  try {
+    const md = window.MAQUINAS_DATA?.[maquina] || {};
+    return (md.categoria || 'SEM CATEGORIA').trim() || 'SEM CATEGORIA';
+  } catch(e) { return 'SEM CATEGORIA'; }
+}
+function _sortRecSequencia(a, b) {
+  const da = String(a.data || a.dia || a.date || '');
+  const db = String(b.data || b.dia || b.date || '');
+  if (da !== db) return da.localeCompare(db);
+  const oa = parseInt(a.ordem || a.seq || a.ord || 0) || 0;
+  const ob = parseInt(b.ordem || b.seq || b.ord || 0) || 0;
+  if (oa !== ob) return oa - ob;
+  return String(a.id || '').localeCompare(String(b.id || ''));
+}
+function _getSetupMin(maquina, produtoAnterior, produtoAtual) {
+  try {
+    if (!produtoAnterior || !produtoAtual || produtoAnterior === produtoAtual) return 0;
+    if (typeof window.getSetupMin === 'function') return parseFloat(window.getSetupMin(maquina, produtoAnterior, produtoAtual)) || 0;
     const md = window.MAQUINAS_DATA?.[maquina];
     return parseFloat(md?.tempoSetupPadrao) || 0;
   } catch(e) { return 0; }
+}
+function _calcSetupPorSequencia(recs) {
+  const mapa = {};
+  const porMaq = {};
+  (recs || []).forEach(r => {
+    if (!r || !r.maquina) return;
+    if (!porMaq[r.maquina]) porMaq[r.maquina] = [];
+    porMaq[r.maquina].push(r);
+    mapa[r.id] = 0;
+  });
+  Object.keys(porMaq).forEach(maq => {
+    const lista = porMaq[maq].slice().sort(_sortRecSequencia);
+    for (let i = 1; i < lista.length; i++) {
+      const ant = lista[i - 1];
+      const atu = lista[i];
+      mapa[atu.id] = _getSetupMin(maq, ant.produto, atu.produto);
+    }
+  });
+  return mapa;
 }
 
 // Versão otimizada de _calcPorDia que usa o realizadoMap do cache

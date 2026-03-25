@@ -464,7 +464,6 @@ async function dbDel(id) {
 // ===== DADOS =====
 // Array de produtos: populado do Firestore via carregarProdutosFirestore()
 let PRODUTOS = [];
-let CATEGORIAS = [];
 // Ficha técnica: populada do Firestore ou importação Excel
 let FICHA_TECNICA = [];
 // Flag de cache independente para ficha técnica
@@ -477,6 +476,7 @@ let MAQUINAS = [];
 // Cache do Firestore: { maquina: { prodA_norm: { prodB_norm: minutos } } }
 // Populado por carregarSetupFirestore(). Fallback: SETUP_DATA estático abaixo.
 let SETUP_FIRESTORE = {};
+let CATEGORIAS = [];
 
 // ===================================================================
 // ===== CAMADA DE CACHE — evita leituras repetidas ao Firestore =====
@@ -489,9 +489,9 @@ let SETUP_FIRESTORE = {};
 const _cache = {
   _carregadoMaquinas:   false,
   _carregadoProdutos:   false,
-  _carregadoCategorias: false,
   _carregadoSetup:      false,
   _carregadoRegistros:  false,
+  _carregadoCategorias: false,
 };
 
 // Invalida o cache de uma ou mais coleções, forçando recarga na próxima chamada
@@ -504,9 +504,9 @@ function invalidateCache(...colecoes){
   colecoes.forEach(col => {
     if(col === 'maquinas')  _cache._carregadoMaquinas  = false;
     if(col === 'produtos')  _cache._carregadoProdutos  = false;
-    if(col === 'categorias') _cache._carregadoCategorias = false;
     if(col === 'setup')     _cache._carregadoSetup     = false;
     if(col === 'registros') _cache._carregadoRegistros = false;
+    if(col === 'categorias') _cache._carregadoCategorias = false;
   });
 }
 
@@ -534,20 +534,13 @@ async function carregarProdutosCached(forceReload = false) {
   _cache._carregadoProdutos = true;
 }
 
-async function carregarCategoriasCached(forceReload = false) {
+function carregarCategoriasCached(forceReload = false) {
   if(!forceReload && _cache._carregadoCategorias) return;
   await carregarCategoriasFirestore();
   _cache._carregadoCategorias = true;
 }
 
-// Versão cached de carregarSetupFirestore
-async function carregarSetupCached(forceReload = false) {
-  if(!forceReload && _cache._carregadoSetup) return;
-  await carregarSetupFirestore();
-  _cache._carregadoSetup = true;
-}
-
-async function carregarCategoriasFirestore() {
+function carregarCategoriasFirestore() {
   try {
     const snap = await getDocs(query(lojaCol('categorias'), orderBy('ordem'), orderBy('nome')));
     CATEGORIAS = snap.docs.map(d => ({ id: d.id, ...d.data() }));
@@ -577,7 +570,7 @@ function resetCategoriaForm() {
   const ativo = document.getElementById('cat-ativo-inp'); if (ativo) ativo.value = 'true';
 }
 
-async function saveCategoriaCfg() {
+function saveCategoriaCfg() {
   const nome = (document.getElementById('cat-nome-inp')?.value || '').trim();
   const ordem = parseInt(document.getElementById('cat-ordem-inp')?.value || '0') || 0;
   const ativo = document.getElementById('cat-ativo-inp')?.value !== 'false';
@@ -611,7 +604,7 @@ function editarCategoriaCfg(id) {
   document.getElementById('cat-ativo-inp').value = cat.ativo === false ? 'false' : 'true';
 }
 
-async function excluirCategoriaCfg(id) {
+function excluirCategoriaCfg(id) {
   const cat = (CATEGORIAS || []).find(c => c.id === id);
   if (!cat) return;
   if (!confirm('Excluir categoria "' + cat.nome + '"?')) return;
@@ -655,6 +648,13 @@ function renderCategoriasCfg() {
       </div>
     </div>`;
   }).join('');
+}
+
+// Versão cached de carregarSetupFirestore
+async function carregarSetupCached(forceReload = false) {
+  if(!forceReload && _cache._carregadoSetup) return;
+  await carregarSetupFirestore();
+  _cache._carregadoSetup = true;
 }
 
 // Carrega setup_maquinas do Firestore e popula SETUP_FIRESTORE
@@ -2704,16 +2704,7 @@ function buildSchedule(monday){
       if(!pcMin){scheduled.push({rec,segments:[],setupMin:0,setupSegments:[]});continue;}
 
       let setupMin=0;
-      if(ri===0){
-        // Primeiro produto da semana nesta máquina:
-        // Cobrar setup padrão da máquina (troca de bobina / limpeza inicial)
-        // mas apenas se a máquina tem tempoSetupPadrao configurado e há
-        // mais de 1 produto nesta máquina nesta semana (vai haver troca).
-        // Para o primeiro produto não há produto "anterior" conhecido,
-        // então usamos o setup padrão como custo de início de semana.
-        const padrao = getSetupPadrao(maq);
-        if(padrao > 0 && recs.length > 1) setupMin = padrao;
-      } else {
+      if(ri>0){
         setupMin = getSetupMin(maq, recs[ri-1].produto, rec.produto);
       }
 
@@ -6778,6 +6769,7 @@ function openSettings(){
   sp.style.display='flex';
   renderCadastroMaquinas();
   renderProdutosCfg();
+  carregarCategoriasCached().then(()=>{ renderCategoriasCfg(); preencherSelectCategorias('maq-categoria-inp'); preencherSelectCategorias('prod-categoria-inp'); }).catch(()=>{});
   renderFuncionariosProducao();
   renderJornadaDays();
   // Renderiza config de turnos por máquina
@@ -6832,6 +6824,7 @@ function settingsNav(section){
   // Mostra a seção correta
   const content=document.getElementById('scontent-'+section);
   if(content) content.style.display='flex';
+  if(section==='produtos') setTimeout(async()=>{ try { await carregarCategoriasCached(); renderCategoriasCfg(); preencherSelectCategorias('prod-categoria-inp'); preencherSelectCategorias('maq-categoria-inp'); } catch(e){} }, 30);
   // Ativa o botão nav correspondente
   const navBtn=document.getElementById('snav-'+section);
   if(navBtn){
@@ -6862,7 +6855,7 @@ function settingsNav(section){
   }
 
   // ── Grupo Produtos ──
-  const prodGroupSections=['produtos','ficha-tecnica-cfg','categoria'];
+  const prodGroupSections=['produtos','ficha-tecnica-cfg'];
   const prodGroupBtn=document.getElementById('snav-produtos-group-btn');
   const prodSubmenu=document.getElementById('snav-produtos-submenu');
   const prodChevron=document.getElementById('snav-produtos-chevron');
@@ -6890,7 +6883,6 @@ function settingsNav(section){
   if(section==='setup-maquinas') setTimeout(()=>renderSetupMaquinas(), 50);
   if(section==='gestao-lojas') setTimeout(()=>renderGestaoLojas(), 50);
   if(section==='ficha-tecnica-cfg') setTimeout(()=>renderFichaTecnicaCfg(), 50);
-  if(section==='categoria') setTimeout(async()=>{ await carregarCategoriasCached(); renderCategoriasCfg(); }, 50);
   if(section==='produtos') setTimeout(()=>renderProdutosCfg(), 50);
   if(section==='processos') setTimeout(()=>renderProcessos(), 50);
 }
@@ -7107,7 +7099,7 @@ function renderCadastroMaquinas() {
     }
     return `<tr style="border-bottom:1px solid var(--border)" onmouseover="this.style.background='var(--s2)'" onmouseout="this.style.background=''">
       <td style="padding:10px 14px;font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--text1);font-weight:600">${m}${d.codigo ? `<span style="font-size:10px;color:var(--text3);font-weight:400;margin-left:6px">${d.codigo}</span>` : ''}</td>
-      <td style="padding:10px 10px;font-size:12px;color:var(--text2)"><div>${tipoSetor}</div>${catClass ? `<div style="font-size:10px;color:var(--text3);margin-top:4px">${catClass}</div>` : ''}</td>
+      <td style="padding:10px 10px;font-size:12px;color:var(--text2)">${tipoSetor}${catClass ? `<div style="font-size:10px;color:var(--text3);margin-top:4px">${catClass}</div>` : ''}</td>
       <td style="padding:10px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--warn)">${d.pcMin ? d.pcMin + ' und/min' : '<span style="color:var(--text3)">—</span>'}</td>
       <td style="padding:10px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--cyan)">${capHora}</td>
       <td style="padding:10px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--cyan)">${capDia}</td>
@@ -15477,12 +15469,3 @@ window.closeModalProcesso = closeModalProcesso;
 window.salvarProcesso     = salvarProcesso;
 window.deleteProcesso     = deleteProcesso;
 window.renderProcessos    = renderProcessos;
-
-window.carregarCategoriasFirestore = carregarCategoriasFirestore;
-window.carregarCategoriasCached = carregarCategoriasCached;
-window.preencherSelectCategorias = preencherSelectCategorias;
-window.saveCategoriaCfg = saveCategoriaCfg;
-window.renderCategoriasCfg = renderCategoriasCfg;
-window.editarCategoriaCfg = editarCategoriaCfg;
-window.excluirCategoriaCfg = excluirCategoriaCfg;
-window.resetCategoriaForm = resetCategoriaForm;
