@@ -2418,11 +2418,6 @@ function hoursOnDayMaq(d, maq){
     const maqHrs = hoursOnDayForMaq(d, maq);
     return maqHrs;
   }
-  // Fallback: se getActiveShiftBlocks disponível, soma duração real dos blocos
-  if(maq && typeof getActiveShiftBlocks === 'function'){
-    const blks = getActiveShiftBlocks(d, maq);
-    return blks.reduce((s,b) => s + (b.fimMin - b.inicioMin) / 60, 0);
-  }
   return hoursOnDay(d);
 }
 
@@ -2432,15 +2427,7 @@ function weekHoursMaq(monday, maq){
     return weekHoursForMaq(monday, maq);
   }
   const days = getWeekDays(monday);
-  // Se getActiveShiftBlocks disponível, soma duração real dos turnos ativos por dia
-  if(maq && typeof getActiveShiftBlocks === 'function'){
-    return days.reduce((a,d) => {
-      const blks = getActiveShiftBlocks(d, maq);
-      const hrsDay = blks.reduce((s,b) => s + (b.fimMin - b.inicioMin) / 60, 0);
-      return a + hrsDay;
-    }, 0);
-  }
-  return days.reduce((a,d) => a + hoursOnDayMaq(d, maq), 0);
+  return days.reduce((a,d) => a + hoursOnDay(d), 0);
 }
 
 // Core scheduler: given list of active records, compute a timeline per shift block.
@@ -2455,6 +2442,42 @@ function weekHoursMaq(monday, maq){
 //   dayIdx       = index in days[] (0..6)
 //   turnoBlkIdx  = index in activeBlocks[] for that day
 //   usedInBlkMin = minutes already consumed in the current block
+function allocateBoxesAcrossSegments(segments, totalBoxes){
+  const safeTotal = Math.max(0, Math.round(Number(totalBoxes)||0));
+  if(!Array.isArray(segments) || !segments.length){
+    return;
+  }
+  const raw = segments.map(seg => Math.max(0, Number(seg.caixasExatasRaw ?? seg.caixasNoDia ?? 0) || 0));
+  let base = raw.map(v => Math.floor(v));
+  let used = base.reduce((a,b)=>a+b,0);
+  let remainder = safeTotal - used;
+
+  if(remainder > 0){
+    const order = raw
+      .map((v,idx)=>({idx, frac:v-Math.floor(v)}))
+      .sort((a,b)=> b.frac - a.frac || a.idx - b.idx);
+    for(let i=0;i<order.length && remainder>0;i++, remainder--){
+      base[order[i].idx] += 1;
+    }
+  }else if(remainder < 0){
+    const order = raw
+      .map((v,idx)=>({idx, frac:v-Math.floor(v)}))
+      .sort((a,b)=> a.frac - b.frac || b.idx - a.idx);
+    for(let i=0;i<order.length && remainder<0;i++){
+      const idx = order[i].idx;
+      if(base[idx] > 0){
+        base[idx] -= 1;
+        remainder += 1;
+      }
+    }
+  }
+
+  segments.forEach((seg, idx)=>{
+    seg.caixasExatas = base[idx];
+    seg.caixasNoDia = base[idx];
+  });
+}
+
 function buildSchedule(monday){
   const days=getWeekDays(monday);
   const mondayStr=dateStr(days[0]);
@@ -2577,10 +2600,7 @@ function buildSchedule(monday){
         ? Math.max(0, (rec.qntCaixas||0) - totalProduzidoRec)
         : (rec.qntCaixas||0);
       // unidRestante: production time in units
-      // Use stored qntUnid when available (may differ from qntCaixas*unidPorCx if edited)
-      const unidRestante = isOverflowRecord
-        ? cxRestanteRec * (rec.qntUnid > 0 && rec.qntCaixas > 0 ? rec.qntUnid / rec.qntCaixas : unidPorCx)
-        : (rec.qntUnid > 0 ? (cxRestanteRec === rec.qntCaixas ? totalUnid : cxRestanteRec * (rec.qntUnid / rec.qntCaixas)) : cxRestanteRec * unidPorCx);
+      const unidRestante = cxRestanteRec * unidPorCx;
       if(unidRestante <= 0){
         // Nothing left to produce — push an empty entry so the cursor doesn't advance
         scheduled.push({rec, segments:[], setupMin:0, setupSegments:[], isOverflow:isOverflowRecord, cxRestante:0});
@@ -2663,13 +2683,15 @@ function buildSchedule(monday){
         const startPct=dayCapMin>0?(absStartMin/dayCapMin)*100:0;
         const endPct=dayCapMin>0?((absStartMin+useMin)/dayCapMin)*100:0;
 
-        const caixasHoje=Math.round(cxPerMin*useMin);
+        const caixasExatasRaw=cxPerMin*useMin;
         segments.push({
           date:dateStr(days[snap.dayIdx]),
           dayIdx:snap.dayIdx,
           turnoIdx:blk.turnoIdx,
           turnoLabel:blk.label,
-          caixasNoDia:caixasHoje,
+          caixasNoDia:0,
+          caixasExatasRaw,
+          caixasExatas:0,
           hrsNoDia:useMin/60,
           startPct,
           endPct,
@@ -2684,6 +2706,8 @@ function buildSchedule(monday){
         snap.usedMin+=useMin;
         if(snap.usedMin>=blkTotalMin-0.001){snap.blkIdx++;snap.usedMin=0;}
       }
+
+      allocateBoxesAcrossSegments(segments, cxRestanteRec);
 
       // Advance global cursor to where this record ended
       cursor.dayIdx=snap.dayIdx;
@@ -2946,11 +2970,7 @@ function renderGanttSemanal(){
           recs:       []
         };
       }
-      // Usar cxRestante quando disponível (registros overflow têm quantidade ajustada)
-      const cxParaExibir = (entry.cxRestante != null && entry.cxRestante >= 0)
-        ? entry.cxRestante
-        : (entry.rec.qntCaixas || 0);
-      prodMap[pk].qntCaixas     += cxParaExibir;
+      prodMap[pk].qntCaixas     += (entry.rec.qntCaixas || 0);
       prodMap[pk].setupMin      += (entry.setupMin || 0);
       prodMap[pk].segments       = prodMap[pk].segments.concat(entry.segments || []);
       prodMap[pk].setupSegments  = prodMap[pk].setupSegments.concat(entry.setupSegments || []);
@@ -3550,45 +3570,65 @@ function inferCatInsumo(nome){
   return 'MATERIA PRIMA'; // fallback para MP se não conseguir inferir
 }
 
-// Helper: find insumos for a product (match by product code or description)
-function getInsumos(prodDesc){
-  if(!prodDesc) return [];
-  const d=prodDesc.trim();
-  // Priority 1: Check fichaTecnicaData (user-edited data) by exact desc match
-  if(typeof fichaTecnicaData !== 'undefined'){
-    const ftEntry=fichaTecnicaData.find(x=>x.desc && x.desc.trim()===d);
-    if(ftEntry && ftEntry.insumos && ftEntry.insumos.length>0){
-      return ftEntry.insumos.map(i=>({n:i.insumo, c:inferCatInsumo(i.insumo), q:i.qty}));
-    }
-    // Also try matching by code prefix
-    const codeMatch=d.match(/^(\d{5})/);
+function resolveInsumosProduto(nomeProd, codProd){
+  const norm = s => (s||'').toString().trim().replace(/\s+/g,' ').toUpperCase();
+  const nome = (nomeProd||'').toString().trim();
+  const nomeNorm = norm(nome);
+  const cod = (codProd||'').toString().trim();
+  const src = (typeof fichaTecnicaData !== 'undefined' && Array.isArray(fichaTecnicaData) && fichaTecnicaData.length)
+    ? fichaTecnicaData
+    : (((typeof FICHA_TECNICA !== 'undefined' ? FICHA_TECNICA : []) || []));
+
+  let ft = null;
+  if(cod) ft = src.find(x => x && x.cod && String(x.cod).trim() === cod);
+  if(!ft && nomeNorm) ft = src.find(x => x && x.desc && norm(x.desc) === nomeNorm);
+  if(!ft && nome){
+    const codeMatch = nome.match(/^(\d{5})/);
     if(codeMatch){
-      const code=codeMatch[1];
-      const ftByCode=fichaTecnicaData.find(x=>x.desc && x.desc.trim().startsWith(code));
-      if(ftByCode && ftByCode.insumos && ftByCode.insumos.length>0){
-        return ftByCode.insumos.map(i=>({n:i.insumo, c:inferCatInsumo(i.insumo), q:i.qty}));
+      const code = codeMatch[1];
+      ft = src.find(x => x && x.desc && String(x.desc).trim().startsWith(code));
+    }
+  }
+  if(!ft && nomeNorm){
+    ft = src.find(x => {
+      const descNorm = norm(x && x.desc);
+      if(!descNorm) return false;
+      return nomeNorm.includes(descNorm.substring(0,18)) || descNorm.includes(nomeNorm.substring(0,18));
+    });
+  }
+  if(ft && Array.isArray(ft.insumos) && ft.insumos.length){
+    return ft.insumos.map(i => ({ n:i.insumo, c:inferCatInsumo(i.insumo), q:Number(i.qty)||0 }));
+  }
+
+  if(nome && INSUMOS_MAP && INSUMOS_MAP[nome]){
+    return INSUMOS_MAP[nome].map(i => ({ n:i.n||i.insumo, c:i.c||inferCatInsumo(i.n||i.insumo), q:Number(i.q ?? i.qty)||0 }));
+  }
+  if(nome){
+    const codeMatch = nome.match(/^(\d{5})/);
+    if(codeMatch && INSUMOS_MAP){
+      const code = codeMatch[1];
+      for(const k of Object.keys(INSUMOS_MAP)){
+        if(k.startsWith(code)){
+          return INSUMOS_MAP[k].map(i => ({ n:i.n||i.insumo, c:i.c||inferCatInsumo(i.n||i.insumo), q:Number(i.q ?? i.qty)||0 }));
+        }
       }
     }
   }
-  // Priority 2: Exact match in INSUMOS_MAP
-  if(INSUMOS_MAP[d]) return INSUMOS_MAP[d];
-  // Match by product code (first 5 chars numeric portion)
-  const codeMatch=d.match(/^(\d{5})/);
-  if(codeMatch){
-    const code=codeMatch[1];
+  if(nome && INSUMOS_MAP){
+    const prefix = nome.substring(0,25).toLowerCase().replace(/\s+/g,' ').trim();
     for(const k of Object.keys(INSUMOS_MAP)){
-      if(k.startsWith(code)) return INSUMOS_MAP[k];
-    }
-  }
-  // Match by first 25 chars of description (handles minor variations)
-  const prefix=d.substring(0,25).toLowerCase().replace(/\s+/g,' ').trim();
-  for(const k of Object.keys(INSUMOS_MAP)){
-    const kp=k.substring(0,25).toLowerCase().replace(/\s+/g,' ').trim();
-    if(prefix===kp || kp.startsWith(prefix.substring(0,18)) || prefix.startsWith(kp.substring(0,18))){
-      return INSUMOS_MAP[k];
+      const kp = k.substring(0,25).toLowerCase().replace(/\s+/g,' ').trim();
+      if(prefix===kp || kp.startsWith(prefix.substring(0,18)) || prefix.startsWith(kp.substring(0,18))){
+        return INSUMOS_MAP[k].map(i => ({ n:i.n||i.insumo, c:i.c||inferCatInsumo(i.n||i.insumo), q:Number(i.q ?? i.qty)||0 }));
+      }
     }
   }
   return [];
+}
+
+// Helper: find insumos for a product (match by product code or description)
+function getInsumos(prodDesc){
+  return resolveInsumosProduto(prodDesc, null);
 }
 
 // ===== INSUMOS ENGINE =====
@@ -3603,23 +3643,21 @@ function buildInsumosSchedule(monday){
     if(!entries||!entries.length) continue;
     const maqData=[];
 
-    for(const {rec,segments,cxRestante,isOverflow} of entries){
+    for(const {rec,segments} of entries){
       const ins=getInsumos(rec.produto);
       if(!ins||!ins.length) continue;
-
-      // Para exibição: usar cxRestante se disponível (registros overflow têm qtd ajustada)
-      const cxExibir = (cxRestante != null && cxRestante >= 0) ? cxRestante : (rec.qntCaixas || 0);
 
       const insumoRows=[];
       for(const i of ins){
         const dayQtys=Array(7).fill(0);
         for(const seg of segments){
-          dayQtys[seg.dayIdx]+=seg.caixasNoDia*i.q;
+          const caixasSeg = Number(seg.caixasExatas ?? seg.caixasNoDia ?? 0) || 0;
+          dayQtys[seg.dayIdx]+=caixasSeg*i.q;
         }
         insumoRows.push({nome:i.n,cat:i.c,days:dayQtys,total:dayQtys.reduce((a,b)=>a+b,0)});
       }
       if(insumoRows.some(r=>r.total>0)){
-        maqData.push({produto:rec.produto,insumos:insumoRows,totalCaixas:cxExibir});
+        maqData.push({produto:rec.produto,insumos:insumoRows,totalCaixas:rec.qntCaixas});
       }
     }
     if(maqData.length) result.byMaq[maq]=maqData;
@@ -9782,16 +9820,9 @@ function impSaveInsumosEstoque(){ localStorage.setItem('imp_insumos_estoque', JS
 function getEstoqueInsumo(nomeInsumo){
   const norm = s => (s||'').toUpperCase().trim().replace(/\s+/g,' ');
   const ni = norm(nomeInsumo);
-  // 1. Match exato (prioridade máxima)
   const exact = insumosEstoqueData.find(x => norm(x.insumo) === ni);
   if(exact) return exact.quantidade || 0;
-  // 2. Match parcial conservador: um nome deve estar INTEIRAMENTE contido no outro
-  //    (evita falsos positivos por prefixo de 20 chars)
-  const partial = insumosEstoqueData.find(x => {
-    const xn = norm(x.insumo);
-    return xn.length >= 10 && ni.length >= 10 && (xn.includes(ni) || ni.includes(xn));
-  });
-  return partial ? (partial.quantidade || 0) : null; // null = não encontrado
+  return null; // sem match parcial para não puxar estoque de insumo parecido errado
 }
 
 function impAddHistorico(tipo, qtd, nome){
@@ -10030,16 +10061,7 @@ function importEstoqueInsumos(input){
 // Calcula consumo total de insumos com base na programação ativa (registros do Gantt)
 // Retorna lista de insumos para um produto: [{n: nomeInsumo, q: qtdPorCaixa}]
 function findInsumosProduto(nomeProd, codProd){
-  const norm = s => (s||'').toUpperCase().trim().replace(/\s+/g,' ');
-  const src = (typeof fichaTecnicaData !== 'undefined' ? fichaTecnicaData : FICHA_TECNICA) || [];
-  // 1) por código exato
-  let ft = src.find(x => x.cod && String(x.cod) === String(codProd));
-  // 2) por descrição exata
-  if(!ft && nomeProd) ft = src.find(x => norm(x.desc) === norm(nomeProd));
-  // 3) por descrição parcial
-  if(!ft && nomeProd) ft = src.find(x => norm(nomeProd).includes(norm(x.desc).substring(0,18)) || norm(x.desc).includes(norm(nomeProd).substring(0,18)));
-  if(!ft || !ft.insumos || !ft.insumos.length) return [];
-  return ft.insumos.map(i => ({ n: i.insumo, q: i.qty || 0 }));
+  return resolveInsumosProduto(nomeProd, codProd).map(i => ({ n:i.n, q:i.q, c:i.c }));
 }
 
 function calcConsumoInsumosPorProgramacao(){
