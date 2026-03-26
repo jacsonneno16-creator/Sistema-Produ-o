@@ -604,7 +604,7 @@ function editarCategoriaCfg(id) {
   document.getElementById('cat-ativo-inp').value = cat.ativo === false ? 'false' : 'true';
 }
 
-function excluirCategoriaCfg(id) {
+async function excluirCategoriaCfg(id) {
   const cat = (CATEGORIAS || []).find(c => c.id === id);
   if (!cat) return;
   if (!confirm('Excluir categoria "' + cat.nome + '"?')) return;
@@ -4512,7 +4512,7 @@ function getFichaTecnicaMerged() {
   return result;
 }
 
-function loadFichaTecnica(input){
+async function loadFichaTecnica(input){
   const file=input.files[0];
   if(!file) return;
   const reader=new FileReader();
@@ -5589,7 +5589,7 @@ function realizadoPermitirFaltaSequencia() {
 }
 
 // Função para PCP resetar apontamentos do dia
-function realizadoResetarDia(data) {
+async function realizadoResetarDia(data) {
   if (!can('realizado','resetar')) {
     toast('Sem permissão para resetar apontamentos.', 'err');
     return;
@@ -6959,7 +6959,7 @@ function settingsNav(section){
   if(section==='processos') setTimeout(()=>renderProcessos(), 50);
 }
 
-function handleImportZip(file){
+async function handleImportZip(file){
   if(!file) return;
   if(!file.name.endsWith('.zip')){ toast('Selecione um arquivo .zip','err'); return; }
   const statusEl=document.getElementById('importzip-status');
@@ -8231,7 +8231,7 @@ function deleteExtraProduto(cod, maq, desc) {
   excluirProduto(cod, maq, desc);
 }
 
-function importProdutosExcel(input) {
+async function importProdutosExcel(input) {
   const file = input.files[0]; if (!file) return;
   const reader = new FileReader();
   reader.onload = async function(e) {
@@ -12471,7 +12471,7 @@ async function aplicarProgAutomaticaNoGantt(){
   // Se a mesma máquina aparece em dois detalhes da mesma semana
   // (pode ocorrer após fase de equalização), consolida em um único
   // registro somando as caixas — evita duplicata no Gantt.
-  function buildPlanejamento(sug){
+  async function buildPlanejamento(sug){
     const plano = []; // [{si, maq, cx, pcMin, dtDesejada}]
     const semanaSel = document.getElementById('pa-semana-sel')?.value;
     const monday    = semanaSel ? new Date(semanaSel+'T12:00:00') : getWeekMonday(new Date());
@@ -13450,7 +13450,7 @@ function solicitarPermissaoNotificacoes() {
 // Auto-save de apontamentos pendentes
 let _apontamentosPendentes = new Map();
 
-function salvarApontamentosAutomatico() {
+async function salvarApontamentosAutomatico() {
   if (_apontamentosPendentes.size === 0) return;
   
   const pendentes = Array.from(_apontamentosPendentes.entries());
