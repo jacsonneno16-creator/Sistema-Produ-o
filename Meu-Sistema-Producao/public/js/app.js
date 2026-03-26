@@ -2195,30 +2195,7 @@ function calcInfo(){
   const totalUnid=qnt*unid;
   const totalMin=Math.round(totalUnid/pcMin);
   const hrs=(totalMin/60).toFixed(1);
-
-  // FIX: usar horas reais da máquina selecionada para calcular dias úteis.
-  // Antes usava 600min (10h) fixo, ignorando turnos configurados por máquina.
-  const selMaqCalc = document.getElementById('f-maq-form') && document.getElementById('f-maq-form').value;
-  const dtCalc     = document.getElementById('f-dtsolicit') && document.getElementById('f-dtsolicit').value;
-  let hrsPerDiaMaq = 10; // fallback
-  if(selMaqCalc && dtCalc){
-    try{
-      // Calcula horas médias diárias da máquina na semana da data selecionada
-      const refMon = getWeekMonday(new Date(dtCalc+'T12:00:00'));
-      const wHrs   = typeof weekHoursMaq==='function' ? weekHoursMaq(refMon, selMaqCalc) : 0;
-      if(wHrs>0){
-        // Conta apenas dias com disponibilidade nessa semana para essa máquina
-        const wDays = getWeekDays(refMon);
-        const diasAtivos = wDays.filter(d=>
-          (typeof hoursOnDayMaq==='function' ? hoursOnDayMaq(d,selMaqCalc) : hoursOnDay(d)) > 0
-        ).length;
-        if(diasAtivos>0) hrsPerDiaMaq = wHrs/diasAtivos;
-      }
-    } catch(e){}
-  }
-  const minPerDia  = hrsPerDiaMaq * 60;
-  const dias       = Math.ceil(totalMin / minPerDia);
-
+  const dias=Math.ceil(totalMin/600);
   document.getElementById('c-unid').textContent=totalUnid.toLocaleString('pt-BR');
   document.getElementById('c-min').textContent=totalMin.toLocaleString('pt-BR');
   document.getElementById('c-hrs').textContent=hrs;
@@ -2670,13 +2647,7 @@ function buildSchedule(monday){
         const startPct=dayCapMin>0?(absStartMin/dayCapMin)*100:0;
         const endPct=dayCapMin>0?((absStartMin+useMin)/dayCapMin)*100:0;
 
-        // FIX: calcular caixas sem acúmulo de erro de arredondamento.
-        // O Math.round individual por segmento fazia a soma total divergir de cxRestanteRec,
-        // causando insumos errados na aba. O último segmento recebe o saldo exato.
-        const isLastSeg=(remainProdMin-useMin)<=0.001;
-        const caixasHoje=isLastSeg
-          ?Math.max(0,cxRestanteRec-segments.reduce((a,s)=>a+s.caixasNoDia,0))
-          :Math.round(cxPerMin*useMin);
+        const caixasHoje=Math.round(cxPerMin*useMin);
         segments.push({
           date:dateStr(days[snap.dayIdx]),
           dayIdx:snap.dayIdx,
@@ -3563,78 +3534,40 @@ function inferCatInsumo(nome){
 function getInsumos(prodDesc){
   if(!prodDesc) return [];
   const d=prodDesc.trim();
-
   // Priority 1: Check fichaTecnicaData (user-edited data) by exact desc match
   if(typeof fichaTecnicaData !== 'undefined'){
     const ftEntry=fichaTecnicaData.find(x=>x.desc && x.desc.trim()===d);
     if(ftEntry && ftEntry.insumos && ftEntry.insumos.length>0){
       return ftEntry.insumos.map(i=>({n:i.insumo, c:inferCatInsumo(i.insumo), q:i.qty}));
     }
-    // Try matching by code prefix in fichaTecnicaData — prefere embalagem igual
-    const codeMatchFT=d.match(/^(\d{5})/);
-    if(codeMatchFT){
-      const code=codeMatchFT[1];
-      // Tenta match exato de embalagem (ex: "CX 24" ou "FD 12") antes de aceitar qualquer
-      const embMatch=d.match(/[\s\-]+((?:CX|FD|UND)\s*\d+(?:\.\d+)?)/i);
-      const embStr=embMatch?embMatch[1].replace(/\s+/g,'').toUpperCase():'';
-      let ftByCode = embStr
-        ? fichaTecnicaData.find(x=>x.desc && x.desc.trim().startsWith(code) && x.desc.replace(/\s+/g,'').toUpperCase().includes(embStr))
-        : null;
-      if(!ftByCode) ftByCode=fichaTecnicaData.find(x=>x.desc && x.desc.trim().startsWith(code));
+    // Also try matching by code prefix
+    const codeMatch=d.match(/^(\d{5})/);
+    if(codeMatch){
+      const code=codeMatch[1];
+      const ftByCode=fichaTecnicaData.find(x=>x.desc && x.desc.trim().startsWith(code));
       if(ftByCode && ftByCode.insumos && ftByCode.insumos.length>0){
         return ftByCode.insumos.map(i=>({n:i.insumo, c:inferCatInsumo(i.insumo), q:i.qty}));
       }
     }
   }
-
   // Priority 2: Exact match in INSUMOS_MAP
   if(INSUMOS_MAP[d]) return INSUMOS_MAP[d];
-
-  // Priority 3: Match by product code (5 dígitos) + embalagem (ex: CX 24, FD 12)
-  // FIX: o fallback antigo usava apenas os primeiros 18 chars, o que fazia produtos
-  // com mesmo código mas embalagens diferentes (ex: CX 24 vs FD 12) retornarem
-  // insumos errados — a quantidade por caixa é diferente entre variantes!
+  // Match by product code (first 5 chars numeric portion)
   const codeMatch=d.match(/^(\d{5})/);
   if(codeMatch){
     const code=codeMatch[1];
-    // Extrai token de embalagem da descrição (ex: "CX 24", "FD 12", "UND CX 24")
-    const embMatch=d.match(/[\s\-]+((?:CX|FD|UND)\s*\d+(?:\.\d+)?)/i);
-    const embStr=embMatch?embMatch[1].replace(/\s+/g,'').toUpperCase():'';
-
-    // 3a: mesmo código + mesma embalagem exata
-    if(embStr){
-      for(const k of Object.keys(INSUMOS_MAP)){
-        if(k.startsWith(code) && k.replace(/\s+/g,'').toUpperCase().includes(embStr)){
-          return INSUMOS_MAP[k];
-        }
-      }
-    }
-    // 3b: mesmo código, sem restrição de embalagem (só se há apenas 1 variante)
-    const sameCode=Object.keys(INSUMOS_MAP).filter(k=>k.startsWith(code));
-    if(sameCode.length===1) return INSUMOS_MAP[sameCode[0]];
-
-    // 3c: mesmo código + descrição mais longa em comum (melhor match dentre as variantes)
-    if(sameCode.length>1){
-      const dLow=d.toLowerCase().replace(/\s+/g,' ');
-      let bestKey=null, bestScore=0;
-      for(const k of sameCode){
-        const kLow=k.toLowerCase().replace(/\s+/g,' ');
-        // Conta chars em comum no início
-        let score=0;
-        while(score<dLow.length && score<kLow.length && dLow[score]===kLow[score]) score++;
-        if(score>bestScore){bestScore=score;bestKey=k;}
-      }
-      if(bestKey) return INSUMOS_MAP[bestKey];
+    for(const k of Object.keys(INSUMOS_MAP)){
+      if(k.startsWith(code)) return INSUMOS_MAP[k];
     }
   }
-
-  // Priority 4: Match por primeiros 25 chars exatos (sem o fallback permissivo de 18)
+  // Match by first 25 chars of description (handles minor variations)
   const prefix=d.substring(0,25).toLowerCase().replace(/\s+/g,' ').trim();
   for(const k of Object.keys(INSUMOS_MAP)){
     const kp=k.substring(0,25).toLowerCase().replace(/\s+/g,' ').trim();
-    if(prefix===kp) return INSUMOS_MAP[k];
+    if(prefix===kp || kp.startsWith(prefix.substring(0,18)) || prefix.startsWith(kp.substring(0,18))){
+      return INSUMOS_MAP[k];
+    }
   }
-
   return [];
 }
 
