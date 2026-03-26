@@ -1793,19 +1793,26 @@ function renderMaquinas(){
           })()
         : getWeekMonday(new Date()));
 
-  // Usar buildSchedule para calcular horas REAIS por máquina na semana de refMon
-  // (distribui corretamente pelos blocos/turnos configurados)
+  // Calcular horas programadas por máquina usando apenas os registros da semana filtrada
+  // O buildSchedule usa records globais; aqui substituimos temporariamente para garantir
+  // que o numerador (horas usadas) corresponda à mesma semana do denominador (weekHoursMaq)
   if(typeof buildSchedule==='function'){
-    const {schedule:sched} = buildSchedule(refMon);
-    MAQUINAS.forEach(m=>{
-      const entries=sched[m]||[];
-      let minTot=0;
-      entries.forEach(({segments,setupSegments})=>{
-        segments.forEach(s=>{ minTot+=s.hrsNoDia*60; });
-        (setupSegments||[]).forEach(s=>{ minTot+=s.setupMin; });
+    const _recBackup = window.records;
+    window.records = filteredRecs;
+    try {
+      const {schedule:sched} = buildSchedule(refMon);
+      MAQUINAS.forEach(m=>{
+        const entries=sched[m]||[];
+        let minTot=0;
+        entries.forEach(({segments,setupSegments})=>{
+          segments.forEach(s=>{ minTot+=s.hrsNoDia*60; });
+          (setupSegments||[]).forEach(s=>{ minTot+=s.setupMin; });
+        });
+        map[m].min=minTot;
       });
-      map[m].min=minTot;
-    });
+    } finally {
+      window.records = _recBackup;
+    }
   } else {
     // fallback: soma simples se buildSchedule não disponível
     filteredRecs.forEach((r,idx,arr)=>{
@@ -4643,6 +4650,10 @@ function renderProduzido(){
   if(!prodSelectedDate) prodSelectedDate = dateStr(new Date());
   const days = getWeekDays(prodBaseMonday);
   const weekDates = days.map(function(d){ return dateStr(d); });
+  // Sempre atualizar o label da semana (mesmo nas abas especiais)
+  const _sun = days[6];
+  const _wlabel = document.getElementById('prod-week-label');
+  if(_wlabel) _wlabel.textContent = fmtDate(days[0]) + ' – ' + fmtDate(_sun) + ' / ' + days[0].getFullYear();
   if(prodSelectedDate === 'producao-dia'){
     renderProdDayTabs();
     pdLoadWeek(prodBaseMonday).then(function(){ renderProducaoDia(); });
@@ -7493,6 +7504,22 @@ async function salvarProdutoFirestore(dados) {
   };
   try {
     let firestoreId = dados._id || null;
+
+    // Se não tem _id, busca no Firestore pelo cod+maquina para evitar criar duplicata
+    // (produtos importados ou carregados sem _id propagado corretamente)
+    if (!firestoreId) {
+      const snap = await getDocs(query(lojaCol('produtos'),
+        where('cod', '==', payload.cod),
+        where('maquina', '==', payload.maquina)));
+      if (!snap.empty) {
+        firestoreId = snap.docs[0].id;
+        // Propagar _id também para o cache em memória
+        const memIdx = (window.PRODUTOS||[]).findIndex(p =>
+          String(p.cod) === String(payload.cod) && p.maquina === payload.maquina);
+        if (memIdx >= 0 && !window.PRODUTOS[memIdx]._id) window.PRODUTOS[memIdx]._id = firestoreId;
+      }
+    }
+
     if (firestoreId) {
       await setDoc(lojaDoc('produtos', firestoreId), { ...payload, criadoEm: dados.criadoEm || new Date().toISOString() });
     } else {
@@ -7828,8 +7855,10 @@ async function saveProdModal() {
   const tipoMinimo         = document.getElementById('pm-tipo-min')?.value             || '';
   const prioridadeProducao = parseInt(document.getElementById('pm-prioridade')?.value) || 2;
   const produtoAtivo       = document.getElementById('pm-ativo')?.value !== 'false';
-  // Preservar categoria do produto original ao editar (não há campo no modal para alterá-la)
-  const categoria          = document.getElementById('pm-categoria')?.value ?? (_produtoEditando?.categoria || '');
+  // Preservar categoria do produto original ao editar:
+  // Se o campo estiver preenchido, usa o valor digitado; caso contrário preserva a categoria original
+  const _catField = document.getElementById('pm-categoria')?.value?.trim() || '';
+  const categoria = _catField || (_produtoEditando?.categoria || '');
 
   const dados = {
     cod, descricao: desc, unid, kg_fd: 0, pc_min: pcmin, maquina: maq,
