@@ -2427,7 +2427,7 @@ function weekHoursMaq(monday, maq){
     return weekHoursForMaq(monday, maq);
   }
   const days = getWeekDays(monday);
-  return days.reduce((a,d) => a + hoursOnDay(d), 0);
+  return days.reduce((a,d) => a + hoursOnDayMaq(d, maq), 0);
 }
 
 // Core scheduler: given list of active records, compute a timeline per shift block.
@@ -2564,7 +2564,10 @@ function buildSchedule(monday){
         ? Math.max(0, (rec.qntCaixas||0) - totalProduzidoRec)
         : (rec.qntCaixas||0);
       // unidRestante: production time in units
-      const unidRestante = cxRestanteRec * unidPorCx;
+      // Use stored qntUnid when available (may differ from qntCaixas*unidPorCx if edited)
+      const unidRestante = isOverflowRecord
+        ? cxRestanteRec * (rec.qntUnid > 0 && rec.qntCaixas > 0 ? rec.qntUnid / rec.qntCaixas : unidPorCx)
+        : (rec.qntUnid > 0 ? (cxRestanteRec === rec.qntCaixas ? totalUnid : cxRestanteRec * (rec.qntUnid / rec.qntCaixas)) : cxRestanteRec * unidPorCx);
       if(unidRestante <= 0){
         // Nothing left to produce — push an empty entry so the cursor doesn't advance
         scheduled.push({rec, segments:[], setupMin:0, setupSegments:[], isOverflow:isOverflowRecord, cxRestante:0});
@@ -2930,7 +2933,11 @@ function renderGanttSemanal(){
           recs:       []
         };
       }
-      prodMap[pk].qntCaixas     += (entry.rec.qntCaixas || 0);
+      // Usar cxRestante quando disponível (registros overflow têm quantidade ajustada)
+      const cxParaExibir = (entry.cxRestante != null && entry.cxRestante >= 0)
+        ? entry.cxRestante
+        : (entry.rec.qntCaixas || 0);
+      prodMap[pk].qntCaixas     += cxParaExibir;
       prodMap[pk].setupMin      += (entry.setupMin || 0);
       prodMap[pk].segments       = prodMap[pk].segments.concat(entry.segments || []);
       prodMap[pk].setupSegments  = prodMap[pk].setupSegments.concat(entry.setupSegments || []);
@@ -3583,9 +3590,12 @@ function buildInsumosSchedule(monday){
     if(!entries||!entries.length) continue;
     const maqData=[];
 
-    for(const {rec,segments} of entries){
+    for(const {rec,segments,cxRestante,isOverflow} of entries){
       const ins=getInsumos(rec.produto);
       if(!ins||!ins.length) continue;
+
+      // Para exibição: usar cxRestante se disponível (registros overflow têm qtd ajustada)
+      const cxExibir = (cxRestante != null && cxRestante >= 0) ? cxRestante : (rec.qntCaixas || 0);
 
       const insumoRows=[];
       for(const i of ins){
@@ -3596,7 +3606,7 @@ function buildInsumosSchedule(monday){
         insumoRows.push({nome:i.n,cat:i.c,days:dayQtys,total:dayQtys.reduce((a,b)=>a+b,0)});
       }
       if(insumoRows.some(r=>r.total>0)){
-        maqData.push({produto:rec.produto,insumos:insumoRows,totalCaixas:rec.qntCaixas});
+        maqData.push({produto:rec.produto,insumos:insumoRows,totalCaixas:cxExibir});
       }
     }
     if(maqData.length) result.byMaq[maq]=maqData;
