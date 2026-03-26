@@ -2627,23 +2627,6 @@ function buildSchedule(monday){
         if(snap.usedMin>=blkTotalMin-0.001){snap.blkIdx++;snap.usedMin=0;}
       }
 
-      // Regra visual do Gantt: se sobrar só um pedaço muito pequeno no dia seguinte
-      // (até 15 min), mantém esse restante no dia anterior para não poluir a grade.
-      // Se passar de 15 min, continua no dia seguinte normalmente.
-      for(let si=1; si<segments.length; si++){
-        const prev=segments[si-1];
-        const cur=segments[si];
-        if(!prev || !cur) continue;
-        if(cur.dayIdx!==prev.dayIdx && (cur.useMin||0)<=15.0001){
-          prev.caixasNoDia += cur.caixasNoDia || 0;
-          prev.hrsNoDia += cur.hrsNoDia || 0;
-          prev.useMin = (prev.useMin||0) + (cur.useMin||0);
-          prev.endPct = Math.max(prev.endPct||0, 100);
-          segments.splice(si,1);
-          si--;
-        }
-      }
-
       // ── Consume production time ──
       while(remainProdMin>0.001 && snap.dayIdx<7){
         const blocks=advanceCursor(snap, days, maq);
@@ -2994,7 +2977,7 @@ function renderGanttSemanal(){
       html+=`<div class="g-label"><strong title="${produto}${obs?' — '+obs:''}">${produto}</strong>${isAlerg?'<span style="font-size:9px;font-weight:700;color:#ff9900;background:rgba(255,153,0,.15);border:1px solid rgba(255,153,0,.35);padding:1px 5px;border-radius:6px;margin-left:5px;white-space:nowrap">⚠️ Alerg.</span>':''}</div>`;
 
       // Qtd cx col — soma de todos os registros
-      html+=`<div class="g-col-qty"><div class="g-col-qty-txt">${fmtCx(qntCaixas)}<br><span style="font-size:9px;color:var(--text3);font-weight:400">cx</span></div></div>`;
+      html+=`<div class="g-col-qty"><div class="g-col-qty-txt">${qntCaixas}<br><span style="font-size:9px;color:var(--text3);font-weight:400">cx</span></div></div>`;
 
       // Tempo col — só produção; tooltip mostra total com setup
       const totalHrsComSetup = prodHrs + setupMin/60;
@@ -3092,8 +3075,8 @@ function renderGanttSemanal(){
             const turnoTip=seg.turnoLabel?` · ${seg.turnoLabel}`:'';
             const obsTip=obs?` — ${obs}`:'';
             html+=`<div class="g-bar" style="left:${leftPct}%;width:${widthPct}%;background:${color};opacity:0.9;position:absolute;top:15%;height:70%"
-              title="${produto}${obsTip}${turnoTip} · ${cx} cx · ${hrsLabel}">
-              <div class="g-bar-tip">${produto.substring(0,40)}${obs?'<br><span style=\"font-size:9px;opacity:.8\">'+obs+'</span>':''}<br>${cx} cx · ${hrsLabel}${seg.turnoLabel?' · '+seg.turnoLabel:''}</div>
+              title="${produto}${obsTip}${turnoTip} · ${cxLabel} cx · ${hrsLabel}">
+              <div class="g-bar-tip">${produto.substring(0,40)}${obs?'<br><span style=\"font-size:9px;opacity:.8\">'+obs+'</span>':''}<br>${cxLabel} cx · ${hrsLabel}${seg.turnoLabel?' · '+seg.turnoLabel:''}</div>
             </div>`;
           });
           html+=`</div>`;
@@ -3522,9 +3505,9 @@ function renderGanttSummary(schedule,days){
       html+=`<tr><td title="${rec.produto}" style="text-align:left;padding:4px 8px;font-size:9px;color:var(--text)">${shortName}</td>`;
       weekdayIdxs.forEach(i=>{
         const v=rowTotals[i];
-        html+=`<td style="padding:4px;font-size:10px;${v>0?'color:var(--cyan)':''}">${v>0?fmtCx(v):'—'}</td>`;
+        html+=`<td style="padding:4px;font-size:10px;${v>0?'color:var(--cyan)':''}">${v>0?v:'—'}</td>`;
       });
-      html+=`<td style="padding:4px;font-size:10px;color:var(--text);font-weight:600">${fmtCx(rowTotal)}</td></tr>`;
+      html+=`<td style="padding:4px;font-size:10px;color:var(--text);font-weight:600">${rowTotal}</td></tr>`;
     }
 
     // Total row
@@ -3661,6 +3644,11 @@ function getUnit(nome,cat){
 function fmtQty(v){
   if(!v||v<0.001) return '—';
   return v>=1000?(v).toLocaleString('pt-BR'):v>=100?v.toFixed(1):v>=10?v.toFixed(2):v.toFixed(3).replace(/\.?0+$/,'');
+}
+
+function fmtCx(v){
+  if(v==null || !isFinite(v) || Math.abs(v)<0.001) return '—';
+  return Math.round(v).toLocaleString('pt-BR');
 }
 
 // ===== INSUMOS POR MÁQUINA =====
