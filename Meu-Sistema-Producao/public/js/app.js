@@ -1708,7 +1708,7 @@ function sBadge(s){
 // Zero-pads minutes < 10 as requested (e.g. "10h08min")
 function fmtHrs(h){
   if(!h||h<=0) return '—';
-  const totalMin=(h*60);
+  const totalMin=Math.round(h*60);
   if(totalMin<60){
     const m=String(totalMin).padStart(2,'0');
     return m+'min';
@@ -1719,48 +1719,39 @@ function fmtHrs(h){
 }
 
 // Central helper: get reliable pc_min and unid for a record
-// MUST mirror calcTempoStr priority exactly so Gantt and Programação show the same hours
 function getProdInfo(rec){
-  const maq = rec.maquina;
-  const produtoNome = rec.produto || '';
-
-  // Priority 1: Use stored pcMin from record (same as calcTempoStr P1)
-  let pcMin = (rec.pcMin && rec.pcMin > 0) ? rec.pcMin : 0;
-
-  // Priority 2: machine-specific velocity from produtosCompativeis (same as calcTempoStr P2)
-  if(!pcMin && maq && produtoNome && window.MAQUINAS_DATA) {
-    const maqData = window.MAQUINAS_DATA[maq];
-    if(maqData && Array.isArray(maqData.produtosCompativeis)) {
-      const entry = maqData.produtosCompativeis.find(p =>
-        p.produto === produtoNome ||
-        produtoNome.includes(p.produto) ||
-        p.produto.includes(produtoNome)
-      );
-      if(entry && entry.velocidade && entry.velocidade > 0) pcMin = entry.velocidade;
-    }
-  }
-
-  // Priority 3: machine default velocity (same as calcTempoStr P3)
-  if(!pcMin && maq && window.MAQUINAS_DATA) {
-    const maqData = window.MAQUINAS_DATA[maq];
-    if(maqData && maqData.pcMin) pcMin = parseFloat(maqData.pcMin);
-  }
-
-  // Priority 4: product catalog velocity (same as calcTempoStr P4)
   const all = getAllProdutos();
-  if(!pcMin) {
-    const produto = all.find(x =>
-      x.maquina === maq && (produtoNome ? (x.descricao === produtoNome || produtoNome.includes(x.descricao)) : true)
-    );
-    pcMin = produto ? produto.pc_min : 1;
+
+  // Resolve ficha do produto (por código ou nome)
+  let ficha = null;
+  if(rec.prodCod) ficha = all.find(x => x.cod === rec.prodCod);
+  if(!ficha && rec.produto) ficha = all.find(x => rec.produto.startsWith(x.descricao.substring(0,22)));
+
+  // Velocidade da máquina específica para este produto.
+  // getPcMinMaquinaProduto lê de produtosCompativeis[].velocidade da máquina correta.
+  const nomeProduto = ficha ? ficha.descricao : (rec.produto || '');
+  const velMaquina = rec.maquina ? getPcMinMaquinaProduto(rec.maquina, nomeProduto) : null;
+
+  if(ficha){
+    // Mesma prioridade da aba Programação:
+    // 1. pcMin salvo no registro
+    // 2. Velocidade configurada na máquina para este produto
+    // 3. Velocidade genérica da ficha do produto
+    const pcMinFinal = (rec.pcMin && rec.pcMin > 0)
+      ? rec.pcMin
+      : ((velMaquina && velMaquina > 0) ? velMaquina : ficha.pc_min);
+    return { ...ficha, pc_min: pcMinFinal };
   }
 
-  // Resolve unid: use record value first, then catalog, then 1
-  const unid = rec.unidPorCx ||
-    (all.find(x => x.maquina === maq && (x.descricao === produtoNome || produtoNome.includes(x.descricao))) || {unid:1}).unid ||
-    1;
+  // Sem ficha: usar primeiro o pcMin do registro, depois a máquina
+  const pcMinFallback = (rec.pcMin && rec.pcMin > 0)
+    ? rec.pcMin
+    : ((velMaquina && velMaquina > 0) ? velMaquina : 0);
+  if(pcMinFallback > 0) return { pc_min: pcMinFallback, unid: rec.unidPorCx || 1 };
 
-  return { pc_min: pcMin || 1, unid };
+  // Último recurso: primeiro produto da máquina
+  const byMaq = all.find(x => x.maquina === rec.maquina);
+  return byMaq || { pc_min: 1, unid: 1 };
 }
 
 // ===== MÁQUINAS =====
