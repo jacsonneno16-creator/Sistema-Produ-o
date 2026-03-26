@@ -1214,7 +1214,7 @@ function renderRelatorio__OLD_REMOVED() {
     rows += '<td style="padding:6px 10px;font-size:10px;color:var(--green);font-family:JetBrains Mono,monospace;font-weight:700">REAL</td>';
     realByCol.forEach(function(v, i) {
       const prog = progByCol[i];
-      const perc = prog > 0 ? Math.round(v/prog*100) : (v>0?100:0);
+      const perc = prog > 0 ? (v/prog*100) : (v>0?100:0);
       const col2 = v >= prog && prog > 0 ? 'var(--green)' : v > 0 ? 'var(--amber)' : 'var(--text4)';
       const percTag = prog > 0 || v > 0 ? '<span style="font-size:9px;margin-left:4px;opacity:.7">('+perc+'%)</span>' : '';
       rows += '<td style="padding:6px 12px;text-align:right;font-family:JetBrains Mono,monospace;font-size:13px;font-weight:700;color:'+col2+'">'+v+percTag+'</td>';
@@ -1233,7 +1233,7 @@ function renderRelatorio__OLD_REMOVED() {
   rows += '<td style="padding:6px 10px;font-size:10px;color:var(--green);font-family:JetBrains Mono,monospace;font-weight:700">REAL</td>';
   totalReal.forEach(function(v, i) {
     const prog = totalProg[i];
-    const perc = prog > 0 ? Math.round(v/prog*100) : (v>0?100:0);
+    const perc = prog > 0 ? (v/prog*100) : (v>0?100:0);
     const col2 = v >= prog && prog > 0 ? 'var(--green)' : v > 0 ? 'var(--amber)' : 'var(--text4)';
     const percTag = prog > 0 || v > 0 ? '<span style="font-size:9px;margin-left:4px;opacity:.7">('+perc+'%)</span>' : '';
     rows += '<td style="padding:6px 12px;text-align:right;font-family:JetBrains Mono,monospace;font-size:14px;font-weight:700;color:'+col2+'">'+v+percTag+'</td>';
@@ -1382,7 +1382,7 @@ function renderRelatorio(){
   const cols=Math.min(slots.length,4);
   let html=`<div style="display:grid;grid-template-columns:repeat(${cols},1fr);gap:10px;margin-bottom:18px">`;
   aggs.forEach(({slot,data})=>{
-    const pct=data.caixas>0?Math.min(100,Math.round(data.realCaixas/data.caixas*100)):0;
+    const pct=data.caixas>0?Math.min(100,(data.realCaixas/data.caixas*100)):0;
     const pctColor=pct>=100?'var(--green)':pct>=50?'var(--cyan)':'var(--amber)';
     const s=slot.start.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'});
     const e=slot.end.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'});
@@ -1708,7 +1708,7 @@ function sBadge(s){
 // Zero-pads minutes < 10 as requested (e.g. "10h08min")
 function fmtHrs(h){
   if(!h||h<=0) return '—';
-  const totalMin=Math.round(h*60);
+  const totalMin=(h*60);
   if(totalMin<60){
     const m=String(totalMin).padStart(2,'0');
     return m+'min';
@@ -2193,7 +2193,7 @@ function calcInfo(){
   if(!qnt||!pcMin||!unid){panel.classList.remove('on');renderMrpPanel(0);return;}
   panel.classList.add('on');
   const totalUnid=qnt*unid;
-  const totalMin=Math.round(totalUnid/pcMin);
+  const totalMin=(totalUnid/pcMin);
   const hrs=(totalMin/60).toFixed(1);
   const dias=Math.ceil(totalMin/600);
   document.getElementById('c-unid').textContent=totalUnid.toLocaleString('pt-BR');
@@ -2647,7 +2647,7 @@ function buildSchedule(monday){
         const startPct=dayCapMin>0?(absStartMin/dayCapMin)*100:0;
         const endPct=dayCapMin>0?((absStartMin+useMin)/dayCapMin)*100:0;
 
-        const caixasHoje=Math.round(cxPerMin*useMin);
+        const caixasHoje = ((cxPerMin*useMin));
         segments.push({
           date:dateStr(days[snap.dayIdx]),
           dayIdx:snap.dayIdx,
@@ -2826,7 +2826,7 @@ function renderGanttSemanal(){
       for(const seg of segments) tot+=seg.hrsNoDia;
       for(const seg of setupSegments) tot+=seg.setupMin/60;
     }
-    maqTotalHrs[maq]=Math.round(tot*10)/10;
+    maqTotalHrs[maq]=(tot*10)/10;
   }
 
   // Helper: get shift blocks for a machine+day (uses turnosMaquinas if available)
@@ -3377,9 +3377,9 @@ function renderGanttMensal(){
       // Células por semana — barra de Gantt proporcional
       item.semanas.forEach((cx, si) => {
         const hrs   = item.hrs[si] || 0;
-        const pct   = cx > 0 ? Math.round(cx / maxCx * 100) : 0;
+        const pct   = cx > 0 ? (cx / maxCx * 100) : 0;
         const capSem = weekHoursMaq(semanas[si].monday, maq);
-        const occSem = capSem > 0 ? Math.min(100, Math.round(hrs / capSem * 100)) : 0;
+        const occSem = capSem > 0 ? Math.min(100, (hrs / capSem * 100)) : 0;
         const barClr = occSem > 85 ? 'var(--red)' : occSem > 60 ? 'var(--warn)' : item.cor;
 
         if(cx > 0){
@@ -3424,7 +3424,7 @@ function renderGanttMensal(){
       const cxSem  = itens.reduce((a, it) => a + (it.semanas[si] || 0), 0);
       const hrsSem = itens.reduce((a, it) => a + (it.hrs[si]    || 0), 0);
       const capSem = weekHoursMaq(s.monday, maq);
-      const occSem = capSem > 0 ? Math.min(100, Math.round(hrsSem / capSem * 100)) : 0;
+      const occSem = capSem > 0 ? Math.min(100, (hrsSem / capSem * 100)) : 0;
       const occClrSem = occSem > 85 ? 'var(--red)' : occSem > 60 ? 'var(--warn)' : 'var(--cyan)';
       html += `<div style="padding:5px 6px;border-left:1px solid var(--border);background:rgba(0,229,204,.04);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px">
         <span style="font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:700;color:${occClrSem}">${cxSem > 0 ? cxSem.toLocaleString('pt-BR') : '—'}</span>
@@ -3622,7 +3622,7 @@ function getUnit(nome,cat){
 
 function fmtQty(v){
   if(!v||v<0.001) return '—';
-  return v>=1000?Math.round(v).toLocaleString('pt-BR'):v>=100?v.toFixed(1):v>=10?v.toFixed(2):v.toFixed(3).replace(/\.?0+$/,'');
+  return v>=1000?(v).toLocaleString('pt-BR'):v>=100?v.toFixed(1):v>=10?v.toFixed(2):v.toFixed(3).replace(/\.?0+$/,'');
 }
 
 // ===== INSUMOS POR MÁQUINA =====
@@ -3932,8 +3932,8 @@ async function exportGanttPDF(){
         doc.text(`Pág ${p+1}/${totalPages}`,pdfW-margin-18,margin+5);
       }
       // Compute source slice in canvas pixels
-      const srcYpx=Math.round((p*usableH/scale));
-      const sliceHpx=Math.min(Math.round(usableH/scale), imgH-srcYpx);
+      const srcYpx=((p*usableH/scale));
+      const sliceHpx=Math.min((usableH/scale), imgH-srcYpx);
       if(sliceHpx<=0) break;
       const sliceCanvas=document.createElement('canvas');
       sliceCanvas.width=imgW;
@@ -5069,7 +5069,7 @@ function _renderRealizadoControlado(dateVal, body) {
 
     const totalMeta     = recs.reduce((s, r) => s + (r.qntCaixas||0), 0);
     const totalProdMaq  = recs.reduce((s, r) => s + calcularTotalProduzido(r.id), 0);
-    const pctMaq        = totalMeta > 0 ? Math.min(100, Math.round(totalProdMaq / totalMeta * 100)) : 0;
+    const pctMaq        = totalMeta > 0 ? Math.min(100, (totalProdMaq / totalMeta * 100)) : 0;
     const concluidos    = recs.filter(r => calcularTotalProduzido(r.id) >= (r.qntCaixas||0)).length;
 
     html += `
@@ -5926,7 +5926,7 @@ async function _pdCarregarBadgesObs(weekRecs, workDays) {
 function pdCardControlado(r, ds, isOperador, isPCP) {
   const totalProduzido = calcularTotalProduzido(r.id);
   const meta = r.qntCaixas || 0;
-  const pct  = meta > 0 ? Math.min(100, Math.round(totalProduzido / meta * 100)) : 0;
+  const pct  = meta > 0 ? Math.min(100, (totalProduzido / meta * 100)) : 0;
   const isDone = totalProduzido >= meta && meta > 0;
   const isOverflow = ds && (pdGetEffectiveDay(r.id) || r.dtDesejada || r.dtSolicitacao) < ds;
 
@@ -6330,8 +6330,8 @@ async function renderWeeklySummary(body){
       totalNeeded   += needed;
       totalProduced += produced;
 
-      const pct     = needed > 0 ? Math.min(100, Math.round(produced/needed*100)) : 0;
-      const realPct = needed > 0 ? Math.round(produced/needed*100) : 0;
+      const pct     = needed > 0 ? Math.min(100, (produced/needed*100)) : 0;
+      const realPct = needed > 0 ? (produced/needed*100) : 0;
       const isDone  = produced >= needed;
       const hasAny  = produced > 0;
       const pctColor = isDone ? 'var(--green)' : pct>=60 ? 'var(--cyan)' : hasAny ? 'var(--warn)' : 'var(--text3)';
@@ -6397,7 +6397,7 @@ async function renderWeeklySummary(body){
 
     const maqNeeded   = recs.reduce((a,r) => a+r.qntCaixas, 0);
     const maqProduced = recs.reduce((a,r) => a+aponGetTotalProduced(r.id), 0);
-    const maqPct      = maqNeeded > 0 ? Math.round(maqProduced/maqNeeded*100) : 0;
+    const maqPct      = maqNeeded > 0 ? (maqProduced/maqNeeded*100) : 0;
     const maqColor    = maqProduced>=maqNeeded ? 'var(--green)' : maqPct>=60 ? 'var(--cyan)' : 'var(--warn)';
 
     allSections += `<div class="apon-section" style="margin-bottom:16px">
@@ -6427,7 +6427,7 @@ async function renderWeeklySummary(body){
     return;
   }
 
-  const totalPct   = totalNeeded > 0 ? Math.round(totalProduced/totalNeeded*100) : 0;
+  const totalPct   = totalNeeded > 0 ? (totalProduced/totalNeeded*100) : 0;
   const totalDone  = totalProduced >= totalNeeded;
   const totalColor = totalDone ? 'var(--green)' : totalPct>=60 ? 'var(--cyan)' : 'var(--warn)';
 
@@ -6484,7 +6484,7 @@ function aponRecalcRow(recId){
   const overall = entry.prevTotal + dayTotal;
   const needed = entry.needed;
   const isDone = overall >= needed;
-  const pct = Math.min(100, Math.round(overall/needed*100));
+  const pct = Math.min(100, (overall/needed*100));
   const barColor = isDone?'var(--green)':pct>=60?'var(--cyan)':'var(--warn)';
 
   const overallEl = document.getElementById('apon-overall-'+recId);
@@ -6794,8 +6794,8 @@ function calcCapacidadeMaquina(pcMin, efic, hTurno, nTurnos) {
   const ht = parseFloat(hTurno) || 8;
   const nt = parseInt(nTurnos) || 1;
   const fator = ef / 100;
-  const porHora = Math.round(pcMin * 60 * fator);
-  const porTurno = Math.round(porHora * ht);
+  const porHora = (pcMin * 60 * fator);
+  const porTurno = (porHora * ht);
   const porDia = porTurno * nt;
   return { porHora, porTurno, porDia };
 }
@@ -8020,7 +8020,7 @@ function importProdutosExcel(input) {
       for (const [nomeMaq, info] of maquinasMap) {
         // Calcular velocidade média da máquina
         const velMedia = info.velocidades.length > 0 
-          ? Math.round((info.velocidades.reduce((a,b) => a+b, 0) / info.velocidades.length) * 100) / 100
+          ? ((info.velocidades.reduce((a,b) => a+b, 0) / info.velocidades.length) * 100) / 100
           : 0;
         
         // Criar produtos compatíveis com velocidades específicas
@@ -8418,7 +8418,7 @@ async function importarArquivoPadrao(input) {
         });
         for (const [nome, d] of Object.entries(maquinasMap)) {
           try {
-            const velMedia = d.pc_mins.length ? Math.round(d.pc_mins.reduce((a,b)=>a+b,0)/d.pc_mins.length*100)/100 : 0;
+            const velMedia = d.pc_mins.length ? (d.pc_mins.reduce((a,b)=>a+b,0)/d.pc_mins.length*100)/100 : 0;
             const payload = { nome, tipo: 'Empacotadeira', setor: 'Embalagem', status: 'ativa', pcMin: velMedia, eficiencia: 100, hTurno: 8, nTurnos: 1, tempoSetupPadrao: 0, produtosCompativeis: d.produtos.map(p=>({produto:p,velocidade:null})), criadoEm: new Date().toISOString(), atualizadoEm: new Date().toISOString() };
             const docRef = await addDoc(lojaCol('maquinas'), payload);
             if (!window.MAQUINAS_DATA) window.MAQUINAS_DATA = {};
@@ -11834,13 +11834,13 @@ function gerarProgAutomarica(){
       : '';
     // Informar produção não apontada e saldo projetado na virada (transparência de PCP)
     const naoPontInfo = (c.naoPontadaAtual > 0)
-      ? ` <span style="color:var(--warn)" title="Produção em andamento ainda não apontada">⚙ ${Math.round(c.naoPontadaAtual)}cx n/apon.</span>`
+      ? ` <span style="color:var(--warn)" title="Produção em andamento ainda não apontada">⚙ ${(c.naoPontadaAtual)}cx n/apon.</span>`
       : '';
     const jaProgInfo = (c.jaProgTotal > 0)
-      ? ` <span style="color:var(--cyan)" title="Produção já programada descontada da necessidade">↩ ${Math.round(c.jaProgTotal)}cx prog.</span>`
+      ? ` <span style="color:var(--cyan)" title="Produção já programada descontada da necessidade">↩ ${(c.jaProgTotal)}cx prog.</span>`
       : '';
     const saldoInfo = c.saldoVirada != null
-      ? ` <span style="color:var(--text3)" title="Saldo projetado na virada do mês">| saldo virada: ${Math.round(c.saldoVirada)}cx</span>`
+      ? ` <span style="color:var(--text3)" title="Saldo projetado na virada do mês">| saldo virada: ${(c.saldoVirada)}cx</span>`
       : '';
     const motivoFinal = c.motivo + (semInfo ? ` | ${semInfo}${maqInfo}` : '') + naoPontInfo + jaProgInfo + saldoInfo;
 
@@ -11885,9 +11885,9 @@ function gerarProgAutomarica(){
     if(modoInsumo === 'limitado' && cxMaxPorInsumos != null && cxMaxPorInsumos < alloc.cxTotal){
       // Recalcular semanas proporcionalmente ao limite de insumos
       const ratio = cxMaxPorInsumos / Math.max(1, alloc.cxTotal);
-      semanasFinal  = alloc.semanas.map(cx  => Math.round(cx * ratio));
+      semanasFinal  = alloc.semanas.map(cx  => (cx * ratio));
       detalhesFinal = alloc.detalhes.map(detSem =>
-        detSem.map(det => ({ ...det, cx: Math.round(det.cx * ratio) }))
+        detSem.map(det => ({ ...det, cx: (det.cx * ratio) }))
       );
       cxAlocadasFinal   = semanasFinal.reduce((a,v) => a+v, 0);
       hrsAlocTotalFinal = detalhesFinal.flat().reduce((a,d) => a + d.hrs * (d.cx / Math.max(1, d.cx / ratio)), 0);
@@ -12011,7 +12011,7 @@ function distribuirPorDia(qntCaixas, workDays, item){
   return [{
     date: dateStr(primeiroDia),
     dayName: DAY_NAMES[primeiroDia.getDay()],
-    cx: Math.max(0, Math.round(qntCaixas)),
+    cx: Math.max(0, (qntCaixas)),
     hrs: dayHrs
   }];
 }
@@ -12107,7 +12107,7 @@ function renderProgAutomaticaResultado(){
             const semanas = p.semanas || [p.cxAlocadas||0, 0, 0, 0];
             const maxSem  = Math.max(...semanas, 1);
             const semPills = semanas.map((cx, i) => {
-              const barW   = Math.round(cx / maxSem * 40);
+              const barW   = (cx / maxSem * 40);
               const barClr = i===0 ? 'var(--cyan)' : cx > 0 ? 'rgba(34,211,238,.5)' : 'rgba(255,255,255,.08)';
               const label  = cx > 0 ? `${cx}cx` : '—';
               return `<div style="display:inline-flex;flex-direction:column;align-items:center;gap:2px;min-width:44px">
@@ -13291,7 +13291,7 @@ function renderDashboardIndicadores() {
     }
   });
   
-  const eficiencia = totalMeta > 0 ? Math.round((totalProduzido / totalMeta) * 100) : 0;
+  const eficiencia = totalMeta > 0 ? ((totalProduzido / totalMeta) * 100) : 0;
   const produtosPendentes = weekRecs.length - produtosConcluidos;
   
   return `
@@ -13584,7 +13584,7 @@ function realizadoFinalizarProducao(recId, dateVal) {
 
   // Se não bateu a meta, pede confirmação extra
   if (meta > 0 && totalProd < meta) {
-    const pct = Math.round(totalProd / meta * 100);
+    const pct = (totalProd / meta * 100);
     if (!confirm(
       `⚠️ Atenção: "${nome}" ainda não atingiu a quantidade solicitada!\n\n` +
       `Produzido: ${totalProd} de ${meta} (${pct}%) — faltam ${faltam} caixas.\n\n` +
@@ -14341,7 +14341,7 @@ function verificarAlertasProducao() {
         prioridade: 'ALTA',
         produto: record.produto,
         dias_atraso: Math.floor((hoje - dataDesejada) / (1000 * 60 * 60 * 24)),
-        pct_concluido: Math.round(pct)
+        pct_concluido: (pct)
       });
     }
     
@@ -14355,7 +14355,7 @@ function verificarAlertasProducao() {
           prioridade: 'MEDIA',
           produto: record.produto,
           dias_parado: Math.floor(diasParado),
-          pct_concluido: Math.round(pct)
+          pct_concluido: (pct)
         });
       }
     }
@@ -14366,7 +14366,7 @@ function verificarAlertasProducao() {
         tipo: 'EXCESSO_PRODUCAO',
         prioridade: 'BAIXA',
         produto: record.produto,
-        excesso: Math.round(pct - 100)
+        excesso: (pct - 100)
       });
     }
   });
@@ -14705,7 +14705,7 @@ async function importarSetupMatriz(rows) {
           maquina: maquinaPadrao,
           produto_origem: produtoOrigem,
           produto_destino: produtoDestino,
-          tempo_setup: Math.round(tempoMinutos),
+          tempo_setup: (tempoMinutos),
           criadoEm: new Date().toISOString()
         };
         
@@ -14845,7 +14845,7 @@ async function importarProgramacaoExcel(file) {
           dtStr = `${y}-${m}-${d}`;
         } else if (/^\d{5}$/.test(s)) {
           // Serial numérico do Excel
-          const d = new Date(Math.round((parseFloat(s) - 25569) * 86400 * 1000));
+          const d = new Date(((parseFloat(s) - 25569) * 86400 * 1000));
           dtStr = d.toISOString().slice(0, 10);
         }
       }
@@ -15128,13 +15128,13 @@ function _grpRenderProducao() {
     porDia[dt].realizado  += _grpRealizado(r);
   });
   const linhas = Object.entries(porDia).sort().map(([dt, d]) => {
-    const efic = d.programado > 0 ? Math.round(d.realizado / d.programado * 100) : 0;
+    const efic = d.programado > 0 ? (d.realizado / d.programado * 100) : 0;
     const cor  = efic >= 85 ? '#2ec97a' : efic >= 70 ? '#f5c518' : '#e8321a';
     return { data: dt, programado: d.programado.toLocaleString('pt-BR'), realizado: d.realizado.toLocaleString('pt-BR'), efic: efic + '%', _efic: efic };
   });
   const totP = Object.values(porDia).reduce((a,d) => a + d.programado, 0);
   const totR = Object.values(porDia).reduce((a,d) => a + d.realizado, 0);
-  const totE = totP > 0 ? Math.round(totR / totP * 100) : 0;
+  const totE = totP > 0 ? (totR / totP * 100) : 0;
   _grpTabela('grp-panel-producao', [
     { key:'data',       label:'Data',        mono:true },
     { key:'programado', label:'Programado',  right:true, mono:true },
@@ -15155,7 +15155,7 @@ function _grpRenderMaquinas() {
     porMaq[r.maquina].ordens++;
   });
   const linhas = Object.entries(porMaq).sort().map(([maq, d]) => {
-    const efic = d.programado > 0 ? Math.round(d.realizado / d.programado * 100) : 0;
+    const efic = d.programado > 0 ? (d.realizado / d.programado * 100) : 0;
     return { maquina: maq, ordens: d.ordens, programado: d.programado.toLocaleString('pt-BR'), realizado: d.realizado.toLocaleString('pt-BR'), efic: efic + '%', _efic: efic };
   });
   const totP = Object.values(porMaq).reduce((a,d) => a + d.programado, 0);
@@ -15182,7 +15182,7 @@ function _grpRenderProdutos() {
   const linhas = Object.entries(porProd)
     .sort((a,b) => b[1].realizado - a[1].realizado)
     .map(([prod, d]) => {
-      const efic = d.programado > 0 ? Math.round(d.realizado / d.programado * 100) : 0;
+      const efic = d.programado > 0 ? (d.realizado / d.programado * 100) : 0;
       return { produto: prod, maquina: d.maquina || '—', programado: d.programado.toLocaleString('pt-BR'), realizado: d.realizado.toLocaleString('pt-BR'), efic: efic + '%', _efic: efic };
     });
   _grpTabela('grp-panel-produtos', [
@@ -15225,7 +15225,7 @@ function _grpRenderFuncionarios() {
       funcionario: func,
       dias: d.dias.size,
       total: d.total.toLocaleString('pt-BR') + ' cx',
-      media: d.dias.size > 0 ? Math.round(d.total / d.dias.size).toLocaleString('pt-BR') + ' cx/dia' : '—',
+      media: d.dias.size > 0 ? (d.total / d.dias.size).toLocaleString('pt-BR') + ' cx/dia' : '—',
     }));
   if (!linhas.length) {
     body.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text3);font-size:12px">Sem apontamentos no período — verifique os filtros de data</div>';
@@ -15298,7 +15298,7 @@ function _grpRenderGerencial() {
     porMaq[r.maquina].prog += r.qntCaixas || 0;
     porMaq[r.maquina].real += real;
   });
-  const efic = totalProg > 0 ? Math.round(totalReal / totalProg * 100) : 0;
+  const efic = totalProg > 0 ? (totalReal / totalProg * 100) : 0;
   const eficCor = efic >= 85 ? '#2ec97a' : efic >= 70 ? '#f5c518' : '#e8321a';
   let rupturas = 0;
   try { rupturas = (window.projecaoCalculada||[]).filter(p => p.risco==='critico'||p.risco==='alto').length; } catch(e) {}
@@ -15324,7 +15324,7 @@ function _grpRenderGerencial() {
     </div>`;
 
   const linhas = Object.entries(porMaq).sort().map(([maq, d]) => {
-    const e = d.prog > 0 ? Math.round(d.real / d.prog * 100) : 0;
+    const e = d.prog > 0 ? (d.real / d.prog * 100) : 0;
     return { maquina: maq, programado: d.prog.toLocaleString('pt-BR'), realizado: d.real.toLocaleString('pt-BR'), efic: e + '%', _efic: e };
   });
 
