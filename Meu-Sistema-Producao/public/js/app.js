@@ -6966,10 +6966,11 @@ function settingsNav(section){
     }
   });
   // Mostra a seção correta
-  const contentId = section === 'categorias-cfg' ? 'scontent-produtos' : 'scontent-'+section;
+  const contentId = 'scontent-'+section;
   const content=document.getElementById(contentId);
   if(content) content.style.display='flex';
-  if(section==='produtos' || section==='categorias-cfg') setTimeout(async()=>{ try { await carregarCategoriasCached(); renderCategoriasCfg(); preencherSelectCategorias('prod-categoria-inp'); preencherSelectCategorias('maq-categoria-inp'); if(section==='categorias-cfg'){ const alvo=document.getElementById('categorias-card-cfg'); if(alvo) alvo.scrollIntoView({behavior:'smooth', block:'start'}); } } catch(e){} }, 30);
+  if(section==='produtos') setTimeout(async()=>{ try { await carregarCategoriasCached(); preencherSelectCategorias('prod-categoria-inp'); preencherSelectCategorias('maq-categoria-inp'); } catch(e){} }, 30);
+  if(section==='categorias-cfg') setTimeout(async()=>{ try { await carregarCategoriasCached(true); renderCategoriasCfg(); preencherSelectCategorias('prod-categoria-inp'); preencherSelectCategorias('maq-categoria-inp'); } catch(e){} }, 30);
   // Ativa o botão nav correspondente
   const navBtn=document.getElementById('snav-'+section);
   if(navBtn){
@@ -7029,6 +7030,7 @@ function settingsNav(section){
   if(section==='gestao-lojas') setTimeout(()=>renderGestaoLojas(), 50);
   if(section==='ficha-tecnica-cfg') setTimeout(()=>renderFichaTecnicaCfg(), 50);
   if(section==='produtos' || section==='categorias-cfg') setTimeout(()=>renderProdutosCfg(), 50);
+  if(section==='categorias-cfg') setTimeout(()=>renderCategoriasCfg(), 80);
   if(section==='processos') setTimeout(()=>renderProcessos(), 50);
 }
 
@@ -15837,76 +15839,5 @@ window.renderCategoriasCfg    = renderCategoriasCfg;
 window.resetCategoriaForm     = resetCategoriaForm;
 window.preencherSelectCategorias = preencherSelectCategorias;
 
-// ── Injetar card de Categorias dentro da aba Produto se não existir ──
-// Roda após o DOM estar pronto para garantir que scontent-produtos existe
-(function injetarCardCategorias(){
-  function _inject(){
-    // Já existe? Não faz nada
-    if(document.getElementById('categorias-card-cfg')) return;
+// ── Card de Categorias agora está em scontent-categorias-cfg no HTML (não injetado dinamicamente) ──
 
-    // Procurar o container da aba produtos
-    const host = document.getElementById('scontent-produtos')
-      || document.querySelector('[data-section="produtos"]')
-      || document.querySelector('#panel-configuracoes [data-tab="produtos"]');
-    if(!host) return;
-
-    const card = document.createElement('div');
-    card.id = 'categorias-card-cfg';
-    card.style.cssText = 'background:var(--s1);border:1px solid var(--border);border-radius:12px;padding:20px 22px;margin-top:20px';
-    card.innerHTML = `
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px">
-        <div>
-          <div style="font-size:14px;font-weight:700;color:var(--text)">Categorias <span id="cat-count" style="font-size:11px;color:var(--text3);font-weight:400">(0)</span></div>
-          <div style="font-size:11px;color:var(--text3);margin-top:2px">Organize seus produtos por categoria</div>
-        </div>
-        <button onclick="salvarCategoria()" style="background:var(--orange);color:#fff;border:none;border-radius:8px;padding:7px 16px;font-size:12px;font-weight:600;cursor:pointer;font-family:'Space Grotesk',sans-serif">💾 Salvar categoria</button>
-      </div>
-      <input type="hidden" id="cat-edit-id" value="">
-      <div style="display:grid;grid-template-columns:1fr 100px 160px;gap:10px;margin-bottom:14px;align-items:end">
-        <div>
-          <label style="font-size:10px;color:var(--text3);display:block;margin-bottom:4px;text-transform:uppercase;letter-spacing:.7px">Nome da categoria</label>
-          <input id="cat-nome-inp" type="text" placeholder="Ex: Grãos, Temperos, Doces..." style="width:100%;box-sizing:border-box;background:var(--s2);border:1px solid var(--border);border-radius:7px;padding:8px 10px;color:var(--text);font-size:13px;font-family:'Space Grotesk',sans-serif">
-        </div>
-        <div>
-          <label style="font-size:10px;color:var(--text3);display:block;margin-bottom:4px;text-transform:uppercase;letter-spacing:.7px">Ordem</label>
-          <input id="cat-ordem-inp" type="number" min="0" placeholder="0" style="width:100%;box-sizing:border-box;background:var(--s2);border:1px solid var(--border);border-radius:7px;padding:8px 10px;color:var(--text);font-size:13px;font-family:'Space Grotesk',sans-serif">
-        </div>
-        <div>
-          <label style="font-size:10px;color:var(--text3);display:block;margin-bottom:4px;text-transform:uppercase;letter-spacing:.7px">Status</label>
-          <select id="cat-ativo-inp" style="width:100%;box-sizing:border-box;background:var(--s2);border:1px solid var(--border);border-radius:7px;padding:8px 10px;color:var(--text);font-size:13px;font-family:'Space Grotesk',sans-serif">
-            <option value="true">Ativa</option>
-            <option value="false">Inativa</option>
-          </select>
-        </div>
-      </div>
-      <div style="display:flex;gap:8px;margin-bottom:12px">
-        <input id="cat-search-inp" type="text" placeholder="Filtrar categorias..." oninput="renderCategoriasCfg()" style="flex:1;background:var(--s2);border:1px solid var(--border);border-radius:7px;padding:7px 10px;color:var(--text);font-size:12px;font-family:'Space Grotesk',sans-serif">
-        <button onclick="resetCategoriaForm()" style="background:none;border:1px solid var(--border);border-radius:7px;padding:7px 12px;font-size:11px;color:var(--text2);cursor:pointer;font-family:'Space Grotesk',sans-serif">✕ Limpar</button>
-      </div>
-      <div id="cat-list" style="min-height:40px"></div>`;
-    host.appendChild(card);
-
-    // Carregar dados após injetar
-    if(typeof carregarCategoriasCached === 'function'){
-      carregarCategoriasCached().then(()=>{ renderCategoriasCfg(); }).catch(()=>{});
-    }
-  }
-
-  // Tentar imediatamente e depois no DOMContentLoaded
-  if(document.readyState === 'loading'){
-    document.addEventListener('DOMContentLoaded', _inject);
-  } else {
-    setTimeout(_inject, 300);
-  }
-
-  // Injetar também quando settingsNav for chamada para a aba produtos
-  const _origSettingsNav = typeof settingsNav === 'function' ? settingsNav : null;
-  if(_origSettingsNav){
-    window.settingsNav = function(section){
-      _origSettingsNav(section);
-      if(section === 'produtos' || section === 'categorias-cfg'){
-        setTimeout(_inject, 100);
-      }
-    };
-  }
-})();
