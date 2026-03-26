@@ -1709,11 +1709,10 @@ function getProdInfo(rec){
   if(rec.prodCod){
     const byCode=all.find(x=>x.cod===rec.prodCod);
     if(byCode) {
-      // Check if machine has specific velocity for this product
       const maqData = getMaquinaData(rec.maquina);
       if (maqData && Array.isArray(maqData.produtosCompativeis)) {
-        const produtoEntry = maqData.produtosCompativeis.find(p => 
-          p.produto === byCode.descricao || 
+        const produtoEntry = maqData.produtosCompativeis.find(p =>
+          p.produto === byCode.descricao ||
           byCode.descricao.includes(p.produto) ||
           p.produto.includes(byCode.descricao)
         );
@@ -1727,11 +1726,10 @@ function getProdInfo(rec){
   // Priority 2: match by machine + product name prefix
   const byName=all.find(x=>x.maquina===rec.maquina&&rec.produto&&rec.produto.startsWith(x.descricao.substring(0,22)));
   if(byName) {
-    // Check for specific velocity in machine
     const maqData = getMaquinaData(rec.maquina);
     if (maqData && Array.isArray(maqData.produtosCompativeis)) {
-      const produtoEntry = maqData.produtosCompativeis.find(p => 
-        p.produto === byName.descricao || 
+      const produtoEntry = maqData.produtosCompativeis.find(p =>
+        p.produto === byName.descricao ||
         byName.descricao.includes(p.produto) ||
         p.produto.includes(byName.descricao)
       );
@@ -2134,7 +2132,13 @@ async function saveForm(){
     obs:document.getElementById('f-obs').value.trim(),
     updatedAt:new Date().toISOString()
   };
-  if(eid) obj.id=eid;
+  if(eid){
+    obj.id=eid;
+  } else {
+    // Novo registro: sortOrder baseado no timestamp garante que ele fique
+    // no final da fila da máquina, respeitando a ordem de inserção.
+    obj.sortOrder = Date.now();
+  }
 
   try {
     await dbPut(obj);
@@ -2619,14 +2623,13 @@ function buildSchedule(monday){
         const startPct=dayCapMin>0?(absStartMin/dayCapMin)*100:0;
         const endPct=dayCapMin>0?((absStartMin+useMin)/dayCapMin)*100:0;
 
-        const caixasExatas=cxPerMin*useMin;
+        const caixasHoje=Math.round(cxPerMin*useMin);
         segments.push({
           date:dateStr(days[snap.dayIdx]),
           dayIdx:snap.dayIdx,
           turnoIdx:blk.turnoIdx,
           turnoLabel:blk.label,
-          caixasExatas,
-          caixasNoDia:Math.floor(caixasExatas),
+          caixasNoDia:caixasHoje,
           hrsNoDia:useMin/60,
           startPct,
           endPct,
@@ -2652,7 +2655,6 @@ function buildSchedule(monday){
         if(cursor.blkIdx>=curBlks.length){cursor.dayIdx++;cursor.blkIdx=0;cursor.usedMin=0;}
       }
 
-      distribuirCaixasExatas(segments, cxRestanteRec);
       scheduled.push({rec, segments, setupMin: isOverflowRecord ? 0 : setupMin, setupSegments, isOverflow: isOverflowRecord, cxRestante: cxRestanteRec});
     }
 
@@ -2782,9 +2784,10 @@ function renderGanttSemanal(){
       <span style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block">${r.produto.substring(0,30)}</span>
     </div>`).join('');
 
-  // COL WIDTHS
-  const MAQ_W=72, LABEL_W=320, QTY_W=48, TEMPO_W=52, SETUP_W=52, TOTMAQ_W=68, DQTY_W=36;
-  const gridCols=`${MAQ_W}px ${LABEL_W}px ${QTY_W}px ${TEMPO_W}px ${SETUP_W}px ${TOTMAQ_W}px repeat(7,1fr) repeat(7,${DQTY_W}px)`;
+  // COL WIDTHS — LABEL_W é ajustável pelo usuário (salvo no localStorage)
+  const MAQ_W=72, QTY_W=48, TEMPO_W=52, SETUP_W=52, TOTMAQ_W=68, OBS_W=140, DQTY_W=36;
+  const LABEL_W = parseInt(localStorage.getItem('gantt-label-width') || '280');
+  const gridCols=`${MAQ_W}px ${LABEL_W}px ${QTY_W}px ${TEMPO_W}px ${SETUP_W}px ${TOTMAQ_W}px ${OBS_W}px repeat(7,1fr) repeat(7,${DQTY_W}px)`;
 
   // Pre-calculate total SCHEDULED hours per machine for THIS WEEK only
   // Uses the segments from buildSchedule which already distribute by shift block
@@ -2814,11 +2817,16 @@ function renderGanttSemanal(){
   // ── Header row ──
   html+=`<div class="gantt-head-row" style="grid-template-columns:${gridCols}">
     <div class="g-head-label" style="font-size:9px">Máquina</div>
-    <div class="g-head-label">Produto</div>
+    <div class="g-head-label" style="position:relative" id="gantt-col-produto">Produto
+      <div id="gantt-label-resizer" style="position:absolute;right:0;top:0;width:6px;height:100%;cursor:col-resize;display:flex;align-items:center;justify-content:center;z-index:10" title="Arraste para redimensionar">
+        <div style="width:2px;height:60%;background:var(--border);border-radius:2px"></div>
+      </div>
+    </div>
     <div class="g-head-label" style="font-size:9px">Qtd<br>cx</div>
     <div class="g-head-label" style="font-size:9px">Tempo<br>h</div>
     <div class="g-head-label" style="font-size:9px">Set Up<br>h</div>
-    <div class="g-head-label" style="font-size:9px">H.<br>Prog.</div>`;
+    <div class="g-head-label" style="font-size:9px">H.<br>Prog.</div>
+    <div class="g-head-label" style="font-size:9px">Obser-<br>vação</div>`;
   days.forEach(d=>{
     const isToday=dateStr(d)===today;
     const isWknd=hoursOnDay(d)===0;
@@ -2870,14 +2878,18 @@ function renderGanttSemanal(){
 
     let firstRowOfMaq=true;
 
-    // ── CONSOLIDAR por produto: agrupar todos os entries do mesmo produto
-    // em uma única entrada antes de renderizar — 1 linha por produto por máquina.
+    // ── CONSOLIDAR por produto: agrupar entries do mesmo produto em uma linha.
+    // Registros manuais com obs diferente ficam em linhas separadas.
+    // Registros automáticos (obs vazia) sempre agrupam por produto apenas.
     const prodMap = {};
     for(const entry of entries){
-      const pk = (entry.rec.produto || '').trim().toLowerCase();
+      const obs = (entry.rec.obs || '').trim();
+      const prodNorm = (entry.rec.produto || '').trim().toLowerCase();
+      const pk = prodNorm;
       if(!prodMap[pk]){
         prodMap[pk] = {
           produto:    entry.rec.produto,
+          obs:        obs,
           maquina:    entry.rec.maquina,
           color:      colorMap[entry.rec.id],
           qntCaixas:  0,
@@ -2894,7 +2906,7 @@ function renderGanttSemanal(){
     const prodEntries = Object.values(prodMap);
 
     for(const prodEntry of prodEntries){
-      const { produto, maquina: recMaq, color, qntCaixas, setupMin, segments, recs } = prodEntry;
+      const { produto, obs, maquina: recMaq, color, qntCaixas, setupMin, segments, recs } = prodEntry;
 
       // Calcular horas de produção totais (soma de todos os segmentos)
       const prodHrs = segments.reduce((a, sg) => a + (sg.hrsNoDia || 0), 0);
@@ -2906,7 +2918,7 @@ function renderGanttSemanal(){
       html+=`<div class="g-col-maq"><span class="g-col-maq-txt">${recMaq}</span></div>`;
 
       // Produto label col
-      html+=`<div class="g-label"><strong title="${produto}">${produto}</strong></div>`;
+      html+=`<div class="g-label"><strong title="${produto}${obs?' — '+obs:''}">${produto}</strong></div>`;
 
       // Qtd cx col — soma de todos os registros
       html+=`<div class="g-col-qty"><div class="g-col-qty-txt">${qntCaixas}<br><span style="font-size:9px;color:var(--text3);font-weight:400">cx</span></div></div>`;
@@ -2926,6 +2938,11 @@ function renderGanttSemanal(){
       const weekProgTitle=firstRowOfMaq?`Programado: ${fmtHrs(maqTotH)} / Disponível: ${maqCapH}h`:'';
       html+=`<div style="display:flex;align-items:center;justify-content:center;border-left:2px solid var(--border2);background:var(--s1);font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:700;color:${firstRowOfMaq?weekCapColor:'var(--text4)'};padding:4px 2px;text-align:center" title="${weekProgTitle}">${weekProgStr}</div>`;
       firstRowOfMaq=false;
+
+      // Obs / Destino col
+      html+=`<div style="display:flex;align-items:center;border-left:1px solid var(--border);background:var(--s1);padding:4px 6px;overflow:hidden">
+        ${obs ? `<span style="font-size:10px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;width:100%;display:block" title="${obs}">${obs}</span>` : ''}
+      </div>`;
 
       // ── Day bar cells: render per-shift bars ──
       for(let di=0;di<7;di++){
@@ -2959,9 +2976,10 @@ function renderGanttSemanal(){
             const cx=seg.caixasNoDia;
             const hrsLabel=fmtHrs(seg.hrsNoDia);
             const turnoTip=seg.turnoLabel?` · ${seg.turnoLabel}`:'';
+            const obsTip=obs?` — ${obs}`:'';
             html+=`<div class="g-bar" style="left:${leftPct}%;width:${widthPct}%;background:${color};opacity:0.9;position:absolute;top:15%;height:70%"
-              title="${produto}${turnoTip} · ${cx} cx · ${hrsLabel}">
-              <div class="g-bar-tip">${produto.substring(0,40)}<br>${cx} cx · ${hrsLabel}${seg.turnoLabel?' · '+seg.turnoLabel:''}</div>
+              title="${produto}${obsTip}${turnoTip} · ${cx} cx · ${hrsLabel}">
+              <div class="g-bar-tip">${produto.substring(0,40)}${obs?'<br><span style=\"font-size:9px;opacity:.8\">'+obs+'</span>':''}<br>${cx} cx · ${hrsLabel}${seg.turnoLabel?' · '+seg.turnoLabel:''}</div>
             </div>`;
           });
           html+=`</div>`;
@@ -2992,6 +3010,35 @@ function renderGanttSemanal(){
 
   document.getElementById('gantt-table').innerHTML=html;
   document.getElementById('gantt-summary').innerHTML='';
+
+  // ── Resize da coluna Produto do Gantt ──
+  (function initGanttLabelResizer(){
+    const resizer = document.getElementById('gantt-label-resizer');
+    if(!resizer) return;
+    resizer.addEventListener('mousedown', function(e){
+      e.preventDefault();
+      const startX = e.clientX;
+      const startW = parseInt(localStorage.getItem('gantt-label-width') || '280');
+      resizer.querySelector('div').style.background = 'var(--cyan)';
+      function onMove(ev){
+        const delta = ev.clientX - startX;
+        const newW = Math.max(120, Math.min(520, startW + delta));
+        localStorage.setItem('gantt-label-width', newW);
+        const MAQ_W=72, QTY_W=48, TEMPO_W=52, SETUP_W=52, TOTMAQ_W=68, OBS_W=140, DQTY_W=36;
+        const newGrid=`${MAQ_W}px ${newW}px ${QTY_W}px ${TEMPO_W}px ${SETUP_W}px ${TOTMAQ_W}px ${OBS_W}px repeat(7,1fr) repeat(7,${DQTY_W}px)`;
+        document.querySelectorAll('.gantt-row, .gantt-head-row').forEach(el=>{
+          el.style.gridTemplateColumns = newGrid;
+        });
+      }
+      function onUp(){
+        resizer.querySelector('div').style.background = 'var(--border)';
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+      }
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+  })();
 }
 
 // ================================================================
@@ -3444,7 +3491,7 @@ function buildInsumosSchedule(monday){
         insumoRows.push({nome:i.n,cat:i.c,days:dayQtys,total:dayQtys.reduce((a,b)=>a+b,0)});
       }
       if(insumoRows.some(r=>r.total>0)){
-        maqData.push({produto:rec.produto,insumos:insumoRows,totalCaixas:segments.reduce((a,s)=>a+(s.caixasNoDia||0),0)});
+        maqData.push({produto:rec.produto,insumos:insumoRows,totalCaixas:rec.qntCaixas});
       }
     }
     if(maqData.length) result.byMaq[maq]=maqData;
@@ -4135,16 +4182,24 @@ function loadFichaTecnica(input){
         const wsIns=wb.Sheets[insSheet];
         const insRows=XLSX.utils.sheet_to_json(wsIns,{header:1,defval:''}).slice(1);
         insRows.forEach(r=>{
+          // Colunas: r[0]=produto_key, r[1]=desc_produto, r[2]=desc_insumo, r[3]=qty, r[4]=status
+          const statusIns=String(r[4]||'').toUpperCase().trim();
+          if(statusIns==='DESATIVADO') return; // ignora insumos desativados
           const prodDesc=String(r[1]||'').trim();
           const insDesc=String(r[2]||'').trim();
-          const qty=parseFloat(r[3])||0;
+          const qty=parseFloat(String(r[3]||'').replace(',','.'))||0;
           if(prodDesc&&insDesc&&qty){
             if(!insByProd[prodDesc]) insByProd[prodDesc]=[];
             insByProd[prodDesc].push({insumo:insDesc,qty});
           }
         });
       }
-      fichaTecnicaData=rows.slice(1).filter(r=>r[0]&&r[1]&&!isNaN(parseInt(r[0]))).map(r=>({
+      // Colunas Base_Maquina_Tempo: r[0]=Cód, r[1]=Descrição, r[2]=UNID, r[3]=KG/FD, r[4]=PC/MIN, r[5]=Maquina, r[6]=status
+      fichaTecnicaData=rows.slice(1).filter(r=>{
+        if(!r[0]||!r[1]||isNaN(parseInt(r[0]))) return false;
+        const statusProd=String(r[6]||'').toUpperCase().trim();
+        return statusProd!=='DESATIVADO'; // só importa produtos ATIVO ou sem status definido
+      }).map(r=>({
         cod:parseInt(r[0])||0,
         desc:String(r[1]).trim(),
         unid:parseInt(r[2])||1,
@@ -7210,7 +7265,7 @@ async function carregarProdutosFirestore() {
     if (!snap.empty) {
       PRODUTOS = snap.docs
         .map(d => normalizeProdutoFirestore({ ...d.data(), _id: d.id }))
-        .filter(p => p.ativo !== false && p.descricao);
+        .filter(p => p.descricao);
       console.log('[PRODUTOS] Carregados do Firestore:', PRODUTOS.length);
     } else {
       console.log('[PRODUTOS] Nenhum produto no Firestore. Use Configurações → Produtos para importar.');
@@ -7507,78 +7562,72 @@ function editarProduto(cod, maquina, descricao) {
 }
 
 async function excluirProduto(cod, maquina, descricao) {
-  if (!confirm(`Tem certeza que deseja excluir o produto:\n\n${descricao} (${cod}) - ${maquina}\n\nEsta ação não pode ser desfeita.`)) {
-    return;
-  }
-  
+  if (!confirm('Tem certeza que deseja excluir o produto:\n\n' + descricao + ' (' + cod + ')\n\nEsta acao nao pode ser desfeita.')) return;
+
   try {
-    // Verificar se há registros de produção vinculados
-    const registrosVinculados = records.filter(r => String(r.codProduto) === String(cod) && r.maquina === maquina);
+    const registrosVinculados = records.filter(r => String(r.codProduto) === String(cod) || String(r.cod) === String(cod));
     if (registrosVinculados.length > 0) {
-      if (!confirm(`ATENÇÃO: Este produto possui ${registrosVinculados.length} registro(s) de produção vinculados.\n\nExcluir o produto pode causar inconsistências no sistema.\n\nDeseja continuar mesmo assim?`)) {
-        return;
-      }
+      if (!confirm('ATENCAO: Este produto possui ' + registrosVinculados.length + ' registro(s) de producao vinculados.\n\nDeseja continuar mesmo assim?')) return;
     }
-    
-    // Remover produto dos arrays globais
-    let removidoSucesso = false;
 
-    // Buscar todos os registros com este cod (inclui _id do Firestore)
+    const codStr = String(cod);
+    const codNum = parseInt(cod);
+
+    // 1. Apagar do Firestore — tenta por _id primeiro, depois query por cod
     const todosOsProdutos = getAllProdutos();
-    const produtosParaExcluir = todosOsProdutos.filter(p =>
-      String(p.cod) === String(cod) && p.maquina === maquina
-    );
+    const comId = todosOsProdutos.filter(p => String(p.cod) === codStr && p._id);
 
-    // Tentar remover do array de produtos extras (localStorage)
-    const extraIndex = PRODUTOS_EXTRA.findIndex(p => String(p.cod) === String(cod) && p.maquina === maquina);
-    if (extraIndex >= 0) {
-      PRODUTOS_EXTRA.splice(extraIndex, 1);
-      localStorage.setItem('produtos_extra', JSON.stringify(PRODUTOS_EXTRA));
-      removidoSucesso = true;
-    }
-
-    // Tentar remover do array global de produtos (Firestore cache)
-    if (typeof window.PRODUTOS !== 'undefined' && Array.isArray(window.PRODUTOS)) {
-      const globalIndex = window.PRODUTOS.findIndex(p => String(p.cod) === String(cod) && p.maquina === maquina);
-      if (globalIndex >= 0) {
-        window.PRODUTOS.splice(globalIndex, 1);
-        removidoSucesso = true;
+    if (comId.length > 0) {
+      await Promise.all(comId.map(p => deleteDoc(lojaDoc('produtos', p._id))));
+    } else {
+      const snap = await getDocs(query(lojaCol('produtos'), where('cod', '==', codNum)));
+      if (!snap.empty) {
+        await Promise.all(snap.docs.map(d => deleteDoc(lojaDoc('produtos', d.id))));
       }
     }
 
-    // Excluir do Firestore usando _id quando disponível, ou buscar por cod como fallback
-    const firestoreMatches = produtosParaExcluir.filter(p => p._id);
-    if (firestoreMatches.length > 0) {
-      firestoreMatches.forEach(p => {
-        deleteDoc(lojaDoc('produtos', p._id)).catch(e => console.warn('Firestore delete err:', p._id, e));
-      });
-      removidoSucesso = true;
-    } else {
-      // Fallback: buscar no Firestore pelo cod caso _id não esteja em memória
-      try {
-        const snap = await getDocs(query(lojaCol('produtos'), where('cod', '==', parseInt(cod))));
-        snap.docs.forEach(d => {
-          const data = d.data();
-          if (!maquina || data.maquina === maquina) {
-            deleteDoc(lojaDoc('produtos', d.id)).catch(e => console.warn('Firestore delete fallback err:', d.id, e));
-            removidoSucesso = true;
-          }
-        });
-      } catch(e) { console.warn('Erro ao buscar produto no Firestore para exclusão:', e); }
+    // 2. Apagar ficha tecnica vinculada
+    try {
+      const snapFicha = await getDocs(query(lojaCol('fichaTecnica'), where('cod', '==', codNum)));
+      if (!snapFicha.empty) {
+        await Promise.all(snapFicha.docs.map(d => deleteDoc(lojaDoc('fichaTecnica', d.id))));
+      }
+    } catch(ef) { console.warn('Erro ao apagar ficha:', ef); }
+
+    // 3. Limpar memoria — remove TODOS os registros com esse cod
+    if (Array.isArray(window.PRODUTOS)) {
+      for (let i = window.PRODUTOS.length - 1; i >= 0; i--) {
+        if (String(window.PRODUTOS[i].cod) === codStr) window.PRODUTOS.splice(i, 1);
+      }
+    }
+    if (typeof PRODUTOS_EXTRA !== 'undefined' && Array.isArray(PRODUTOS_EXTRA)) {
+      for (let i = PRODUTOS_EXTRA.length - 1; i >= 0; i--) {
+        if (String(PRODUTOS_EXTRA[i].cod) === codStr) PRODUTOS_EXTRA.splice(i, 1);
+      }
+      localStorage.setItem('produtos_extra', JSON.stringify(PRODUTOS_EXTRA));
+    }
+    if (typeof fichaTecnicaData !== 'undefined' && Array.isArray(fichaTecnicaData)) {
+      for (let i = fichaTecnicaData.length - 1; i >= 0; i--) {
+        if (parseInt(fichaTecnicaData[i].cod) === codNum) fichaTecnicaData.splice(i, 1);
+      }
+    }
+    if (typeof FICHA_TECNICA !== 'undefined' && Array.isArray(FICHA_TECNICA)) {
+      for (let i = FICHA_TECNICA.length - 1; i >= 0; i--) {
+        if (parseInt(FICHA_TECNICA[i].cod) === codNum) FICHA_TECNICA.splice(i, 1);
+      }
     }
 
+    // 4. Recarregar do Firestore e re-renderizar
     invalidateCache('produtos');
-    if (removidoSucesso) {
-      toast(`Produto "${descricao}" excluído com sucesso`, 'ok');
-      registrarAuditoria('PRODUTO_EXCLUIDO', { cod, descricao, maquina, registrosVinculados: registrosVinculados.length });
-      renderProdutosCfg();
-    } else {
-      toast('Produto não encontrado. Recarregue a página e tente novamente.', 'warn');
-    }
-    
+    await carregarProdutosCached(true);
+    renderProdutosCfg();
+
+    toast('Produto "' + descricao + '" excluido', 'ok');
+    registrarAuditoria('PRODUTO_EXCLUIDO', { cod, descricao, maquina });
+
   } catch(e) {
     console.error('Erro ao excluir produto:', e);
-    toast('Erro ao excluir produto: ' + e.message, 'err');
+    toast('Erro ao excluir: ' + e.message, 'err');
   }
 }
 
@@ -7972,16 +8021,113 @@ function downloadProdTemplate(e) {
   XLSX.writeFile(wb, 'template_produtos_e_maquinas.xlsx');
 }
 
-function downloadMaqTemplate(e) {
+async function downloadMaqTemplate(e) {
   e.preventDefault();
-  const ws = XLSX.utils.aoa_to_sheet([
-    ['nome','codigo','tipo','setor','status','undMin','eficiencia','hTurno','nTurnos','setup','produtos'],
-    ['SELGRON 01','SEL01','Empacotadeira','Embalagem','ativa',46.75,100,8,1,0,'POLVILHO 500G, COCO 100G'],
-    ['ALFATECK 14','ALF14','Empacotadeira','Embalagem','ativa',28.05,100,8,1,0,'FARINHA 1KG, BICARBONATO 250G']
-  ]);
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'Maquinas');
-  XLSX.writeFile(wb, 'template_maquinas_simples.xlsx');
+  await _baixarTemplateCompleto();
+}
+
+async function _baixarTemplateCompleto() {
+  try {
+    toast('Gerando template com dados do sistema...', 'ok');
+
+    function cabecalho(titulo, aviso, headers) {
+      return [[titulo], [aviso], headers];
+    }
+
+    // ── Aba Maquinas ──────────────────────────────────────────────
+    const maqData = window.MAQUINAS_DATA || {};
+    const rowsMaq = Object.values(maqData).sort((a,b) => (a.nome||'').localeCompare(b.nome||'')).map(m => [
+      m.nome || '',
+      m.codigo || '',
+      m.tipo || 'Empacotadeira',
+      m.setor || 'Embalagem',
+      m.status || 'ativa',
+      m.pcMin || 0,
+      m.eficiencia || 100,
+      m.hTurno || 8,
+      m.nTurnos || 1,
+      m.tempoSetupPadrao || 0,
+      Array.isArray(m.produtosCompativeis) ? m.produtosCompativeis.map(p => p.produto).join(', ') : ''
+    ]);
+    // fallback: se MAQUINAS_DATA vazio, usa MAQUINAS array
+    if (!rowsMaq.length && Array.isArray(window.MAQUINAS)) {
+      window.MAQUINAS.forEach(nome => rowsMaq.push([nome,'',  'Empacotadeira','Embalagem','ativa',0,100,8,1,0,'']));
+    }
+    const hdrMaq = ['nome','codigo','tipo','setor','status','undMin','eficiencia','hTurno','nTurnos','setup','produtos'];
+    const wsMaq = XLSX.utils.aoa_to_sheet([
+      ...cabecalho('CADASTRO DE MÁQUINAS',
+        'Uma linha por máquina. A coluna "produtos" lista os produtos compatíveis separados por vírgula.',
+        hdrMaq),
+      ...rowsMaq
+    ]);
+    wsMaq['!cols'] = [{wch:26},{wch:12},{wch:16},{wch:14},{wch:10},{wch:10},{wch:12},{wch:10},{wch:10},{wch:10},{wch:80}];
+
+    // ── Aba Produtos ──────────────────────────────────────────────
+    const produtos = getAllProdutos ? getAllProdutos() : (window.PRODUTOS || []);
+    const hdrProd = ['cod','descricao','unid','pc_min','maquina','status'];
+    const rowsProd = produtos.map(p => [
+      p.cod, p.descricao, p.unid, p.pc_min, p.maquina,
+      p.produtoAtivo !== false ? 'ATIVO' : 'DESATIVADO'
+    ]);
+    const wsProd = XLSX.utils.aoa_to_sheet([
+      ...cabecalho('PRODUTOS — Base Máquina x Tempo',
+        'Preencha cod, descricao, unid, pc_min e maquina. Status: ATIVO ou DESATIVADO.',
+        hdrProd),
+      ...rowsProd
+    ]);
+    wsProd['!cols'] = [{wch:10},{wch:62},{wch:10},{wch:12},{wch:26},{wch:12}];
+
+    // ── Aba Insumos ───────────────────────────────────────────────
+    const fichas = (typeof fichaTecnicaData !== 'undefined' ? fichaTecnicaData : null) || (typeof FICHA_TECNICA !== 'undefined' ? FICHA_TECNICA : []);
+    const hdrIns = ['cod_produto','desc_produto','insumo','qty','status'];
+    const rowsIns = [];
+    fichas.forEach(ficha => {
+      const prod = produtos.find(p => parseInt(p.cod) === parseInt(ficha.cod));
+      const status = prod && prod.produtoAtivo === false ? 'DESATIVADO' : 'ATIVO';
+      (ficha.insumos || []).forEach(ins => {
+        rowsIns.push([ficha.cod, ficha.desc, ins.insumo, ins.qty, status]);
+      });
+    });
+    const wsIns = XLSX.utils.aoa_to_sheet([
+      ...cabecalho('INSUMOS — Consumo por Produto',
+        'Uma linha por insumo por produto. qty = quantidade consumida por caixa. Status: ATIVO ou DESATIVADO.',
+        hdrIns),
+      ...rowsIns
+    ]);
+    wsIns['!cols'] = [{wch:14},{wch:62},{wch:56},{wch:14},{wch:12}];
+
+    // ── Aba Setup ─────────────────────────────────────────────────
+    const hdrSetup = ['maquina','de','para','minutos'];
+    let rowsSetup = [];
+    try {
+      const snapSetup = await getDocs(lojaCol('setup_maquinas'));
+      rowsSetup = snapSetup.docs.map(d => {
+        const s = d.data();
+        return [s.maquina || '', s.produto_origem || '', s.produto_destino || '', s.tempo_setup || 0];
+      });
+    } catch(e) { console.warn('Erro ao ler setup:', e); }
+    const wsSetup = XLSX.utils.aoa_to_sheet([
+      ...cabecalho('SETUP — Tempo de troca entre produtos por máquina',
+        'Cada linha: tempo (min) para trocar do Produto DE para o Produto PARA em uma máquina.',
+        hdrSetup),
+      ...rowsSetup
+    ]);
+    wsSetup['!cols'] = [{wch:30},{wch:56},{wch:56},{wch:18}];
+
+    // ── Montar e baixar ───────────────────────────────────────────
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, wsMaq,   'Maquinas');
+    XLSX.utils.book_append_sheet(wb, wsProd,  'Produtos');
+    XLSX.utils.book_append_sheet(wb, wsIns,   'Insumos');
+    XLSX.utils.book_append_sheet(wb, wsSetup, 'Setup');
+
+    const hoje = new Date().toISOString().slice(0, 10);
+    XLSX.writeFile(wb, `template_importacao_${hoje}.xlsx`);
+    toast(`✅ Template gerado: ${rowsMaq.length} máquinas · ${rowsProd.length} produtos · ${rowsIns.length} insumos · ${rowsSetup.length} setups`, 'ok');
+  } catch(err) {
+    toast('Erro ao gerar template: ' + err.message, 'err');
+    console.error('[downloadMaqTemplate]', err);
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -8004,204 +8150,253 @@ async function importarArquivoPadrao(input) {
     try {
       toast('Lendo arquivo...', 'ok');
       const wb = XLSX.read(e.target.result, { type: 'binary' });
+      const names = wb.SheetNames.map(s => s.trim());
 
-      // ── Localizar abas pelo nome ─────────────────────────────────────
-      const sheetBase = wb.SheetNames.find(s => s.includes('Base_Maquina')) || wb.SheetNames[0];
-      const sheetConsumo = wb.SheetNames.find(s => s.includes('Consumo'));
+      const isNovoFormato =
+        names.some(s => /^Produtos$/i.test(s)) ||
+        names.some(s => /^Insumos$/i.test(s))  ||
+        names.some(s => /^Setup$/i.test(s));
 
-      if (!sheetBase) { toast('Aba "Base_Maquina_Tempo" não encontrada no arquivo.', 'err'); return; }
+      function lerAba(nomeRegex) {
+        const nome = wb.SheetNames.find(s => nomeRegex.test(s.trim()));
+        if (!nome) return [];
+        return XLSX.utils.sheet_to_json(wb.Sheets[nome], { header: 1, defval: '' });
+      }
 
-      // ── Ler aba Base_Maquina_Tempo ───────────────────────────────────
-      // Colunas: A=Cód. B=Descrição C=UNID D=KG/FD(ignorar) E=PC/MIN F=Maquina G=status
-      const wsBase = wb.Sheets[sheetBase];
-      const rowsBase = XLSX.utils.sheet_to_json(wsBase, { header: 1, defval: '' });
-      const dadosProdutos = rowsBase.slice(1)
-        .filter(r => r[0] && r[1] && !isNaN(parseInt(r[0])))
-        .map(r => ({
-          cod:       parseInt(r[0]) || 0,
-          descricao: String(r[1]).trim(),
-          unid:      parseInt(r[2]) || 1,
-          // r[3] = KG/FD — ignorado (fórmula Excel)
-          pc_min:    parseFloat(r[4]) || 0,
-          maquina:   String(r[5] || 'MANUAL').trim().toUpperCase(),
-          produtoAtivo: _parseAtivo(r[6]),
-          ativo:     _parseAtivo(r[6])
-        }));
+      // ── PASSO 1: Ler e validar todos os dados do arquivo ────────────
+      let dadosProdutos = [], insumosPorProduto = {}, setupEntries = [], maquinasEntries = [];
 
-      if (!dadosProdutos.length) { toast('Nenhum produto válido encontrado na aba Base_Maquina_Tempo.', 'err'); return; }
+      if (isNovoFormato) {
+        // Produtos (aba linha 1=titulo, 2=aviso, 3=header, dados da linha 4)
+        const rowsProd = lerAba(/^Produtos$/i);
+        dadosProdutos = rowsProd.slice(3)
+          .filter(r => r[0] && r[1] && !isNaN(parseInt(r[0])))
+          .map(r => ({
+            cod:          parseInt(r[0]) || 0,
+            descricao:    String(r[1]).trim(),
+            unid:         parseInt(r[2]) || 1,
+            pc_min:       parseFloat(r[3]) || 0,
+            maquina:      String(r[4] || 'MANUAL').trim().toUpperCase(),
+            produtoAtivo: _parseAtivo(r[5]),
+            ativo:        _parseAtivo(r[5])
+          }));
 
-      // ── Ler aba Consumo_Insumos ──────────────────────────────────────
-      // Colunas: A=produto_key(ignorar) B=DESCRIÇÃO PROD ACABADO C=DESCRIÇÃO INSUMOS D=qty E=status
-      let insumosPorProduto = {};
-      if (sheetConsumo) {
-        const wsConsumo = wb.Sheets[sheetConsumo];
-        const rowsConsumo = XLSX.utils.sheet_to_json(wsConsumo, { header: 1, defval: '' });
-        rowsConsumo.slice(1).forEach(r => {
+        // Insumos
+        const rowsIns = lerAba(/^Insumos$/i);
+        rowsIns.slice(3).forEach(r => {
+          if (!_parseAtivo(r[4])) return;
           const prodNome = String(r[1] || '').trim();
           const insNome  = String(r[2] || '').trim();
           const qty      = parseFloat(r[3]) || 0;
-          const ativo    = _parseAtivo(r[4]);
           if (!prodNome || !insNome) return;
           if (!insumosPorProduto[prodNome]) insumosPorProduto[prodNome] = [];
-          insumosPorProduto[prodNome].push({ insumo: insNome, qty, ativo });
+          insumosPorProduto[prodNome].push({ insumo: insNome, qty });
         });
+
+        // Setup
+        const rowsSetup = lerAba(/^Setup$/i);
+        rowsSetup.slice(3).forEach(r => {
+          const maq  = String(r[0] || '').trim();
+          const de   = String(r[1] || '').trim();
+          const para = String(r[2] || '').trim();
+          const mins = parseFloat(r[3]) || 0;
+          if (maq && de && para && mins > 0) setupEntries.push({ maquina: maq, de, para, minutos: mins });
+        });
+
+        // Maquinas
+        const rowsMaq = lerAba(/^Maquinas$/i);
+        rowsMaq.slice(3).forEach(r => {
+          const nome = String(r[0] || '').trim();
+          if (!nome) return;
+          const prodListStr = String(r[10] || '');
+          maquinasEntries.push({
+            nome,
+            codigo:     String(r[1] || '').trim(),
+            tipo:       String(r[2] || 'Empacotadeira').trim(),
+            setor:      String(r[3] || 'Embalagem').trim(),
+            status:     String(r[4] || 'ativa').trim().toLowerCase(),
+            pcMin:      parseFloat(r[5]) || 0,
+            eficiencia: parseFloat(r[6]) || 100,
+            hTurno:     parseFloat(r[7]) || 8,
+            nTurnos:    parseFloat(r[8]) || 1,
+            tempoSetupPadrao: parseFloat(r[9]) || 0,
+            produtosCompativeis: prodListStr.split(',').map(p => p.trim()).filter(Boolean).map(p => ({ produto: p, velocidade: null }))
+          });
+        });
+
+      } else {
+        // Formato legado
+        const sheetBase = wb.SheetNames.find(s => s.includes('Base_Maquina')) || wb.SheetNames[0];
+        if (!sheetBase) { toast('Aba Base_Maquina_Tempo nao encontrada.', 'err'); return; }
+        const rowsBase = XLSX.utils.sheet_to_json(wb.Sheets[sheetBase], { header: 1, defval: '' });
+        dadosProdutos = rowsBase.slice(1)
+          .filter(r => r[0] && r[1] && !isNaN(parseInt(r[0])))
+          .map(r => ({
+            cod:          parseInt(r[0]) || 0,
+            descricao:    String(r[1]).trim(),
+            unid:         parseInt(r[2]) || 1,
+            pc_min:       parseFloat(r[4]) || 0,
+            maquina:      String(r[5] || 'MANUAL').trim().toUpperCase(),
+            produtoAtivo: _parseAtivo(r[6]),
+            ativo:        _parseAtivo(r[6])
+          }));
+        const sheetConsumo = wb.SheetNames.find(s => s.includes('Consumo'));
+        if (sheetConsumo) {
+          const rowsConsumo = XLSX.utils.sheet_to_json(wb.Sheets[sheetConsumo], { header: 1, defval: '' });
+          rowsConsumo.slice(1).forEach(r => {
+            if (!_parseAtivo(r[4])) return;
+            const prodNome = String(r[1] || '').trim();
+            const insNome  = String(r[2] || '').trim();
+            const qty      = parseFloat(r[3]) || 0;
+            if (!prodNome || !insNome) return;
+            if (!insumosPorProduto[prodNome]) insumosPorProduto[prodNome] = [];
+            insumosPorProduto[prodNome].push({ insumo: insNome, qty });
+          });
+        }
       }
 
-      // ── Garantir que o cache de máquinas está carregado ─────────────
-      await carregarMaquinasCached();
+      toast('Arquivo lido: ' + dadosProdutos.length + ' produtos, ' + setupEntries.length + ' setups, ' + maquinasEntries.length + ' maquinas', 'ok');
 
-      let criados = 0, atualizados = 0, ignorados = 0;
-      let maqCriadas = 0, maqAtualizadas = 0;
+      if (!dadosProdutos.length) { toast('Nenhum produto valido encontrado no arquivo.', 'err'); return; }
+
+      // ── PASSO 2: Limpar tudo antes de gravar ────────────────────────
+      toast('Limpando dados anteriores...', 'ok');
+
+      async function limparCol(col) {
+        try {
+          const snap = await getDocs(lojaCol(col));
+          if (snap.empty) return;
+          for (let i = 0; i < snap.docs.length; i += 50)
+            await Promise.all(snap.docs.slice(i, i+50).map(d => deleteDoc(lojaDoc(col, d.id))));
+        } catch(err) { console.warn('Erro ao limpar ' + col + ':', err.message); }
+      }
+
+      await limparCol('produtos');
+      await limparCol('fichaTecnica');
+      if (setupEntries.length > 0) await limparCol('setup_maquinas');
+      if (maquinasEntries.length > 0) await limparCol('maquinas');
+
+      // Limpar memória
+      if (Array.isArray(window.PRODUTOS)) window.PRODUTOS.splice(0, window.PRODUTOS.length);
+      if (typeof PRODUTOS_EXTRA !== 'undefined' && Array.isArray(PRODUTOS_EXTRA)) { PRODUTOS_EXTRA.splice(0, PRODUTOS_EXTRA.length); localStorage.removeItem('produtos_extra'); }
+      if (typeof fichaTecnicaData !== 'undefined' && Array.isArray(fichaTecnicaData)) fichaTecnicaData.splice(0, fichaTecnicaData.length);
+      if (typeof FICHA_TECNICA !== 'undefined' && Array.isArray(FICHA_TECNICA)) FICHA_TECNICA.splice(0, FICHA_TECNICA.length);
+      if (maquinasEntries.length > 0) { window.MAQUINAS_DATA = {}; if (typeof MAQUINAS !== 'undefined' && Array.isArray(MAQUINAS)) MAQUINAS.splice(0, MAQUINAS.length); }
+
+      // ── PASSO 3: Gravar máquinas ─────────────────────────────────────
+      let maqCriadas = 0;
+      if (maquinasEntries.length > 0) {
+        toast('Salvando maquinas...', 'ok');
+        for (const m of maquinasEntries) {
+          try {
+            const payload = { ...m, criadoEm: new Date().toISOString(), atualizadoEm: new Date().toISOString() };
+            const docRef = await addDoc(lojaCol('maquinas'), payload);
+            if (!window.MAQUINAS_DATA) window.MAQUINAS_DATA = {};
+            window.MAQUINAS_DATA[m.nome] = { ...payload, _id: docRef.id };
+            if (typeof MAQUINAS !== 'undefined' && !MAQUINAS.includes(m.nome)) MAQUINAS.push(m.nome);
+            maqCriadas++;
+          } catch(err) { console.warn('Erro ao salvar maquina ' + m.nome + ':', err.message); }
+        }
+        toast(maqCriadas + ' maquinas salvas', 'ok');
+      } else {
+        // Reconstrói maquinas a partir dos produtos
+        await carregarMaquinasCached();
+        const maquinasMap = {};
+        dadosProdutos.forEach(p => {
+          if (!maquinasMap[p.maquina]) maquinasMap[p.maquina] = { produtos: [], pc_mins: [] };
+          maquinasMap[p.maquina].produtos.push(p.descricao);
+          if (p.pc_min > 0) maquinasMap[p.maquina].pc_mins.push(p.pc_min);
+        });
+        for (const [nome, d] of Object.entries(maquinasMap)) {
+          try {
+            const velMedia = d.pc_mins.length ? Math.round(d.pc_mins.reduce((a,b)=>a+b,0)/d.pc_mins.length*100)/100 : 0;
+            const payload = { nome, tipo: 'Empacotadeira', setor: 'Embalagem', status: 'ativa', pcMin: velMedia, eficiencia: 100, hTurno: 8, nTurnos: 1, tempoSetupPadrao: 0, produtosCompativeis: d.produtos.map(p=>({produto:p,velocidade:null})), criadoEm: new Date().toISOString(), atualizadoEm: new Date().toISOString() };
+            const docRef = await addDoc(lojaCol('maquinas'), payload);
+            if (!window.MAQUINAS_DATA) window.MAQUINAS_DATA = {};
+            window.MAQUINAS_DATA[nome] = { ...payload, _id: docRef.id };
+            if (typeof MAQUINAS !== 'undefined' && !MAQUINAS.includes(nome)) MAQUINAS.push(nome);
+            maqCriadas++;
+          } catch(err) { console.warn('Erro ao salvar maquina ' + nome + ':', err.message); }
+        }
+      }
+
+      // ── PASSO 4: Gravar produtos em lotes ────────────────────────────
+      toast('Salvando ' + dadosProdutos.length + ' produtos...', 'ok');
+      let criados = 0;
+      for (let i = 0; i < dadosProdutos.length; i += 50) {
+        const lote = dadosProdutos.slice(i, i + 50);
+        await Promise.all(lote.map(async p => {
+          try {
+            await salvarProdutoFirestore(p);
+            criados++;
+          } catch(err) { console.warn('Erro ao salvar produto ' + p.cod + ':', err.message); }
+        }));
+      }
+      toast(criados + ' produtos salvos', 'ok');
+
+      // ── PASSO 5: Gravar fichas técnicas em lotes ────────────────────
+      toast('Salvando fichas tecnicas...', 'ok');
       let fichasSalvas = 0;
+      const fichas = dadosProdutos.map(p => ({
+        cod:     parseInt(p.cod),
+        desc:    p.descricao,
+        unid:    p.unid,
+        pc_min:  p.pc_min,
+        maquina: p.maquina,
+        insumos: (insumosPorProduto[p.descricao] || []).map(i => ({ insumo: i.insumo, qty: i.qty })),
+        criadoEm: new Date().toISOString(),
+        atualizadoEm: new Date().toISOString()
+      }));
+      for (let i = 0; i < fichas.length; i += 50) {
+        const lote = fichas.slice(i, i + 50);
+        try {
+          const refs = await Promise.all(lote.map(f => addDoc(lojaCol('fichaTecnica'), f)));
+          lote.forEach((f, idx) => {
+            f._firestoreId = refs[idx].id;
+            if (typeof fichaTecnicaData !== 'undefined') fichaTecnicaData.push(f);
+            if (typeof FICHA_TECNICA !== 'undefined') FICHA_TECNICA.push({ ...f });
+          });
+          fichasSalvas += lote.length;
+        } catch(err) { console.warn('Erro ao salvar lote de fichas:', err.message); }
+      }
 
-      // ── Agrupar produtos por máquina para upsert de máquinas ─────────
-      const maquinasMap = {};
-      dadosProdutos.forEach(p => {
-        const m = p.maquina;
-        if (!maquinasMap[m]) maquinasMap[m] = { produtos: [], velocidades: [] };
-        maquinasMap[m].produtos.push(p);
-        if (p.pc_min > 0) maquinasMap[m].velocidades.push(p.pc_min);
-      });
-
-      // ── Upsert de máquinas (atualiza produtosCompativeis em memória) ─
-      for (const [nomeMaq, info] of Object.entries(maquinasMap)) {
-        const velMedia = info.velocidades.length
-          ? Math.round(info.velocidades.reduce((a, b) => a + b, 0) / info.velocidades.length * 100) / 100
-          : 0;
-        const produtosCompativeis = info.produtos.map(p => ({
-          produto: p.descricao,
-          velocidade: p.pc_min > 0 ? p.pc_min : null
-        }));
-        const maqExistente = (window.MAQUINAS_DATA || {})[nomeMaq];
-        const maqPayload = {
-          nome: nomeMaq,
-          tipo: 'Empacotadeira',
-          setor: 'Embalagem',
-          status: 'ativa',
-          pcMin: velMedia,
-          eficiencia: 100,
-          hTurno: 8,
-          nTurnos: 1,
-          tempoSetupPadrao: 0,
-          produtosCompativeis,
-          atualizadoEm: new Date().toISOString()
-        };
-        if (maqExistente && maqExistente._id) {
-          // Merge: preservar produtosCompativeis existentes não presentes no import
-          const existingProds = Array.isArray(maqExistente.produtosCompativeis) ? maqExistente.produtosCompativeis : [];
-          const novosNomes = new Set(produtosCompativeis.map(p => p.produto));
-          const merged = [...produtosCompativeis, ...existingProds.filter(p => !novosNomes.has(p.produto))];
-          maqPayload.produtosCompativeis = merged;
-          await setDoc(lojaDoc('maquinas', maqExistente._id), { ...maqPayload, criadoEm: maqExistente.criadoEm || new Date().toISOString() });
-          window.MAQUINAS_DATA[nomeMaq] = { ...maqExistente, ...maqPayload };
-          maqAtualizadas++;
-        } else {
-          maqPayload.criadoEm = new Date().toISOString();
-          const docRef = await addDoc(lojaCol('maquinas'), maqPayload);
-          window.MAQUINAS_DATA[nomeMaq] = { ...maqPayload, _id: docRef.id };
-          if (!MAQUINAS.includes(nomeMaq)) MAQUINAS.push(nomeMaq);
-          maqCriadas++;
+      // ── PASSO 6: Gravar setup em lotes ───────────────────────────────
+      let setupAdicionados = 0;
+      if (setupEntries.length > 0) {
+        toast('Salvando ' + setupEntries.length + ' setups...', 'ok');
+        for (let i = 0; i < setupEntries.length; i += 100) {
+          try {
+            await Promise.all(setupEntries.slice(i, i + 100).map(se =>
+              addDoc(lojaCol('setup_maquinas'), {
+                maquina: se.maquina,
+                produto_origem: se.de,
+                produto_destino: se.para,
+                tempo_setup: se.minutos,
+                criadoEm: new Date().toISOString()
+              })
+            ));
+            setupAdicionados += Math.min(100, setupEntries.length - i);
+          } catch(err) { console.warn('Erro ao salvar lote de setup:', err.message); }
         }
       }
 
-      // ── Upsert de produtos + fichas técnicas ─────────────────────────
-      for (const produto of dadosProdutos) {
-        const existente = getAllProdutos().find(p =>
-          parseInt(p.cod) === produto.cod && p.maquina === produto.maquina
-        );
-
-        const insumosDoProduto = (insumosPorProduto[produto.descricao] || []).map(i => ({
-          insumo: i.insumo,
-          qty: i.qty
-        }));
-
-        if (existente) {
-          const mudou =
-            existente.descricao   !== produto.descricao   ||
-            existente.unid        !== produto.unid         ||
-            existente.pc_min      !== produto.pc_min       ||
-            existente.produtoAtivo !== produto.produtoAtivo;
-
-          if (mudou) {
-            const atualizado = { ...existente, ...produto };
-            await salvarProdutoFirestore(atualizado);
-            atualizados++;
-          } else {
-            ignorados++;
-          }
-        } else {
-          await salvarProdutoFirestore(produto);
-          criados++;
-        }
-
-        // ── Ficha técnica: criar/atualizar em memória e Firestore ──────
-        const codNum = parseInt(produto.cod);
-        let fichaObj = fichaTecnicaData.find(f => f.cod === codNum);
-        const fichaPayload = {
-          cod: codNum,
-          desc: produto.descricao,
-          unid: produto.unid,
-          pc_min: produto.pc_min,
-          maquina: produto.maquina,
-          insumos: insumosDoProduto,
-          atualizadoEm: new Date().toISOString()
-        };
-        if (!fichaObj) {
-          fichaObj = { ...fichaPayload, criadoEm: new Date().toISOString() };
-          fichaTecnicaData.push(fichaObj);
-          FICHA_TECNICA.push({ ...fichaObj });
-          try {
-            const docRef = await addDoc(lojaCol('fichaTecnica'), fichaObj);
-            fichaObj._firestoreId = docRef.id;
-            const ftMem = FICHA_TECNICA.find(f => f.cod === codNum);
-            if (ftMem) ftMem._firestoreId = docRef.id;
-          } catch(fe) { console.warn('Erro ao criar ficha:', fe.message); }
-        } else {
-          fichaObj.desc   = fichaPayload.desc;
-          fichaObj.unid   = fichaPayload.unid;
-          fichaObj.pc_min = fichaPayload.pc_min;
-          if (insumosDoProduto.length > 0) fichaObj.insumos = insumosDoProduto;
-          const ftIdx = FICHA_TECNICA.findIndex(f => f.cod === codNum);
-          if (ftIdx >= 0) FICHA_TECNICA[ftIdx] = { ...fichaObj };
-          try {
-            if (fichaObj._firestoreId) {
-              await setDoc(lojaDoc('fichaTecnica', fichaObj._firestoreId), fichaPayload);
-            } else {
-              const snap = await getDocs(query(lojaCol('fichaTecnica'), where('cod', '==', codNum)));
-              if (!snap.empty) {
-                fichaObj._firestoreId = snap.docs[0].id;
-                await setDoc(lojaDoc('fichaTecnica', snap.docs[0].id), fichaPayload);
-              } else {
-                const ref = await addDoc(lojaCol('fichaTecnica'), { ...fichaPayload, criadoEm: new Date().toISOString() });
-                fichaObj._firestoreId = ref.id;
-              }
-            }
-          } catch(fe) { console.warn('Erro ao salvar ficha:', fe.message); }
-        }
-        fichasSalvas++;
-      }
-
-      // ── Recarga única no final ────────────────────────────────────────
+      // ── PASSO 7: Recarregar UI ───────────────────────────────────────
       invalidateCache('maquinas', 'produtos');
       await carregarMaquinasCached(true);
-      // Produtos já estão atualizados em memória pelo salvarProdutoFirestore
-      // Só invalida o cache para forçar re-render correto
       _carregadoFichaTecnica = true;
-
       renderProdutosCfg();
       renderCadastroMaquinas();
       if (typeof renderFichaTecnicaCfg === 'function') renderFichaTecnicaCfg();
       if (typeof renderFichaTecnica === 'function') renderFichaTecnica();
+      if (typeof renderSetupMaquinas === 'function') renderSetupMaquinas();
 
       const partes = [
-        `${criados} produto(s) criado(s)`,
-        atualizados ? `${atualizados} atualizado(s)` : '',
-        ignorados ? `${ignorados} sem alteração` : '',
-        `${maqCriadas} máquina(s) nova(s)`,
-        maqAtualizadas ? `${maqAtualizadas} máquina(s) atualizada(s)` : '',
-        `${fichasSalvas} ficha(s) técnica(s) salva(s)`
+        criados + ' produto(s)',
+        maqCriadas ? maqCriadas + ' maquina(s)' : '',
+        fichasSalvas ? fichasSalvas + ' ficha(s)' : '',
+        setupAdicionados ? setupAdicionados + ' setup(s)' : ''
       ].filter(Boolean);
-      toast(`✅ ${partes.join(' · ')}`, 'ok');
+      toast('Importado: ' + partes.join(' + '), 'ok');
 
     } catch(err) {
       toast('Erro ao importar: ' + err.message, 'err');
@@ -8212,70 +8407,96 @@ async function importarArquivoPadrao(input) {
   reader.readAsBinaryString(file);
 }
 
-// Exporta todos os dados no mesmo formato do arquivo de importação
+// Exporta todos os dados no novo formato de template (4 abas)
 async function exportarArquivoPadrao() {
   try {
-    // ── Aba Base_Maquina_Tempo ────────────────────────────────────────
     const produtos = getAllProdutos();
     const fichas   = fichaTecnicaData || [];
 
-    const headerBase = ['Cód.', 'Descrição', 'UNID', 'KG/FD', 'PC/MIN', 'Maquina22', 'status'];
-    const rowsBase = produtos.map(p => {
-      const ativo = p.produtoAtivo !== false ? 'ATIVO' : 'Desativado';
+    // ── Linha de títulos + aviso + cabeçalho (padrão do novo template) ─
+    function cabecalho(titulo, aviso, headers) {
       return [
-        p.cod,
-        p.descricao,
-        p.unid,
-        '',        // KG/FD — calculado externamente, deixar vazio
-        p.pc_min,
-        p.maquina,
-        ativo
+        [titulo], [aviso], headers
       ];
-    });
+    }
 
-    const wsBase = XLSX.utils.aoa_to_sheet([headerBase, ...rowsBase]);
-    // Largura das colunas
-    wsBase['!cols'] = [
-      { wch: 10 }, { wch: 60 }, { wch: 8 }, { wch: 10 },
-      { wch: 10 }, { wch: 20 }, { wch: 12 }
-    ];
+    // ── Aba Produtos ──────────────────────────────────────────────────
+    const hdrProd = ['cod','descricao','unid','pc_min','maquina','status'];
+    const rowsProd = produtos.map(p => [
+      p.cod, p.descricao, p.unid, p.pc_min, p.maquina,
+      p.produtoAtivo !== false ? 'ATIVO' : 'DESATIVADO'
+    ]);
+    const wsProd = XLSX.utils.aoa_to_sheet([
+      ...cabecalho('PRODUTOS — Base Máquina x Tempo',
+        'Preencha cod, descricao, unid, pc_min e maquina. Status: ATIVO ou DESATIVADO.',
+        hdrProd),
+      ...rowsProd
+    ]);
+    wsProd['!cols'] = [{ wch:10 },{ wch:60 },{ wch:10 },{ wch:12 },{ wch:25 },{ wch:12 }];
 
-    // ── Aba Consumo_Insumos ───────────────────────────────────────────
-    const headerConsumo = [
-      'ESCADINHA_INSUMO_PRODUCAO[produto_key]',
-      'ESCADINHA_INSUMO_PRODUCAO[DESCRIÇÃO PROD ACABADO]',
-      'ESCADINHA_INSUMO_PRODUCAO[DESCRIÇÃO INSUMOS]',
-      '[Sumconsumo_receita]',
-      'status'
-    ];
-    const rowsConsumo = [];
+    // ── Aba Insumos ───────────────────────────────────────────────────
+    const hdrIns = ['cod_produto','desc_produto','insumo','qty','status'];
+    const rowsIns = [];
     fichas.forEach(ficha => {
       const prod = produtos.find(p => parseInt(p.cod) === parseInt(ficha.cod));
-      const statusProd = prod && prod.produtoAtivo === false ? 'DESATIVADO' : 'ATIVO';
+      const status = prod && prod.produtoAtivo === false ? 'DESATIVADO' : 'ATIVO';
       (ficha.insumos || []).forEach(ins => {
-        rowsConsumo.push([
-          ficha.cod,
-          ficha.desc,
-          ins.insumo,
-          ins.qty,
-          statusProd
-        ]);
+        rowsIns.push([ficha.cod, ficha.desc, ins.insumo, ins.qty, status]);
       });
     });
+    const wsIns = XLSX.utils.aoa_to_sheet([
+      ...cabecalho('INSUMOS — Consumo por Produto',
+        'Uma linha por insumo por produto. qty = quantidade consumida por caixa. Status: ATIVO ou DESATIVADO.',
+        hdrIns),
+      ...rowsIns
+    ]);
+    wsIns['!cols'] = [{ wch:14 },{ wch:60 },{ wch:55 },{ wch:12 },{ wch:12 }];
 
-    const wsConsumo = XLSX.utils.aoa_to_sheet([headerConsumo, ...rowsConsumo]);
-    wsConsumo['!cols'] = [
-      { wch: 12 }, { wch: 60 }, { wch: 50 }, { wch: 20 }, { wch: 12 }
-    ];
+    // ── Aba Setup (exporta do Firestore se disponível) ────────────────
+    const hdrSetup = ['maquina','de','para','minutos'];
+    let rowsSetup = [];
+    try {
+      const snapSetup = await getDocs(lojaCol('setup_maquinas'));
+      rowsSetup = snapSetup.docs.map(d => {
+        const s = d.data();
+        return [s.maquina || '', s.produto_origem || '', s.produto_destino || '', s.tempo_setup || 0];
+      });
+    } catch(e) { console.warn('Erro ao ler setup para exportação:', e); }
+    const wsSetup = XLSX.utils.aoa_to_sheet([
+      ...cabecalho('SETUP — Tempo de troca entre produtos por máquina',
+        'Cada linha: tempo (min) para trocar do Produto DE para o Produto PARA em uma máquina.',
+        hdrSetup),
+      ...rowsSetup
+    ]);
+    wsSetup['!cols'] = [{ wch:30 },{ wch:55 },{ wch:55 },{ wch:20 }];
 
-    // ── Montar workbook na ordem correta das abas ─────────────────────
+    // ── Aba Maquinas ──────────────────────────────────────────────────
+    const hdrMaq = ['nome','codigo','tipo','setor','status','undMin','eficiencia','hTurno','nTurnos','setup','produtos'];
+    const maqData = window.MAQUINAS_DATA || {};
+    const rowsMaq = Object.values(maqData).map(m => [
+      m.nome || '', m.codigo || '', m.tipo || 'Empacotadeira', m.setor || 'Embalagem',
+      m.status || 'ativa', m.pcMin || 0, m.eficiencia || 100, m.hTurno || 8, m.nTurnos || 1,
+      m.tempoSetupPadrao || 0,
+      (Array.isArray(m.produtosCompativeis) ? m.produtosCompativeis.map(p => p.produto).join(', ') : '')
+    ]);
+    const wsMaq = XLSX.utils.aoa_to_sheet([
+      ...cabecalho('CADASTRO DE MÁQUINAS',
+        'Preencha uma linha por máquina. A coluna "produtos" aceita vários produtos separados por vírgula.',
+        hdrMaq),
+      ...rowsMaq
+    ]);
+    wsMaq['!cols'] = [{ wch:28 },{ wch:12 },{ wch:18 },{ wch:18 },{ wch:10 },{ wch:10 },{ wch:12 },{ wch:10 },{ wch:10 },{ wch:10 },{ wch:60 }];
+
+    // ── Montar workbook ───────────────────────────────────────────────
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, wsConsumo, 'Consumo_Insumos');
-    XLSX.utils.book_append_sheet(wb, wsBase, 'Base_Maquina_Tempo');
+    XLSX.utils.book_append_sheet(wb, wsProd,  'Produtos');
+    XLSX.utils.book_append_sheet(wb, wsIns,   'Insumos');
+    XLSX.utils.book_append_sheet(wb, wsSetup, 'Setup');
+    XLSX.utils.book_append_sheet(wb, wsMaq,   'Maquinas');
 
     const hoje = new Date().toISOString().slice(0, 10);
-    XLSX.writeFile(wb, `INSUMOS_PRODUCAO_${hoje}.xlsx`);
-    toast(`✅ Exportado: ${produtos.length} produtos · ${rowsConsumo.length} insumos`, 'ok');
+    XLSX.writeFile(wb, `TEMPLATE_IMPORTACAO_${hoje}.xlsx`);
+    toast(`✅ Exportado: ${produtos.length} produtos · ${rowsIns.length} insumos · ${rowsSetup.length} setups · ${rowsMaq.length} máquinas`, 'ok');
   } catch(err) {
     toast('Erro ao exportar: ' + err.message, 'err');
     console.error('[exportarArquivoPadrao]', err);
@@ -9398,8 +9619,16 @@ function impSaveInsumosEstoque(){ localStorage.setItem('imp_insumos_estoque', JS
 function getEstoqueInsumo(nomeInsumo){
   const norm = s => (s||'').toUpperCase().trim().replace(/\s+/g,' ');
   const ni = norm(nomeInsumo);
-  const found = insumosEstoqueData.find(x => norm(x.insumo) === ni);
-  return found ? (found.quantidade||0) : null; // null = não encontrado
+  // 1. Match exato (prioridade máxima)
+  const exact = insumosEstoqueData.find(x => norm(x.insumo) === ni);
+  if(exact) return exact.quantidade || 0;
+  // 2. Match parcial conservador: um nome deve estar INTEIRAMENTE contido no outro
+  //    (evita falsos positivos por prefixo de 20 chars)
+  const partial = insumosEstoqueData.find(x => {
+    const xn = norm(x.insumo);
+    return xn.length >= 10 && ni.length >= 10 && (xn.includes(ni) || ni.includes(xn));
+  });
+  return partial ? (partial.quantidade || 0) : null; // null = não encontrado
 }
 
 function impAddHistorico(tipo, qtd, nome){
@@ -9638,12 +9867,14 @@ function importEstoqueInsumos(input){
 // Calcula consumo total de insumos com base na programação ativa (registros do Gantt)
 // Retorna lista de insumos para um produto: [{n: nomeInsumo, q: qtdPorCaixa}]
 function findInsumosProduto(nomeProd, codProd){
-  if(nomeProd){
-    const ins = getInsumos(nomeProd);
-    if(ins && ins.length) return ins.map(i => ({ n: i.n, q: i.q || 0 }));
-  }
+  const norm = s => (s||'').toUpperCase().trim().replace(/\s+/g,' ');
   const src = (typeof fichaTecnicaData !== 'undefined' ? fichaTecnicaData : FICHA_TECNICA) || [];
-  const ft = src.find(x => x.cod && String(x.cod) === String(codProd));
+  // 1) por código exato
+  let ft = src.find(x => x.cod && String(x.cod) === String(codProd));
+  // 2) por descrição exata
+  if(!ft && nomeProd) ft = src.find(x => norm(x.desc) === norm(nomeProd));
+  // 3) por descrição parcial
+  if(!ft && nomeProd) ft = src.find(x => norm(nomeProd).includes(norm(x.desc).substring(0,18)) || norm(x.desc).includes(norm(nomeProd).substring(0,18)));
   if(!ft || !ft.insumos || !ft.insumos.length) return [];
   return ft.insumos.map(i => ({ n: i.insumo, q: i.qty || 0 }));
 }
@@ -9723,14 +9954,16 @@ function renderSaldoInsumos(){
   // Monta tabela
   const rows = insumosEstoqueData.map(ins => {
     const consumo = consumoMap[ins.insumo]?.total || 0;
-    // Busca consumo por match parcial também
+    // Busca consumo por match parcial se não encontrou exato
     let consumoFinal = consumo;
     if(!consumo){
       const norm = s => (s||'').toUpperCase().trim();
       const ni = norm(ins.insumo);
+      // Usar apenas o PRIMEIRO match para evitar soma duplicada
       for(const [k,v] of Object.entries(consumoMap)){
         if(norm(k).includes(ni.substring(0,20)) || ni.includes(norm(k).substring(0,20))){
           consumoFinal += v.total;
+          break; // parar no primeiro match — somar mais de um causaria duplicidade
         }
       }
     }
@@ -10239,7 +10472,16 @@ function weekHrsForMachine(machine, monday){
   return getWeekDays(monday).reduce((a,d) => a + hoursOnMachineDay(machine, d), 0);
 }
 
+function pa_onModoChange(){
+  const modo = document.querySelector('input[name="pa-modo-periodo"]:checked')?.value || 'mes';
+  const rowMes    = document.getElementById('pa-row-mes');
+  const rowSemana = document.getElementById('pa-row-semana');
+  if(rowMes)    rowMes.style.display    = modo === 'mes'    ? 'flex' : 'none';
+  if(rowSemana) rowSemana.style.display = modo === 'semana' ? 'flex' : 'none';
+}
+
 function paPopulaSemanas(){
+  // Popular semanas
   const sel = document.getElementById('pa-semana-sel');
   if(!sel) return;
   const val = sel.value;
@@ -10254,6 +10496,26 @@ function paPopulaSemanas(){
     sel.appendChild(opt);
   }
   if(val) sel.value = val;
+
+  // Popular meses
+  const mesSel = document.getElementById('pa-mes-sel');
+  if(mesSel){
+    const mesVal = mesSel.value;
+    while(mesSel.options.length > 1) mesSel.remove(1);
+    const now = new Date();
+    for(let i=0; i<6; i++){
+      const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
+      const opt = document.createElement('option');
+      opt.value = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+      opt.textContent = `${GANTT_MONTH_NAMES[d.getMonth()]} / ${d.getFullYear()}`;
+      mesSel.appendChild(opt);
+    }
+    if(mesVal) mesSel.value = mesVal;
+    else if(mesSel.options.length > 1) mesSel.selectedIndex = 1; // seleciona mês atual por padrão
+  }
+
+  // Garantir visibilidade correta dos seletores
+  pa_onModoChange();
   const maqSel = document.getElementById('pa-maq-filter');
   if(maqSel){
     while(maqSel.options.length > 1) maqSel.remove(1);
@@ -10345,8 +10607,9 @@ function gerarProgAutomarica(){
   projecaoCalculada.forEach(proj => {
     const ficha     = allProds.find(p => String(p.cod)===String(proj.cod) || p.descricao===proj.produto);
 
-    // ── Produtos desativados não entram na programação ──────────────
-    if(ficha && ficha.produtoAtivo === false) return;
+    // ── Produtos sem ficha (excluídos) ou desativados não entram na programação ──
+    if(!ficha) return;
+    if(ficha.produtoAtivo === false) return;
 
     const fichaUnid = ficha ? (ficha.unid  || 1) : 1;
     const fichaPcMin= ficha ? (ficha.pc_min || 0) : 0;
@@ -10632,8 +10895,10 @@ function gerarProgAutomarica(){
     const s = {}; MAQUINAS.forEach(m => { s[m] = 0; }); return s;
   });
   // PROBLEMA 4 FIX: usar capacidade efetiva por semana (com clip de mês)
+  // maxPctMaq aplicado já aqui para que scoreMaquina e todos os checks downstream
+  // respeitem o limite configurado (ex: 90%) desde o início da alocação.
   const maqHrsRestantes = Array.from({length:4}, (_, si) => {
-    const s = {}; MAQUINAS.forEach(m => { s[m] = maqCapPorSemana[si][m] || 0; }); return s;
+    const s = {}; MAQUINAS.forEach(m => { s[m] = (maqCapPorSemana[si][m] || 0) * maxPctMaq; }); return s;
   });
 
   // ── Helper: score de máquina ────────────────────────────────────
@@ -10936,12 +11201,11 @@ function gerarProgAutomarica(){
         // é marcado em c._carryover para ser considerado na próxima semana.
         const maqPrinc = maqsOrdenadas[0];
         const hrsNecPrinc = (cxRestante * c.unid) / (maqPrinc.pc_min * 60);
-        const maxHrsPrinc = (maqCapPorSemana[sem][maqPrinc.maquina] || maqCapacidades[maqPrinc.maquina] || 0) * maxPctMaq;
-        const hrsJaAlocPrinc = allocations[c.prod].maquinas[maqPrinc.maquina]
-          ? (allocations[c.prod].maquinas[maqPrinc.maquina] * c.unid) / (maqPrinc.pc_min * 60)
-          : 0;
-        const hrsPermitPrinc   = Math.max(0, maxHrsPrinc - hrsJaAlocPrinc);
-        const hrsAlocarPrinc   = Math.min(hrsNecPrinc, maqHrsRestantes[sem][maqPrinc.maquina], hrsPermitPrinc);
+        // maxHrsPrinc = hrsRestantes já incorpora maxPctMaq (aplicado na inicialização)
+        const maxHrsPrinc = maqHrsRestantes[sem][maqPrinc.maquina];
+        const hrsJaAlocPrinc = 0; // redundante: maqHrsRestantes já desconta alocações via registrarAlocacao
+        const hrsPermitPrinc   = maxHrsPrinc;
+        const hrsAlocarPrinc   = Math.min(hrsNecPrinc, hrsPermitPrinc);
         const cxAlocarPrinc    = Math.floor(hrsAlocarPrinc * 60 * maqPrinc.pc_min / c.unid);
         const principalAbsorve = cxAlocarPrinc >= cxRestante;
 
@@ -10951,12 +11215,8 @@ function gerarProgAutomarica(){
         for(let mi = 0; mi < maxMaquinas && cxRestante > 0; mi++){
           const mc        = maqsOrdenadas[mi];
           const hrsNec    = (cxRestante * c.unid) / (mc.pc_min * 60);
-          const maxHrs    = (maqCapPorSemana[sem][mc.maquina] || maqCapacidades[mc.maquina] || 0) * maxPctMaq;
-          const hrsJaAloc = allocations[c.prod].maquinas[mc.maquina]
-            ? (allocations[c.prod].maquinas[mc.maquina] * c.unid) / (mc.pc_min * 60)
-            : 0;
-          const hrsPermit = Math.max(0, maxHrs - hrsJaAloc);
-          const hrsAlocar = Math.min(hrsNec, maqHrsRestantes[sem][mc.maquina], hrsPermit);
+          // maqHrsRestantes já inclui o cap de maxPctMaq
+          const hrsAlocar = Math.min(hrsNec, maqHrsRestantes[sem][mc.maquina]);
           if(hrsAlocar < 0.01) continue;
 
           const cxAlocar = Math.floor(hrsAlocar * 60 * mc.pc_min / c.unid);
@@ -11887,7 +12147,7 @@ async function aplicarProgAutomaticaNoGantt(){
         dtSolicitacao: p.dtDesejada,
         dtDesejada:    p.dtDesejada,
         sortOrder:     Date.now() + pi,   // garante sequência única
-        obs:           `Auto S${p.si+1} ${p.maq} — ${motivoBase}`,
+        obs:           '',
         updatedAt:     hoje
       };
       await dbPut(obj);
@@ -13931,6 +14191,154 @@ window.closeProdModal = closeProdModal;
 window.saveProdModal = saveProdModal;
 window._abrirEtapa2Insumos = _abrirEtapa2Insumos;
 window._fecharEtapa2 = _fecharEtapa2;
+
+// ═══════════════════════════════════════════════════════════════
+// EXCLUSÃO EM MASSA
+// ═══════════════════════════════════════════════════════════════
+
+function openExclusaoEmMassa() {
+  // Remove modal existente se houver
+  const old = document.getElementById('modal-exclusao-massa');
+  if (old) old.remove();
+
+  const modal = document.createElement('div');
+  modal.id = 'modal-exclusao-massa';
+  modal.style.cssText = 'position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.55)';
+
+  modal.innerHTML = `
+    <div style="background:var(--s1);border:1px solid var(--border);border-radius:12px;width:420px;max-width:92vw;overflow:hidden;box-shadow:0 8px 40px rgba(0,0,0,.4)">
+      <div style="padding:16px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between">
+        <div style="display:flex;align-items:center;gap:8px">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#ff4757" stroke-width="2" stroke-linecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+          <span style="font-size:14px;font-weight:700;color:var(--text)">Limpar dados</span>
+        </div>
+        <button onclick="document.getElementById('modal-exclusao-massa').remove()" style="background:none;border:none;color:var(--text3);font-size:18px;cursor:pointer;line-height:1">×</button>
+      </div>
+
+      <div style="padding:18px 20px">
+        <p style="font-size:12px;color:var(--text3);margin:0 0 16px 0;line-height:1.6">
+          Selecione o que deseja apagar. <strong style="color:#ff4757">Esta ação não pode ser desfeita.</strong>
+        </p>
+
+        <div style="display:flex;flex-direction:column;gap:10px">
+          ${[
+            ['chk-del-produtos',   '📦 Produtos',       'Todos os produtos do cadastro (PRODUTOS e PRODUTOS_EXTRA)'],
+            ['chk-del-maquinas',   '🏭 Máquinas',       'Todas as máquinas cadastradas'],
+            ['chk-del-fichas',     '📋 Ficha técnica',  'Fichas técnicas e insumos vinculados aos produtos'],
+            ['chk-del-setup',      '⏱️ Setup',          'Todos os tempos de setup entre produtos'],
+          ].map(([id, label, desc]) => `
+            <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;padding:10px 12px;border:1px solid var(--border);border-radius:8px;transition:border-color .15s" onmouseover="this.style.borderColor='#ff4757'" onmouseout="this.style.borderColor='var(--border)'">
+              <input type="checkbox" id="${id}" style="margin-top:2px;accent-color:#ff4757;width:15px;height:15px;flex-shrink:0">
+              <div>
+                <div style="font-size:13px;font-weight:600;color:var(--text)">${label}</div>
+                <div style="font-size:11px;color:var(--text3);margin-top:2px">${desc}</div>
+              </div>
+            </label>
+          `).join('')}
+        </div>
+
+        <div id="excl-status" style="min-height:18px;margin-top:12px;font-size:11px;color:var(--text3)"></div>
+      </div>
+
+      <div style="padding:14px 20px;border-top:1px solid var(--border);display:flex;gap:8px;justify-content:flex-end">
+        <button onclick="document.getElementById('modal-exclusao-massa').remove()" style="background:var(--s2);border:1px solid var(--border);border-radius:7px;padding:7px 16px;font-size:12px;color:var(--text);cursor:pointer">Cancelar</button>
+        <button onclick="confirmarExclusaoEmMassa()" style="background:#ff4757;border:none;border-radius:7px;padding:7px 18px;font-size:12px;font-weight:700;color:#fff;cursor:pointer">🗑️ Excluir selecionados</button>
+      </div>
+    </div>`;
+
+  document.body.appendChild(modal);
+  modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
+}
+
+async function confirmarExclusaoEmMassa() {
+  const delProdutos = document.getElementById('chk-del-produtos')?.checked;
+  const delMaquinas = document.getElementById('chk-del-maquinas')?.checked;
+  const delFichas   = document.getElementById('chk-del-fichas')?.checked;
+  const delSetup    = document.getElementById('chk-del-setup')?.checked;
+
+  if (!delProdutos && !delMaquinas && !delFichas && !delSetup) {
+    toast('Selecione pelo menos uma opcao.', 'warn'); return;
+  }
+
+  const itens = [
+    delProdutos && 'Produtos',
+    delMaquinas && 'Maquinas',
+    delFichas   && 'Fichas tecnicas',
+    delSetup    && 'Setup',
+  ].filter(Boolean).join(', ');
+
+  if (!confirm('ATENCAO: Apagar permanentemente: ' + itens + '\n\nEsta acao nao pode ser desfeita. Deseja continuar?')) return;
+
+  const statusEl = document.getElementById('excl-status');
+  const setStatus = msg => { if (statusEl) statusEl.textContent = msg; };
+
+  async function limparColecao(nomeCol) {
+    try {
+      const snap = await getDocs(lojaCol(nomeCol));
+      if (snap.empty) return 0;
+      const lote = 50;
+      for (let i = 0; i < snap.docs.length; i += lote) {
+        await Promise.all(snap.docs.slice(i, i + lote).map(d => deleteDoc(lojaDoc(nomeCol, d.id))));
+      }
+      return snap.docs.length;
+    } catch(e) {
+      console.error('Erro ao limpar ' + nomeCol + ':', e);
+      toast('Erro ao excluir ' + nomeCol + ': ' + e.message, 'err');
+      return 0;
+    }
+  }
+
+  try {
+    let total = 0;
+
+    if (delProdutos) {
+      setStatus('Excluindo produtos...');
+      total += await limparColecao('produtos');
+      if (Array.isArray(window.PRODUTOS)) window.PRODUTOS.splice(0, window.PRODUTOS.length);
+      if (typeof PRODUTOS_EXTRA !== 'undefined' && Array.isArray(PRODUTOS_EXTRA)) {
+        PRODUTOS_EXTRA.splice(0, PRODUTOS_EXTRA.length);
+        localStorage.removeItem('produtos_extra');
+      }
+    }
+
+    if (delMaquinas) {
+      setStatus('Excluindo maquinas...');
+      total += await limparColecao('maquinas');
+      window.MAQUINAS_DATA = {};
+      if (typeof MAQUINAS !== 'undefined' && Array.isArray(MAQUINAS)) MAQUINAS.splice(0, MAQUINAS.length);
+    }
+
+    if (delFichas) {
+      setStatus('Excluindo fichas tecnicas...');
+      total += await limparColecao('fichaTecnica');
+      if (typeof fichaTecnicaData !== 'undefined' && Array.isArray(fichaTecnicaData)) fichaTecnicaData.splice(0, fichaTecnicaData.length);
+      if (typeof FICHA_TECNICA !== 'undefined' && Array.isArray(FICHA_TECNICA)) FICHA_TECNICA.splice(0, FICHA_TECNICA.length);
+    }
+
+    if (delSetup) {
+      setStatus('Excluindo setup...');
+      total += await limparColecao('setup_maquinas');
+    }
+
+    setStatus('Atualizando tela...');
+    invalidateCache('produtos', 'maquinas');
+    if (typeof renderProdutosCfg === 'function') renderProdutosCfg();
+    if (typeof renderCadastroMaquinas === 'function') renderCadastroMaquinas();
+    if (typeof renderFichaTecnicaCfg === 'function') renderFichaTecnicaCfg();
+    if (typeof renderFichaTecnica === 'function') renderFichaTecnica();
+    if (typeof renderSetupMaquinas === 'function') renderSetupMaquinas();
+
+    document.getElementById('modal-exclusao-massa')?.remove();
+    toast('Excluidos: ' + total + ' registros (' + itens + ')', 'ok');
+    registrarAuditoria('EXCLUSAO_EM_MASSA', { itens, total });
+
+  } catch(err) {
+    toast('Erro ao excluir: ' + err.message, 'err');
+    console.error('[exclusaoEmMassa]', err);
+  }
+}
+window.openExclusaoEmMassa = openExclusaoEmMassa;
+window.confirmarExclusaoEmMassa = confirmarExclusaoEmMassa;
 window._fecharEtapa2Pos = _fecharEtapa2Pos;
 window.deleteExtraProduto = deleteExtraProduto;
 window.importProdutosExcel = importProdutosExcel;
@@ -13940,18 +14348,9 @@ window.exportarArquivoPadrao = exportarArquivoPadrao;
 window.downloadMaqTemplate = downloadMaqTemplate;
 
 // ===== SETUP TEMPLATES E IMPORTAÇÃO =====
-function downloadSetupTemplate(e) {
+async function downloadSetupTemplate(e) {
   e.preventDefault();
-  const ws = XLSX.utils.aoa_to_sheet([
-    ['maquina','produto_origem','produto_destino','tempo_minutos'],
-    ['SELGRON 01','POLVILHO 500G','COCO 100G',15],
-    ['SELGRON 01','COCO 100G','POLVILHO 500G',10],
-    ['ALFATECK 14','FARINHA 1KG','BICARBONATO 250G',25],
-    ['ALFATECK 14','BICARBONATO 250G','FARINHA 1KG',20]
-  ]);
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'Setup');
-  XLSX.writeFile(wb, 'template_setup_simples.xlsx');
+  await _baixarTemplateCompleto();
 }
 
 async function importarSetupExcel(file) {
@@ -14213,5 +14612,7 @@ window.renderProgAutomaticaResultado = renderProgAutomaticaResultado;
 window.aplicarProgAutomaticaNoGantt = aplicarProgAutomaticaNoGantt;
 window.simularCenario = simularCenario;
 window.pa_onSemanaChange = pa_onSemanaChange;
+window.pa_onModoChange   = pa_onModoChange;
+window.pa_onMesChange    = function(){ if(paResultados.length) renderProgAutomaticaResultado(); };
 window.paToggleInsumos = paToggleInsumos;
 window.progToggleInsumos = progToggleInsumos;
