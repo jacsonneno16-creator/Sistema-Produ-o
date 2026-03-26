@@ -604,7 +604,7 @@ function editarCategoriaCfg(id) {
   document.getElementById('cat-ativo-inp').value = cat.ativo === false ? 'false' : 'true';
 }
 
-async function excluirCategoriaCfg(id) {
+function excluirCategoriaCfg(id) {
   const cat = (CATEGORIAS || []).find(c => c.id === id);
   if (!cat) return;
   if (!confirm('Excluir categoria "' + cat.nome + '"?')) return;
@@ -1876,40 +1876,52 @@ function fmtHrs(h){
   return mm>0?`${hh}h${String(mm).padStart(2,'0')}min`:`${hh}h`;
 }
 
-// Central helper: get reliable pc_min and unid for a record
+// Central helper: get reliable pc_min and unid for a record.
+// Segue EXATAMENTE as mesmas prioridades do calcTempoStr para garantir
+// que Gantt e Programação mostrem o mesmo tempo.
 function getProdInfo(rec){
-  const all = getAllProdutos();
+  const maq = rec.maquina;
+  const produtoNome = rec.produto || '';
 
-  // Resolve ficha do produto (por código ou nome)
-  let ficha = null;
-  if(rec.prodCod) ficha = all.find(x => x.cod === rec.prodCod);
-  if(!ficha && rec.produto) ficha = all.find(x => rec.produto.startsWith(x.descricao.substring(0,22)));
+  // Priority 1: pcMin salvo no registro (mesmo que calcTempoStr P1)
+  let pcMin = (rec.pcMin && rec.pcMin > 0) ? rec.pcMin : 0;
 
-  // Velocidade da máquina específica para este produto.
-  // getPcMinMaquinaProduto lê de produtosCompativeis[].velocidade da máquina correta.
-  const nomeProduto = ficha ? ficha.descricao : (rec.produto || '');
-  const velMaquina = rec.maquina ? getPcMinMaquinaProduto(rec.maquina, nomeProduto) : null;
-
-  if(ficha){
-    // Ordem de prioridade da velocidade:
-    // 1. Velocidade configurada na máquina para este produto (produtosCompativeis)
-    // 2. pcMin salvo no registro (calculado pela PA para a máquina específica)
-    // 3. Velocidade genérica da ficha do produto (fallback)
-    const pcMinFinal = (velMaquina && velMaquina > 0)
-      ? velMaquina
-      : (rec.pcMin && rec.pcMin > 0 ? rec.pcMin : ficha.pc_min);
-    return { ...ficha, pc_min: pcMinFinal };
+  // Priority 2: velocidade específica do produto na máquina (produtosCompativeis)
+  if(!pcMin && maq && produtoNome && window.MAQUINAS_DATA){
+    const maqData = window.MAQUINAS_DATA[maq];
+    if(maqData && Array.isArray(maqData.produtosCompativeis)){
+      const entry = maqData.produtosCompativeis.find(p =>
+        p.produto === produtoNome ||
+        produtoNome.includes(p.produto) ||
+        p.produto.includes(produtoNome)
+      );
+      if(entry && entry.velocidade && entry.velocidade > 0) pcMin = entry.velocidade;
+    }
   }
 
-  // Sem ficha: usar velocidade da máquina ou do registro
-  const pcMinFallback = (velMaquina && velMaquina > 0)
-    ? velMaquina
-    : (rec.pcMin && rec.pcMin > 0 ? rec.pcMin : 0);
-  if(pcMinFallback > 0) return { pc_min: pcMinFallback, unid: rec.unidPorCx || 1 };
+  // Priority 3: velocidade padrão da máquina
+  if(!pcMin && maq && window.MAQUINAS_DATA){
+    const maqData = window.MAQUINAS_DATA[maq];
+    if(maqData && maqData.pcMin) pcMin = parseFloat(maqData.pcMin);
+  }
 
-  // Último recurso: primeiro produto da máquina
-  const byMaq = all.find(x => x.maquina === rec.maquina);
-  return byMaq || { pc_min: 1, unid: 1 };
+  // Priority 4: catálogo de produtos (ficha técnica)
+  const all = getAllProdutos();
+  if(!pcMin){
+    const produto = all.find(x =>
+      x.maquina === maq &&
+      (produtoNome ? (x.descricao === produtoNome || produtoNome.includes(x.descricao)) : true)
+    );
+    pcMin = produto ? produto.pc_min : 1;
+  }
+
+  // unid: registro primeiro, depois catálogo, depois 1
+  const unid = rec.unidPorCx ||
+    (all.find(x => x.maquina === maq &&
+      (x.descricao === produtoNome || produtoNome.includes(x.descricao))) || {unid:1}).unid ||
+    1;
+
+  return { pc_min: pcMin || 1, unid };
 }
 
 // ===== MÁQUINAS =====
@@ -2122,8 +2134,9 @@ function renderMaquinas(){
       }
       const selected = maqIsSelected(m);
       const safeId = _maqSafeId(m);
+      const mEsc = m.replace(/\\/g,'\\\\').replace(/'/g,"\\'");
       return `<div class="maq-card" style="cursor:pointer;position:relative;${selected ? "border-color:var(--warn);box-shadow:0 0 0 1px rgba(255,184,0,.35), 0 8px 24px rgba(0,0,0,.22)" : ""}" onclick="toggleMaqCardDetail('${safeId}')">
-        <button onclick="toggleMaqCardSelected(${JSON.stringify(m)}, event)" style="position:absolute;top:10px;right:10px;background:${selected ? 'rgba(255,184,0,.18)' : 'var(--s2)'};border:1px solid ${selected ? 'rgba(255,184,0,.45)' : 'var(--border)'};border-radius:999px;padding:4px 10px;font-size:10px;color:${selected ? 'var(--warn)' : 'var(--text2)'};cursor:pointer;font-family:'JetBrains Mono',monospace">${selected ? 'Selecionado' : 'Selecionar'}</button>
+        <button onclick="toggleMaqCardSelected('${mEsc}', event)" style="position:absolute;top:10px;right:10px;background:${selected ? 'rgba(255,184,0,.18)' : 'var(--s2)'};border:1px solid ${selected ? 'rgba(255,184,0,.45)' : 'var(--border)'};border-radius:999px;padding:4px 10px;font-size:10px;color:${selected ? 'var(--warn)' : 'var(--text2)'};cursor:pointer;font-family:'JetBrains Mono',monospace">${selected ? 'Selecionado' : 'Selecionar'}</button>
         <div class="maq-title" style="padding-right:98px">${m}</div>
         ${turnosSumario}
         <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text2);font-family:'JetBrains Mono',monospace;margin-top:4px">
@@ -2696,25 +2709,19 @@ function buildSchedule(monday){
     if(r.status==='Concluído') return false;
     const startDate=r.dtDesejada||r.dtSolicitacao;
     if(!startDate) return false;
+    // Registro da própria semana: sempre inclui
     if(startDate>=mondayStr && startDate<=sundayStr) return true;
+    // Registro de semana ANTERIOR: só overflow real (produção já iniciada)
     if(startDate<mondayStr){
-      // Verificar se ainda há produção restante (overflow real)
       const totalProd = (typeof calcularTotalProduzido==='function')
         ? calcularTotalProduzido(r.id) : 0;
+      // Pendente puro (nada produzido) → nunca vaza para outras semanas
+      if(totalProd <= 0) return false;
       const remaining = (r.qntCaixas||0) - totalProd;
+      // Já concluído na prática
       if(remaining <= 0) return false;
-      // Só entra como overflow se produção foi iniciada OU não há registro
-      // futuro para o mesmo produto+máquina (evita que S1 apareça no Gantt de S2/S3/S4
-      // quando a programação automática já criou registros separados por semana)
-      if(totalProd > 0) return true;
-      const hasFutureRecord = records.some(other =>
-        other.id !== r.id &&
-        other.maquina === r.maquina &&
-        other.produto === r.produto &&
-        other.status !== 'Concluído' &&
-        (other.dtDesejada || other.dtSolicitacao || '') >= mondayStr
-      );
-      return !hasFutureRecord;
+      // Overflow real: iniciado mas não concluído → só aparece na semana seguinte
+      return true;
     }
     return false;
   });
@@ -4512,7 +4519,7 @@ function getFichaTecnicaMerged() {
   return result;
 }
 
-async function loadFichaTecnica(input){
+function loadFichaTecnica(input){
   const file=input.files[0];
   if(!file) return;
   const reader=new FileReader();
@@ -5589,7 +5596,7 @@ function realizadoPermitirFaltaSequencia() {
 }
 
 // Função para PCP resetar apontamentos do dia
-async function realizadoResetarDia(data) {
+function realizadoResetarDia(data) {
   if (!can('realizado','resetar')) {
     toast('Sem permissão para resetar apontamentos.', 'err');
     return;
@@ -6959,7 +6966,7 @@ function settingsNav(section){
   if(section==='processos') setTimeout(()=>renderProcessos(), 50);
 }
 
-async function handleImportZip(file){
+function handleImportZip(file){
   if(!file) return;
   if(!file.name.endsWith('.zip')){ toast('Selecione um arquivo .zip','err'); return; }
   const statusEl=document.getElementById('importzip-status');
@@ -8231,7 +8238,7 @@ function deleteExtraProduto(cod, maq, desc) {
   excluirProduto(cod, maq, desc);
 }
 
-async function importProdutosExcel(input) {
+function importProdutosExcel(input) {
   const file = input.files[0]; if (!file) return;
   const reader = new FileReader();
   reader.onload = async function(e) {
@@ -12471,7 +12478,7 @@ async function aplicarProgAutomaticaNoGantt(){
   // Se a mesma máquina aparece em dois detalhes da mesma semana
   // (pode ocorrer após fase de equalização), consolida em um único
   // registro somando as caixas — evita duplicata no Gantt.
-  async function buildPlanejamento(sug){
+  function buildPlanejamento(sug){
     const plano = []; // [{si, maq, cx, pcMin, dtDesejada}]
     const semanaSel = document.getElementById('pa-semana-sel')?.value;
     const monday    = semanaSel ? new Date(semanaSel+'T12:00:00') : getWeekMonday(new Date());
@@ -13450,7 +13457,7 @@ function solicitarPermissaoNotificacoes() {
 // Auto-save de apontamentos pendentes
 let _apontamentosPendentes = new Map();
 
-async function salvarApontamentosAutomatico() {
+function salvarApontamentosAutomatico() {
   if (_apontamentosPendentes.size === 0) return;
   
   const pendentes = Array.from(_apontamentosPendentes.entries());
