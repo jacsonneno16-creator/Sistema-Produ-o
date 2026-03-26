@@ -1657,14 +1657,10 @@ async function confirmClearAll(){
 }
 
 function calcTempoStr(maq,caixas,unid,pcMinRec,unidRec,produtoNome){
-  let pcMin = pcMinRec;
+  let pcMin = 0;
   
-  // Priority 1: Use stored pcMin from record
-  if (pcMin && pcMin > 0) {
-    // usar valor já armazenado
-  }
-  // Priority 2: Look for specific product velocity in machine's produtosCompativeis
-  else if (!pcMin && maq && produtoNome && window.MAQUINAS_DATA) {
+  // Priority 1: Use machine-specific product velocity
+  if (maq && produtoNome && window.MAQUINAS_DATA) {
     const maqData = window.MAQUINAS_DATA[maq];
     if (maqData && Array.isArray(maqData.produtosCompativeis)) {
       const produtoEntry = maqData.produtosCompativeis.find(p => 
@@ -1673,21 +1669,28 @@ function calcTempoStr(maq,caixas,unid,pcMinRec,unidRec,produtoNome){
         p.produto.includes(produtoNome)
       );
       if (produtoEntry && produtoEntry.velocidade && produtoEntry.velocidade > 0) {
-        pcMin = produtoEntry.velocidade;
+        pcMin = parseFloat(produtoEntry.velocidade) || 0;
       }
     }
   }
-  // Priority 3: Use machine default velocity
+
+  // Priority 2: Use machine default velocity
   if (!pcMin && maq && window.MAQUINAS_DATA) {
     const maqData = window.MAQUINAS_DATA[maq];
-    if (maqData && maqData.pcMin) pcMin = maqData.pcMin;
+    if (maqData && maqData.pcMin) pcMin = parseFloat(maqData.pcMin) || 0;
   }
+
+  // Priority 3: Use stored pcMin from record
+  if (!pcMin && pcMinRec && pcMinRec > 0) {
+    pcMin = parseFloat(pcMinRec) || 0;
+  }
+
   // Priority 4: Use product catalog velocity
   if (!pcMin) {
     const produto = getAllProdutos().find(x => x.maquina === maq && 
       (produtoNome ? (x.descricao === produtoNome || produtoNome.includes(x.descricao)) : true)
     );
-    pcMin = produto ? produto.pc_min : 1;
+    pcMin = produto ? (parseFloat(produto.pc_min) || 1) : 1;
   }
   
   const unidCx = unidRec || (getAllProdutos().find(x=>x.maquina===maq)||{unid:1}).unid;
@@ -1708,7 +1711,7 @@ function sBadge(s){
 // Zero-pads minutes < 10 as requested (e.g. "10h08min")
 function fmtHrs(h){
   if(!h||h<=0) return '—';
-  const totalMin=Math.round(h*60);
+  const totalMin=(h*60);
   if(totalMin<60){
     const m=String(totalMin).padStart(2,'0');
     return m+'min';
@@ -1733,20 +1736,20 @@ function getProdInfo(rec){
   const velMaquina = rec.maquina ? getPcMinMaquinaProduto(rec.maquina, nomeProduto) : null;
 
   if(ficha){
-    // Mesma prioridade da aba Programação:
-    // 1. pcMin salvo no registro
-    // 2. Velocidade configurada na máquina para este produto
-    // 3. Velocidade genérica da ficha do produto
-    const pcMinFinal = (rec.pcMin && rec.pcMin > 0)
-      ? rec.pcMin
-      : ((velMaquina && velMaquina > 0) ? velMaquina : ficha.pc_min);
+    // Ordem de prioridade da velocidade:
+    // 1. Velocidade configurada na máquina para este produto (produtosCompativeis)
+    // 2. pcMin salvo no registro (calculado pela PA para a máquina específica)
+    // 3. Velocidade genérica da ficha do produto (fallback)
+    const pcMinFinal = (velMaquina && velMaquina > 0)
+      ? velMaquina
+      : (rec.pcMin && rec.pcMin > 0 ? rec.pcMin : ficha.pc_min);
     return { ...ficha, pc_min: pcMinFinal };
   }
 
-  // Sem ficha: usar primeiro o pcMin do registro, depois a máquina
-  const pcMinFallback = (rec.pcMin && rec.pcMin > 0)
-    ? rec.pcMin
-    : ((velMaquina && velMaquina > 0) ? velMaquina : 0);
+  // Sem ficha: usar velocidade da máquina ou do registro
+  const pcMinFallback = (velMaquina && velMaquina > 0)
+    ? velMaquina
+    : (rec.pcMin && rec.pcMin > 0 ? rec.pcMin : 0);
   if(pcMinFallback > 0) return { pc_min: pcMinFallback, unid: rec.unidPorCx || 1 };
 
   // Último recurso: primeiro produto da máquina
@@ -2669,23 +2672,6 @@ function buildSchedule(monday){
         if(snap.usedMin>=blkTotalMin-0.001){snap.blkIdx++;snap.usedMin=0;}
       }
 
-      // Regra visual do Gantt: se sobrar só um pedaço muito pequeno no dia seguinte
-      // (até 15 min), mantém esse restante no dia anterior para não poluir a grade.
-      // Se passar de 15 min, continua no dia seguinte normalmente.
-      for(let si=1; si<segments.length; si++){
-        const prev=segments[si-1];
-        const cur=segments[si];
-        if(!prev || !cur) continue;
-        if(cur.dayIdx!==prev.dayIdx && (cur.useMin||0)<=15.0001){
-          prev.caixasNoDia += cur.caixasNoDia || 0;
-          prev.hrsNoDia += cur.hrsNoDia || 0;
-          prev.useMin = (prev.useMin||0) + (cur.useMin||0);
-          prev.endPct = Math.max(prev.endPct||0, 100);
-          segments.splice(si,1);
-          si--;
-        }
-      }
-
       // Advance global cursor to where this record ended
       cursor.dayIdx=snap.dayIdx;
       cursor.blkIdx=snap.blkIdx;
@@ -3067,13 +3053,12 @@ function renderGanttSemanal(){
             const leftPct  = Math.max(0, seg.startPct).toFixed(1);
             const widthPct = Math.max(0.5, seg.endPct - seg.startPct).toFixed(1);
             const cx=seg.caixasNoDia;
-            const cxLabel=fmtCx(cx);
             const hrsLabel=fmtHrs(seg.hrsNoDia);
             const turnoTip=seg.turnoLabel?` · ${seg.turnoLabel}`:'';
             const obsTip=obs?` — ${obs}`:'';
             html+=`<div class="g-bar" style="left:${leftPct}%;width:${widthPct}%;background:${color};opacity:0.9;position:absolute;top:15%;height:70%"
-              title="${produto}${obsTip}${turnoTip} · ${cxLabel} cx · ${hrsLabel}">
-              <div class="g-bar-tip">${produto.substring(0,40)}${obs?'<br><span style=\"font-size:9px;opacity:.8\">'+obs+'</span>':''}<br>${cxLabel} cx · ${hrsLabel}${seg.turnoLabel?' · '+seg.turnoLabel:''}</div>
+              title="${produto}${obsTip}${turnoTip} · ${cx} cx · ${hrsLabel}">
+              <div class="g-bar-tip">${produto.substring(0,40)}${obs?'<br><span style=\"font-size:9px;opacity:.8\">'+obs+'</span>':''}<br>${cx} cx · ${hrsLabel}${seg.turnoLabel?' · '+seg.turnoLabel:''}</div>
             </div>`;
           });
           html+=`</div>`;
@@ -3087,7 +3072,7 @@ function renderGanttSemanal(){
       days.forEach((day,di)=>{
         const isWknd=hoursOnDay(day)===0;
         const cxDia=segments.filter(s=>s.dayIdx===di).reduce((a,s)=>a+s.caixasNoDia,0);
-        html+=`<div style="display:flex;align-items:center;justify-content:center;border-left:1px solid rgba(31,45,61,.4);background:var(--s1);font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:600;color:${cxDia>0?(isWknd?'var(--text2)':'var(--cyan)'):'var(--text4)'};">${cxDia>0?fmtCx(cxDia):'—'}</div>`;
+        html+=`<div style="display:flex;align-items:center;justify-content:center;border-left:1px solid rgba(31,45,61,.4);background:var(--s1);font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:600;color:${cxDia>0?(isWknd?'var(--text2)':'var(--cyan)'):'var(--text4)'};">${cxDia>0?cxDia:'—'}</div>`;
       });
 
       html+=`</div>`;
@@ -3641,11 +3626,6 @@ function getUnit(nome,cat){
 function fmtQty(v){
   if(!v||v<0.001) return '—';
   return v>=1000?(v).toLocaleString('pt-BR'):v>=100?v.toFixed(1):v>=10?v.toFixed(2):v.toFixed(3).replace(/\.?0+$/,'');
-}
-
-function fmtCx(v){
-  if(v==null || !isFinite(v) || Math.abs(v)<0.001) return '—';
-  return Math.round(v).toLocaleString('pt-BR');
 }
 
 // ===== INSUMOS POR MÁQUINA =====
