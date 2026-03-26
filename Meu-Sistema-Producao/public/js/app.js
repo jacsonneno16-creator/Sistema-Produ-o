@@ -664,15 +664,18 @@ async function carregarSetupFirestore() {
     SETUP_FIRESTORE = {};
     snap.docs.forEach(d => {
       const data = d.data();
-      const maq = data.maquina || '';
+      const maqRaw = (data.maquina || '').trim();
+      const maq = maqRaw.toUpperCase(); // normalizar para uppercase como chave padrão
       const pAOrig = (data.produto_origem || '').trim();
       const pBOrig = (data.produto_destino || '').trim();
       const pA = normProd(pAOrig);
       const pB = normProd(pBOrig);
       // Usar parseInt mas aceitar 0 como valor válido (|| pode descartar 0)
       const t = (data.tempo_setup != null && data.tempo_setup !== '') ? parseInt(data.tempo_setup) : null;
-      if (!maq || !pA || !pB || t == null) return;
+      if (!maqRaw || !pA || !pB || t == null) return;
       if (!SETUP_FIRESTORE[maq]) SETUP_FIRESTORE[maq] = {};
+      // Manter também chave original para fallback
+      if (maqRaw !== maq && !SETUP_FIRESTORE[maqRaw]) SETUP_FIRESTORE[maqRaw] = SETUP_FIRESTORE[maq];
 
       // Indexar pela chave normalizada (busca principal)
       if (!SETUP_FIRESTORE[maq][pA]) SETUP_FIRESTORE[maq][pA] = {};
@@ -746,10 +749,10 @@ function getSetupMin(maq, prodDescA, prodDescB) {
   if (prodDescA === prodDescB) return 0;
 
   // 1) Firestore (carregarSetupFirestore populou SETUP_FIRESTORE)
-  // Tentar com o nome original, uppercase e sem espaços extras (chaves podem variar)
-  const fsMaq = SETUP_FIRESTORE[maq]
-             || SETUP_FIRESTORE[maq.toUpperCase().trim()]
-             || SETUP_FIRESTORE[maq.trim()];
+  // Tentar uppercase (padrão de indexação) depois original e trim
+  const fsMaq = SETUP_FIRESTORE[maq.toUpperCase().trim()]
+             || SETUP_FIRESTORE[maq.trim()]
+             || SETUP_FIRESTORE[maq];
   if (fsMaq) {
     const normA = normProd(prodDescA);
     const normB = normProd(prodDescB);
@@ -2022,21 +2025,21 @@ function renderMaquinas(){
     WEEK_AVAIL_HRS=DAY_HRS.reduce((a,b)=>a+b,0);
   }
 
-  // Filtrar máquinas por categoria
-  const maqsFiltradas = maqCatFilter
-    ? MAQUINAS.filter(m => {
-        const d = getMaquinaData(m);
-        return d && (d.categoria||'').trim() === maqCatFilter.trim();
-      })
-    : MAQUINAS;
-
+  // map tem TODAS as máquinas (para ocupação geral correta no summary)
   const map={};
-  maqsFiltradas.forEach(m=>map[m]={items:[],caixas:0,min:0});
+  MAQUINAS.forEach(m=>map[m]={items:[],caixas:0,min:0});
   filteredRecs.forEach(r=>{
     if(!map[r.maquina]) map[r.maquina]={items:[],caixas:0,min:0};
     map[r.maquina].items.push(r);
     map[r.maquina].caixas+=r.qntCaixas||0;
   });
+  // maqsFiltradas: lista visível nos cards (por categoria se filtro ativo)
+  const maqsFiltradas = (typeof maqCatFilter !== 'undefined' && maqCatFilter)
+    ? MAQUINAS.filter(m => {
+        const d = getMaquinaData(m);
+        return d && (d.categoria||'').trim() === maqCatFilter.trim();
+      })
+    : MAQUINAS;
   // Per-machine capacity: use real machine hours from turnosMaquinas config
   // Determine the reference monday: from filter, from records, or current week
   const refMon = maqWeekFilter
@@ -2053,7 +2056,7 @@ function renderMaquinas(){
   // (distribui corretamente pelos blocos/turnos configurados)
   if(typeof buildSchedule==='function'){
     const {schedule:sched} = buildSchedule(refMon);
-    maqsFiltradas.forEach(m=>{
+    MAQUINAS.forEach(m=>{
       const entries=sched[m]||[];
       let minTot=0;
       entries.forEach(({segments,setupSegments})=>{
@@ -2083,7 +2086,7 @@ function renderMaquinas(){
   }
   function maqColor(pct){return pct>100?'var(--red)':pct>=80?'var(--warn)':'var(--cyan)';}
   function barColor(pct){return pct>100?'var(--red)':pct>=80?'var(--warn)':'var(--cyan)';}
-  // Preencher select de categoria com opções únicas das máquinas
+  // Preencher select de categoria
   const maqCatSel = document.getElementById('maq-cat-filter');
   if(maqCatSel){
     const cats = [...new Set(MAQUINAS.map(m=>(getMaquinaData(m)||{}).categoria||'').filter(Boolean))].sort();
@@ -2098,8 +2101,8 @@ function renderMaquinas(){
       <div class="maq-list-row" style="background:var(--s2);font-family:'JetBrains Mono',monospace;font-size:10px;text-transform:uppercase;letter-spacing:.8px;color:var(--text3)">
         <span>Máquina</span><span>Ocupação da Semana</span><span>Caixas</span><span>Prog. / Disp.</span><span>% Máquina</span>
       </div>`;
-    maqsFiltradas.forEach(m=>{
-      const d=map[m]||{items:[],caixas:0,min:0};
+    MAQUINAS.forEach(m=>{
+      const d=map[m];
       const usedHrs=d.min/60;
       const capHrs=maqWeekHrs(m);
       const pct=maqPct(usedHrs,m);
@@ -2126,7 +2129,7 @@ function renderMaquinas(){
     document.getElementById('maq-grid').innerHTML=html;
   } else {
     document.getElementById('maq-grid').className='maq-grid';
-    document.getElementById('maq-grid').innerHTML=maqsFiltradas.map(m=>{
+    document.getElementById('maq-grid').innerHTML=MAQUINAS.map(m=>{
       const d=map[m];
       const usedHrs=d.min/60;
       const capHrs=maqWeekHrs(m);
@@ -2720,16 +2723,25 @@ function buildSchedule(monday){
     if(r.status==='Concluído') return false;
     const startDate=r.dtDesejada||r.dtSolicitacao;
     if(!startDate) return false;
-    // Registro da semana atual → sempre inclui
     if(startDate>=mondayStr && startDate<=sundayStr) return true;
-    // Registro de semana anterior → só overflow REAL (produção já iniciada)
-    // Pendente puro (totalProd===0) nunca vaza para outras semanas
     if(startDate<mondayStr){
-      const totalProd=(typeof calcularTotalProduzido==='function')
-        ?calcularTotalProduzido(r.id):0;
-      if(totalProd<=0) return false;           // pendente puro — não repete
-      const remaining=(r.qntCaixas||0)-totalProd;
-      return remaining>0;                       // overflow real: iniciado, não concluído
+      // Verificar se ainda há produção restante (overflow real)
+      const totalProd = (typeof calcularTotalProduzido==='function')
+        ? calcularTotalProduzido(r.id) : 0;
+      const remaining = (r.qntCaixas||0) - totalProd;
+      if(remaining <= 0) return false;
+      // Só entra como overflow se produção foi iniciada OU não há registro
+      // futuro para o mesmo produto+máquina (evita que S1 apareça no Gantt de S2/S3/S4
+      // quando a programação automática já criou registros separados por semana)
+      if(totalProd > 0) return true;
+      const hasFutureRecord = records.some(other =>
+        other.id !== r.id &&
+        other.maquina === r.maquina &&
+        other.produto === r.produto &&
+        other.status !== 'Concluído' &&
+        (other.dtDesejada || other.dtSolicitacao || '') >= mondayStr
+      );
+      return !hasFutureRecord;
     }
     return false;
   });
