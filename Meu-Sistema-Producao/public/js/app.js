@@ -3087,12 +3087,13 @@ function renderGanttSemanal(){
             const leftPct  = Math.max(0, seg.startPct).toFixed(1);
             const widthPct = Math.max(0.5, seg.endPct - seg.startPct).toFixed(1);
             const cx=seg.caixasNoDia;
+            const cxLabel=fmtCx(cx);
             const hrsLabel=fmtHrs(seg.hrsNoDia);
             const turnoTip=seg.turnoLabel?` · ${seg.turnoLabel}`:'';
             const obsTip=obs?` — ${obs}`:'';
             html+=`<div class="g-bar" style="left:${leftPct}%;width:${widthPct}%;background:${color};opacity:0.9;position:absolute;top:15%;height:70%"
-              title="${produto}${obsTip}${turnoTip} · ${cxLabel} cx · ${hrsLabel}">
-              <div class="g-bar-tip">${produto.substring(0,40)}${obs?'<br><span style=\"font-size:9px;opacity:.8\">'+obs+'</span>':''}<br>${cxLabel} cx · ${hrsLabel}${seg.turnoLabel?' · '+seg.turnoLabel:''}</div>
+              title="${produto}${obsTip}${turnoTip} · ${cx} cx · ${hrsLabel}">
+              <div class="g-bar-tip">${produto.substring(0,40)}${obs?'<br><span style=\"font-size:9px;opacity:.8\">'+obs+'</span>':''}<br>${cx} cx · ${hrsLabel}${seg.turnoLabel?' · '+seg.turnoLabel:''}</div>
             </div>`;
           });
           html+=`</div>`;
@@ -3660,11 +3661,6 @@ function getUnit(nome,cat){
 function fmtQty(v){
   if(!v||v<0.001) return '—';
   return v>=1000?(v).toLocaleString('pt-BR'):v>=100?v.toFixed(1):v>=10?v.toFixed(2):v.toFixed(3).replace(/\.?0+$/,'');
-}
-
-function fmtCx(v){
-  if(v==null || !isFinite(v) || Math.abs(v)<0.001) return '—';
-  return Math.round(v).toLocaleString('pt-BR');
 }
 
 // ===== INSUMOS POR MÁQUINA =====
