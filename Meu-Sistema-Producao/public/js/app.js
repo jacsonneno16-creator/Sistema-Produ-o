@@ -9867,8 +9867,37 @@ function switchTabSidebar(name) {
       container.appendChild(rPanel);
     }
     rPanel.classList.add('on');
-    // Renderizar o sub-tab ativo ao entrar na aba
-    setTimeout(() => grpRender(), 80);
+
+    // ── Injetar aba Categorias se ainda não existir ──
+    setTimeout(() => {
+      // Botão de tab
+      const tabBar = document.querySelector('.grp-tabs, [id*="grp-tabs"]');
+      const btnExiste = document.querySelector('[onclick*="grpSwitchTab(\'categorias\')"], [onclick*=\'grpSwitchTab("categorias")\']');
+      if (!btnExiste) {
+        // Achar o botão Gerencial para inserir depois dele
+        const btns = document.querySelectorAll('[onclick*="grpSwitchTab"]');
+        const btnGerencial = Array.from(btns).find(b => (b.getAttribute('onclick')||'').includes('gerencial'));
+        if (btnGerencial) {
+          const btnCat = document.createElement('button');
+          btnCat.className = btnGerencial.className || 'grp-tab-btn';
+          btnCat.setAttribute('onclick', "grpSwitchTab('categorias')");
+          btnCat.innerHTML = '🏷️ Categorias';
+          btnCat.style.cssText = btnGerencial.style.cssText || '';
+          btnGerencial.insertAdjacentElement('afterend', btnCat);
+        }
+      }
+      // Painel
+      if (!document.getElementById('grp-panel-categorias')) {
+        const painelGerencial = document.getElementById('grp-panel-gerencial');
+        if (painelGerencial) {
+          const painelCat = document.createElement('div');
+          painelCat.id = 'grp-panel-categorias';
+          painelCat.className = painelGerencial.className || 'grp-panel';
+          painelGerencial.insertAdjacentElement('afterend', painelCat);
+        }
+      }
+      grpRender();
+    }, 80);
   }
   if(name==='usuarios') { openSettings(); setTimeout(()=>settingsNav('usuarios'), 80); }
 }
@@ -15163,6 +15192,7 @@ function grpRender() {
     case 'funcionarios': _grpRenderFuncionarios(); break;
     case 'insumos':      _grpRenderInsumos();      break;
     case 'gerencial':    _grpRenderGerencial();    break;
+    case 'categorias':   _grpRenderCategorias();   break;
   }
 }
 
@@ -15462,7 +15492,183 @@ function _grpRenderGerencial() {
   ], linhas, null);
 }
 
-// ── grpClear — botão Limpar ───────────────────────────────────────
+// ── CATEGORIAS ────────────────────────────────────────────────────
+function _grpRenderCategorias() {
+  const body = document.getElementById('grp-panel-categorias');
+  if (!body) return;
+
+  const recs = _grpGetRecords();
+
+  // Mapear produto → categoria usando PRODUTOS cadastrados
+  function getCatDoProduto(nomeProduto) {
+    const np = (nomeProduto || '').trim().toLowerCase();
+    // 1. Buscar em PRODUTOS (Firestore)
+    const pArr = (typeof window.PRODUTOS !== 'undefined' ? window.PRODUTOS : []) || [];
+    const found = pArr.find(p => {
+      const desc = (p.descricao || p.desc || '').trim().toLowerCase();
+      const cod  = String(p.cod || '').trim();
+      return desc === np || np.startsWith(cod);
+    });
+    if (found && found.categoria) return found.categoria;
+    // 2. Buscar em fichaTecnicaData
+    const ft = (typeof fichaTecnicaData !== 'undefined' ? fichaTecnicaData : []) || [];
+    const ftFound = ft.find(p => (p.desc || p.descricao || '').trim().toLowerCase() === np);
+    if (ftFound && ftFound.categoria) return ftFound.categoria;
+    return 'Sem categoria';
+  }
+
+  // Agrupar por categoria
+  const porCat = {};
+  recs.forEach(r => {
+    const cat = getCatDoProduto(r.produto);
+    if (!porCat[cat]) porCat[cat] = { programado:0, realizado:0, ordens:0, produtos: new Set(), maquinas: new Set() };
+    porCat[cat].programado += r.qntCaixas || 0;
+    porCat[cat].realizado  += _grpRealizado(r);
+    porCat[cat].ordens++;
+    if (r.produto) porCat[cat].produtos.add(r.produto);
+    if (r.maquina) porCat[cat].maquinas.add(r.maquina);
+  });
+
+  if (!Object.keys(porCat).length) {
+    body.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text3);font-size:12px">Sem dados no período selecionado</div>';
+    return;
+  }
+
+  const totP = Object.values(porCat).reduce((a,d) => a + d.programado, 0);
+  const totR = Object.values(porCat).reduce((a,d) => a + d.realizado, 0);
+  const totE = totP > 0 ? Math.round(totR / totP * 100) : 0;
+
+  // Ordenar por programado desc
+  const sorted = Object.entries(porCat).sort((a,b) => b[1].programado - a[1].programado);
+
+  // ── KPI Cards no topo ──
+  const eficGeral = totP > 0 ? Math.round(totR / totP * 100) : 0;
+  const eficCor   = eficGeral >= 85 ? '#2ec97a' : eficGeral >= 70 ? '#f5c518' : '#e8321a';
+  const nCats     = sorted.length;
+
+  let html = `
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:18px">
+      ${[
+        { label:'Categorias',       val: nCats,                                         cor:'var(--purple)', icon:'🏷️' },
+        { label:'Prog. Total',      val: totP.toLocaleString('pt-BR') + ' cx',          cor:'var(--text2)',  icon:'📋' },
+        { label:'Real. Total',      val: totR.toLocaleString('pt-BR') + ' cx',          cor:'var(--cyan)',   icon:'📦' },
+        { label:'Eficiência Geral', val: eficGeral + '%',                               cor: eficCor,        icon:'📈' },
+      ].map(k => `
+        <div style="background:var(--s1);border:1px solid var(--border);border-radius:10px;padding:12px 14px;border-left:3px solid ${k.cor}">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+            <div style="font-size:9px;text-transform:uppercase;letter-spacing:.7px;color:var(--text3)">${k.label}</div>
+            <span style="font-size:16px">${k.icon}</span>
+          </div>
+          <div style="font-family:'JetBrains Mono',monospace;font-size:20px;font-weight:700;color:${k.cor}">${k.val}</div>
+        </div>`).join('')}
+    </div>`;
+
+  // ── Tabela + barra visual por categoria ──
+  html += `<div style="overflow-x:auto">
+    <table style="width:100%;border-collapse:collapse;font-size:12px">
+      <thead style="background:var(--s2);border-bottom:1px solid var(--border)">
+        <tr>
+          <th style="padding:9px 12px;text-align:left;font-family:'JetBrains Mono',monospace;font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.8px;color:var(--text3)">Categoria</th>
+          <th style="padding:9px 12px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.8px;color:var(--text3)">Ordens</th>
+          <th style="padding:9px 12px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.8px;color:var(--text3)">Produtos</th>
+          <th style="padding:9px 12px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.8px;color:var(--text3)">Programado</th>
+          <th style="padding:9px 12px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.8px;color:var(--text3)">Realizado</th>
+          <th style="padding:9px 12px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.8px;color:var(--text3)">Eficiência</th>
+          <th style="padding:9px 12px;text-align:left;font-family:'JetBrains Mono',monospace;font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.8px;color:var(--text3)">% do Total Prog.</th>
+        </tr>
+      </thead>
+      <tbody>`;
+
+  const BAR_COLORS_CAT = ['var(--cyan)','var(--purple)','var(--warn)','var(--green)','var(--orange)','#a78bfa','#f472b6','#34d399','#60a5fa','#fb923c'];
+  sorted.forEach(([cat, d], i) => {
+    const efic    = d.programado > 0 ? Math.round(d.realizado / d.programado * 100) : 0;
+    const eficCor = efic >= 85 ? '#2ec97a' : efic >= 70 ? '#f5c518' : '#e8321a';
+    const pctTotal = totP > 0 ? (d.programado / totP * 100) : 0;
+    const barCol  = BAR_COLORS_CAT[i % BAR_COLORS_CAT.length];
+    const bg      = i % 2 === 1 ? 'background:rgba(255,255,255,.01)' : '';
+    html += `<tr style="${bg}">
+      <td style="padding:9px 12px;font-weight:600;color:${barCol}">${cat}</td>
+      <td style="padding:9px 12px;text-align:right;font-family:'JetBrains Mono',monospace;color:var(--text2)">${d.ordens}</td>
+      <td style="padding:9px 12px;text-align:right;font-family:'JetBrains Mono',monospace;color:var(--text2)">${d.produtos.size}</td>
+      <td style="padding:9px 12px;text-align:right;font-family:'JetBrains Mono',monospace;color:var(--text2)">${d.programado.toLocaleString('pt-BR')}</td>
+      <td style="padding:9px 12px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:600;color:${eficCor}">${d.realizado.toLocaleString('pt-BR')}</td>
+      <td style="padding:9px 12px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:${eficCor}">${efic}%</td>
+      <td style="padding:9px 12px;min-width:140px">
+        <div style="display:flex;align-items:center;gap:6px">
+          <div style="flex:1;height:6px;background:var(--s3);border-radius:3px;overflow:hidden">
+            <div style="height:100%;width:${Math.min(100,pctTotal).toFixed(1)}%;background:${barCol};border-radius:3px"></div>
+          </div>
+          <span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:${barCol};font-weight:600;min-width:36px">${pctTotal.toFixed(1)}%</span>
+        </div>
+      </td>
+    </tr>`;
+  });
+
+  // Linha de total
+  html += `<tr style="background:rgba(242,101,34,.06);border-top:1px solid rgba(242,101,34,.2)">
+    <td style="padding:9px 12px;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--cyan)">TOTAL</td>
+    <td style="padding:9px 12px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--cyan)">${Object.values(porCat).reduce((a,d)=>a+d.ordens,0)}</td>
+    <td style="padding:9px 12px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--cyan)">${new Set(recs.map(r=>r.produto)).size}</td>
+    <td style="padding:9px 12px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--cyan)">${totP.toLocaleString('pt-BR')}</td>
+    <td style="padding:9px 12px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:${eficCor}">${totR.toLocaleString('pt-BR')}</td>
+    <td style="padding:9px 12px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:700;color:${eficCor}">${totE}%</td>
+    <td style="padding:9px 12px;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text3)">100%</td>
+  </tr>`;
+
+  html += `</tbody></table></div>`;
+
+  // ── Detalhe por categoria: produtos dentro de cada uma ──
+  html += `<div style="margin-top:20px">
+    <div style="font-size:10px;text-transform:uppercase;letter-spacing:.8px;color:var(--text3);font-family:'JetBrains Mono',monospace;margin-bottom:10px">▾ Detalhe por categoria</div>`;
+
+  sorted.forEach(([cat, d], i) => {
+    const barCol = BAR_COLORS_CAT[i % BAR_COLORS_CAT.length];
+    // Produtos desta categoria
+    const prodsDaCategoria = recs.filter(r => getCatDoProduto(r.produto) === cat);
+    const porProd = {};
+    prodsDaCategoria.forEach(r => {
+      if (!porProd[r.produto]) porProd[r.produto] = { programado:0, realizado:0 };
+      porProd[r.produto].programado += r.qntCaixas || 0;
+      porProd[r.produto].realizado  += _grpRealizado(r);
+    });
+    const prodLinhas = Object.entries(porProd).sort((a,b) => b[1].programado - a[1].programado);
+    html += `
+      <div style="background:var(--s1);border:1px solid var(--border);border-left:3px solid ${barCol};border-radius:8px;margin-bottom:10px;overflow:hidden">
+        <div style="padding:10px 14px;display:flex;align-items:center;justify-content:space-between;cursor:pointer;user-select:none" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='none'?'block':'none'">
+          <span style="font-weight:700;color:${barCol};font-size:13px">${cat}</span>
+          <span style="font-size:10px;color:var(--text3);font-family:'JetBrains Mono',monospace">${d.produtos.size} produto(s) · ${d.programado.toLocaleString('pt-BR')} cx prog. ▾</span>
+        </div>
+        <div style="display:none">
+          <table style="width:100%;border-collapse:collapse;font-size:11px">
+            <thead><tr style="background:var(--s2)">
+              <th style="padding:6px 14px;text-align:left;color:var(--text3);font-size:9px;text-transform:uppercase;letter-spacing:.6px">Produto</th>
+              <th style="padding:6px 12px;text-align:right;color:var(--text3);font-size:9px;text-transform:uppercase;letter-spacing:.6px">Programado</th>
+              <th style="padding:6px 12px;text-align:right;color:var(--text3);font-size:9px;text-transform:uppercase;letter-spacing:.6px">Realizado</th>
+              <th style="padding:6px 12px;text-align:right;color:var(--text3);font-size:9px;text-transform:uppercase;letter-spacing:.6px">Efic.</th>
+            </tr></thead>
+            <tbody>
+              ${prodLinhas.map(([prod, pd], pi) => {
+                const pe = pd.programado > 0 ? Math.round(pd.realizado / pd.programado * 100) : 0;
+                const pc = pe >= 85 ? '#2ec97a' : pe >= 70 ? '#f5c518' : '#e8321a';
+                const pbg = pi % 2 === 1 ? 'background:rgba(255,255,255,.01)' : '';
+                return `<tr style="${pbg}">
+                  <td style="padding:6px 14px;color:var(--text2)">${prod}</td>
+                  <td style="padding:6px 12px;text-align:right;font-family:'JetBrains Mono',monospace;color:var(--text2)">${pd.programado.toLocaleString('pt-BR')}</td>
+                  <td style="padding:6px 12px;text-align:right;font-family:'JetBrains Mono',monospace;color:${pc};font-weight:600">${pd.realizado.toLocaleString('pt-BR')}</td>
+                  <td style="padding:6px 12px;text-align:right;font-family:'JetBrains Mono',monospace;color:${pc};font-weight:700">${pe}%</td>
+                </tr>`;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>`;
+  });
+
+  html += `</div>`;
+  body.innerHTML = html;
+}
+
+
 function grpClear() {
   ['grp-dt-ini','grp-dt-fim','grp-maq','grp-prod','grp-func'].forEach(id => {
     const el = document.getElementById(id); if (el) el.value = '';
