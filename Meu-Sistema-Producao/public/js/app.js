@@ -1245,270 +1245,191 @@ window.rptSetTipo = rptSetTipo;
 window.rptNav = rptNav;
 window.renderRelatorio = renderRelatorio;
 
-// ===== RELATÓRIOS =====
-let relMode = 'mes';
 
-function renderRelatorio(){ return renderRelatorios(); }
+// ===== RELATÓRIO DE PRODUÇÃO PROGRAMADA =====
+let rptTipo = 'semana';
+let rptRef  = new Date();
 
-function relSetMode(mode){
-  relMode = mode;
-  ['mes','semana','dia'].forEach(m=>{
-    const btn = document.getElementById('rel-mode-' + m);
+function rptSetTipo(tipo){
+  rptTipo=tipo;
+  ['semana','mes','mes-semanas'].forEach(t=>{
+    const btn=document.getElementById('rpt-btn-'+t);
     if(!btn) return;
-    const on = m === mode;
-    btn.className = on ? 'btn btn-primary' : 'btn btn-ghost';
-    btn.style.borderRadius = '0';
-    btn.style.padding = '7px 14px';
-    btn.style.fontSize = '12px';
-    if(!on) btn.style.border = 'none';
+    if(t===tipo){btn.style.background='var(--cyan)';btn.style.color='#000';btn.style.fontWeight='700';}
+    else{btn.style.background='none';btn.style.color='var(--text2)';btn.style.fontWeight='400';}
   });
-  relPopulatePeriodFilters();
-  renderRelatorios();
+  renderRelatorio();
 }
 
-function relBuildPeriodOptions(){
-  const options = [];
-  const datas = records.map(r => r.dtDesejada || r.dtSolicitacao).filter(Boolean).sort();
-  if(!datas.length){
-    const now = new Date();
-    const ds = dateStr(now);
-    if(relMode === 'dia') return [{value: ds, label: now.toLocaleDateString('pt-BR')}];
-    if(relMode === 'semana'){
-      const mon = getWeekMonday(now);
-      const val = dateStr(mon);
-      const sun = new Date(mon); sun.setDate(sun.getDate()+6);
-      return [{value: val, label: `${mon.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'})} – ${sun.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'})}`}];
+function rptNav(dir){
+  const d=new Date(rptRef);
+  if(rptTipo==='semana') d.setDate(d.getDate()+dir*7);
+  else d.setMonth(d.getMonth()+dir);
+  rptRef=d;
+  renderRelatorio();
+}
+
+function rptGetPeriodLabel(){
+  if(rptTipo==='semana'){
+    const mon=getWeekMonday(rptRef);
+    const sun=new Date(mon);sun.setDate(sun.getDate()+6);
+    return mon.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'})+' – '+sun.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit',year:'numeric'});
+  }
+  return rptRef.toLocaleDateString('pt-BR',{month:'long',year:'numeric'});
+}
+
+function rptGetSlots(){
+  if(rptTipo==='semana'){
+    const mon=getWeekMonday(rptRef);
+    const sun=new Date(mon);sun.setDate(sun.getDate()+6);
+    return [{label:'Semana',start:mon,end:sun}];
+  } else if(rptTipo==='mes'){
+    const start=new Date(rptRef.getFullYear(),rptRef.getMonth(),1);
+    const end  =new Date(rptRef.getFullYear(),rptRef.getMonth()+1,0);
+    const lbl  =rptRef.toLocaleDateString('pt-BR',{month:'short',year:'numeric'});
+    return [{label:lbl,start,end}];
+  } else {
+    // mes-semanas
+    const mStart=new Date(rptRef.getFullYear(),rptRef.getMonth(),1);
+    const mEnd  =new Date(rptRef.getFullYear(),rptRef.getMonth()+1,0);
+    const slots=[];
+    let cur=getWeekMonday(mStart);
+    let wn=1;
+    while(cur<=mEnd){
+      const sun=new Date(cur);sun.setDate(sun.getDate()+6);
+      slots.push({label:'Sem '+wn,start:new Date(cur),end:new Date(sun)});
+      cur=new Date(sun);cur.setDate(cur.getDate()+1);
+      wn++;
     }
-    return [{value: `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`, label: now.toLocaleDateString('pt-BR',{month:'long',year:'numeric'})}];
-  }
-
-  const seen = new Set();
-  datas.forEach(ds => {
-    const dt = new Date(ds + 'T12:00:00');
-    let value = ds;
-    let label = dt.toLocaleDateString('pt-BR');
-    if(relMode === 'semana'){
-      const mon = getWeekMonday(dt);
-      value = dateStr(mon);
-      const sun = new Date(mon); sun.setDate(sun.getDate()+6);
-      label = `${mon.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'})} – ${sun.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'})}`;
-    } else if(relMode === 'mes'){
-      value = `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}`;
-      label = dt.toLocaleDateString('pt-BR',{month:'long',year:'numeric'});
-    }
-    if(!seen.has(value)){
-      seen.add(value);
-      options.push({value, label});
-    }
-  });
-  return options.reverse();
-}
-
-function relPopulatePeriodFilters(){
-  const a = document.getElementById('rel-periodo-a');
-  const b = document.getElementById('rel-periodo-b');
-  const prodSel = document.getElementById('rel-produto-filter');
-  const maqSel = document.getElementById('rel-maq-filter');
-  const catSel = document.getElementById('rel-cat-filter');
-  if(!a || !b) return;
-
-  const prevA = a.value;
-  const prevB = b.value;
-  const opts = relBuildPeriodOptions();
-  a.innerHTML = '<option value="">— Período A —</option>' + opts.map(o => `<option value="${o.value}">${o.label}</option>`).join('');
-  b.innerHTML = '<option value="">— Período B (opcional) —</option>' + opts.map(o => `<option value="${o.value}">${o.label}</option>`).join('');
-  a.value = opts.some(o => o.value === prevA) ? prevA : (opts[0]?.value || '');
-  b.value = opts.some(o => o.value === prevB) ? prevB : '';
-
-  if(prodSel){
-    const prev = prodSel.value;
-    const produtos = [...new Set(records.map(r => r.produto).filter(Boolean))].sort((x,y)=>x.localeCompare(y,'pt-BR'));
-    prodSel.innerHTML = '<option value="">Todos os produtos</option>' + produtos.map(p => `<option value="${p}">${p}</option>`).join('');
-    prodSel.value = produtos.includes(prev) ? prev : '';
-  }
-  if(maqSel){
-    const prev = maqSel.value;
-    const maqs = [...new Set(records.map(r => r.maquina).filter(Boolean))].sort((x,y)=>x.localeCompare(y,'pt-BR'));
-    maqSel.innerHTML = '<option value="">Todas as máquinas</option>' + maqs.map(m => `<option value="${m}">${m}</option>`).join('');
-    maqSel.value = maqs.includes(prev) ? prev : '';
-  }
-  if(catSel){
-    const prev = catSel.value;
-    const cats = getCategoriasProduto();
-    catSel.innerHTML = '<option value="">Todas categorias</option>' + cats.map(c => `<option value="${c}">${c}</option>`).join('');
-    catSel.value = cats.includes(prev) ? prev : '';
+    return slots;
   }
 }
 
-function relGetPeriodRange(value){
-  if(!value) return null;
-  if(relMode === 'dia'){
-    const d = new Date(value + 'T12:00:00');
-    return { start: d, end: d, label: d.toLocaleDateString('pt-BR') };
-  }
-  if(relMode === 'semana'){
-    const mon = new Date(value + 'T12:00:00');
-    const sun = new Date(mon); sun.setDate(sun.getDate()+6);
-    return { start: mon, end: sun, label: `${mon.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'})} – ${sun.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'})}` };
-  }
-  const [yy, mm] = value.split('-').map(Number);
-  const start = new Date(yy, mm-1, 1);
-  const end = new Date(yy, mm, 0);
-  return { start, end, label: start.toLocaleDateString('pt-BR',{month:'long',year:'numeric'}) };
-}
-
-function relGetRealizadoRecordNoPeriodo(rec, start, end){
-  let total = 0;
-  const d = new Date(start);
-  while(d <= end){
-    const ds = dateStr(d);
-    try{
-      const raw = localStorage.getItem('apon_' + aponKey(ds, rec.id));
-      if(raw){
-        const data = JSON.parse(raw);
-        total += Object.values(data).reduce((acc,v)=>acc + (parseInt(v)||0),0);
-      }
-    }catch(e){}
-    d.setDate(d.getDate()+1);
-  }
-  return total;
-}
-
-function relFiltrarRegistrosPorPeriodo(periodo){
-  if(!periodo) return [];
-  const s = dateStr(periodo.start);
-  const e = dateStr(periodo.end);
-  const produto = document.getElementById('rel-produto-filter')?.value || '';
-  const maq = document.getElementById('rel-maq-filter')?.value || '';
-  const cat = document.getElementById('rel-cat-filter')?.value || '';
-  return records.filter(r => {
-    const dt = r.dtDesejada || r.dtSolicitacao || '';
-    if(!dt || dt < s || dt > e) return false;
-    if(produto && r.produto !== produto) return false;
-    if(maq && r.maquina !== maq) return false;
-    if(cat && getProdutoCategoriaByNome(r.produto) !== cat) return false;
+function rptAggregate(slot,maqFilter){
+  const sStr=dateStr(slot.start);
+  const eStr=dateStr(slot.end);
+  const recs=records.filter(r=>{
+    const dt=r.dtDesejada||r.dtSolicitacao||'';
+    if(!dt||dt<sStr||dt>eStr) return false;
+    if(maqFilter&&r.maquina!==maqFilter) return false;
     return true;
   });
-}
-
-function relMontarResumoPeriodo(periodo){
-  const recs = relFiltrarRegistrosPorPeriodo(periodo);
-  const programado = recs.reduce((a,r)=>a + (parseInt(r.qntCaixas)||0),0);
-  const realizado = recs.reduce((a,r)=>a + relGetRealizadoRecordNoPeriodo(r, periodo.start, periodo.end), 0);
-  const pendentes = recs.filter(r => r.status === 'Pendente').length;
-  const maquinas = new Set(recs.map(r => r.maquina).filter(Boolean)).size;
-  const produtos = new Set(recs.map(r => r.produto).filter(Boolean)).size;
-  const categorias = new Set(recs.map(r => getProdutoCategoriaByNome(r.produto)).filter(Boolean)).size;
-  return { recs, programado, realizado, pendentes, maquinas, produtos, categorias };
-}
-
-function relRenderKpis(resumoA, resumoB){
-  const el = document.getElementById('rel-kpis');
-  if(!el) return;
-  const pctA = resumoA.programado ? Math.round((resumoA.realizado / resumoA.programado) * 100) : 0;
-  const pctB = resumoB ? (resumoB.programado ? Math.round((resumoB.realizado / resumoB.programado) * 100) : 0) : null;
-  const delta = resumoB ? (resumoA.programado - resumoB.programado) : null;
-  const cards = [
-    {t:'Programado', v: resumoA.programado.toLocaleString('pt-BR'), s: delta!=null ? `${delta>=0?'+':''}${delta.toLocaleString('pt-BR')} vs B` : `${resumoA.recs.length} registro(s)`},
-    {t:'Realizado', v: resumoA.realizado.toLocaleString('pt-BR'), s: `${pctA}% do programado`},
-    {t:'Pendentes', v: String(resumoA.pendentes), s: `${resumoA.maquinas} máquina(s)`},
-    {t:'Produtos', v: String(resumoA.produtos), s: `${resumoA.categorias} categoria(s)`},
-    {t:'Eficiência', v: `${pctA}%`, s: pctB!=null ? `B: ${pctB}%` : 'Sem comparação'}
-  ];
-  el.innerHTML = cards.map(c => `<div style="background:var(--s1);border:1px solid var(--border);border-radius:12px;padding:14px">
-    <div style="font-size:10px;text-transform:uppercase;letter-spacing:.8px;color:var(--text3);margin-bottom:8px">${c.t}</div>
-    <div style="font-family:'JetBrains Mono',monospace;font-size:24px;font-weight:700;color:var(--cyan)">${c.v}</div>
-    <div style="font-size:11px;color:var(--text3);margin-top:6px">${c.s}</div>
-  </div>`).join('');
-}
-
-function relRenderChart(periodoA, resumoA, periodoB, resumoB){
-  const el = document.getElementById('rel-chart');
-  const title = document.getElementById('rel-chart-title');
-  if(!el) return;
-  if(title){
-    title.textContent = periodoB ? `Programado vs Realizado · ${periodoA.label} × ${periodoB.label}` : `Programado vs Realizado · ${periodoA.label}`;
-  }
-  const itens = [
-    {nome: periodoA.label + ' · Programado', valor: resumoA.programado},
-    {nome: periodoA.label + ' · Realizado', valor: resumoA.realizado},
-  ];
-  if(periodoB && resumoB){
-    itens.push({nome: periodoB.label + ' · Programado', valor: resumoB.programado});
-    itens.push({nome: periodoB.label + ' · Realizado', valor: resumoB.realizado});
-  }
-  const max = Math.max(1, ...itens.map(i => i.valor));
-  el.innerHTML = `<div style="display:grid;gap:10px">${itens.map(i => `
-    <div style="display:grid;grid-template-columns:minmax(180px,260px) 1fr auto;gap:12px;align-items:center">
-      <div style="font-size:12px;color:var(--text2)">${i.nome}</div>
-      <div style="height:14px;background:var(--s2);border-radius:999px;overflow:hidden;border:1px solid var(--border)">
-        <div style="height:100%;width:${(i.valor/max)*100}%;background:var(--cyan)"></div>
-      </div>
-      <div style="font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--text)">${i.valor.toLocaleString('pt-BR')}</div>
-    </div>`).join('')}</div>`;
-}
-
-function relRenderTable(periodoA, resumoA, periodoB, resumoB){
-  const thead = document.getElementById('rel-thead');
-  const tbody = document.getElementById('rel-tbody');
-  if(!thead || !tbody) return;
-
-  const linhasA = {};
-  resumoA.recs.forEach(r => {
-    const key = `${r.maquina || '—'}__${r.produto || '—'}`;
-    if(!linhasA[key]) linhasA[key] = { maquina: r.maquina || '—', produto: r.produto || '—', categoria: getProdutoCategoriaByNome(r.produto) || '—', programadoA:0, realizadoA:0, programadoB:0, realizadoB:0 };
-    linhasA[key].programadoA += parseInt(r.qntCaixas) || 0;
-    linhasA[key].realizadoA += relGetRealizadoRecordNoPeriodo(r, periodoA.start, periodoA.end);
+  const caixas=recs.reduce((a,r)=>a+(r.qntCaixas||0),0);
+  const unids =recs.reduce((a,r)=>a+(r.qntUnid||0),0);
+  // realizado: sum apon data across slot dates
+  let realCaixas=0;
+  recs.forEach(r=>{
+    const d=new Date(slot.start);
+    while(dateStr(d)<=eStr){
+      const ds=dateStr(d);
+      try{
+        const key=aponKey(ds,r.id);
+        const raw=localStorage.getItem('apon_'+key);
+        if(raw){const data=JSON.parse(raw);realCaixas+=Object.values(data).reduce((a,v)=>a+(parseInt(v)||0),0);}
+      }catch(e){}
+      d.setDate(d.getDate()+1);
+    }
   });
-  if(resumoB){
-    resumoB.recs.forEach(r => {
-      const key = `${r.maquina || '—'}__${r.produto || '—'}`;
-      if(!linhasA[key]) linhasA[key] = { maquina: r.maquina || '—', produto: r.produto || '—', categoria: getProdutoCategoriaByNome(r.produto) || '—', programadoA:0, realizadoA:0, programadoB:0, realizadoB:0 };
-      linhasA[key].programadoB += parseInt(r.qntCaixas) || 0;
-      linhasA[key].realizadoB += relGetRealizadoRecordNoPeriodo(r, periodoB.start, periodoB.end);
-    });
+  const byMaq={};
+  recs.forEach(r=>{
+    if(!byMaq[r.maquina]) byMaq[r.maquina]={caixas:0,unids:0,qtd:0};
+    byMaq[r.maquina].caixas+=r.qntCaixas||0;
+    byMaq[r.maquina].unids +=r.qntUnid||0;
+    byMaq[r.maquina].qtd++;
+  });
+  return{recs:recs.length,caixas,unids,realCaixas,byMaq};
+}
+
+function renderRelatorio(){
+  const lbl=document.getElementById('rpt-period-label');
+  if(lbl) lbl.textContent=rptGetPeriodLabel();
+
+  // Populate machine filter
+  const maqSel=document.getElementById('rpt-maq-filter');
+  const savedMaq=maqSel?maqSel.value:'';
+  if(maqSel){
+    const maqs=[...new Set(records.map(r=>r.maquina).filter(Boolean))].sort();
+    maqSel.innerHTML='<option value="">Todas as máquinas</option>'+maqs.map(m=>`<option value="${m}"${m===savedMaq?' selected':''}>${m}</option>`).join('');
   }
-  const linhas = Object.values(linhasA).sort((a,b) => a.maquina.localeCompare(b.maquina,'pt-BR') || a.produto.localeCompare(b.produto,'pt-BR'));
-  thead.innerHTML = `<tr style="background:var(--s2);border-bottom:1px solid var(--border)">
-    <th style="padding:10px 12px;text-align:left">Máquina</th>
-    <th style="padding:10px 12px;text-align:left">Produto</th>
-    <th style="padding:10px 12px;text-align:left">Categoria</th>
-    <th style="padding:10px 12px;text-align:right">Prog. A</th>
-    <th style="padding:10px 12px;text-align:right">Real. A</th>
-    ${periodoB ? '<th style="padding:10px 12px;text-align:right">Prog. B</th><th style="padding:10px 12px;text-align:right">Real. B</th>' : ''}
-  </tr>`;
-  if(!linhas.length){
-    tbody.innerHTML = '<tr><td colspan="7" style="padding:20px;text-align:center;color:var(--text3)">Nenhum dado encontrado para os filtros selecionados.</td></tr>';
+  const maqFilter=maqSel?maqSel.value:'';
+
+  const slots=rptGetSlots();
+  const aggs=slots.map(sl=>({slot:sl,data:rptAggregate(sl,maqFilter)}));
+  const body=document.getElementById('rpt-body');
+  if(!body) return;
+
+  if(!records.length){
+    body.innerHTML='<div style="padding:28px;text-align:center;color:var(--text3);font-size:13px">📋 Nenhuma solicitação cadastrada ainda.</div>';
     return;
   }
-  tbody.innerHTML = linhas.map(l => `<tr style="border-bottom:1px solid var(--border)">
-    <td style="padding:9px 12px;color:var(--purple);font-family:'JetBrains Mono',monospace">${l.maquina}</td>
-    <td style="padding:9px 12px;color:var(--text)">${l.produto}</td>
-    <td style="padding:9px 12px;color:var(--text2)">${l.categoria}</td>
-    <td style="padding:9px 12px;text-align:right;color:var(--cyan);font-family:'JetBrains Mono',monospace">${l.programadoA.toLocaleString('pt-BR')}</td>
-    <td style="padding:9px 12px;text-align:right;color:var(--green);font-family:'JetBrains Mono',monospace">${l.realizadoA.toLocaleString('pt-BR')}</td>
-    ${periodoB ? `<td style="padding:9px 12px;text-align:right;color:var(--cyan);font-family:'JetBrains Mono',monospace">${l.programadoB.toLocaleString('pt-BR')}</td><td style="padding:9px 12px;text-align:right;color:var(--green);font-family:'JetBrains Mono',monospace">${l.realizadoB.toLocaleString('pt-BR')}</td>` : ''}
-  </tr>`).join('');
-}
 
-function renderRelatorios(){
-  relPopulatePeriodFilters();
-  const periodoA = relGetPeriodRange(document.getElementById('rel-periodo-a')?.value || '');
-  const periodoB = relGetPeriodRange(document.getElementById('rel-periodo-b')?.value || '');
-  const resumoA = periodoA ? relMontarResumoPeriodo(periodoA) : {recs:[],programado:0,realizado:0,pendentes:0,maquinas:0,produtos:0,categorias:0};
-  const resumoB = periodoB ? relMontarResumoPeriodo(periodoB) : null;
-  relRenderKpis(resumoA, resumoB);
-  if(periodoA){
-    relRenderChart(periodoA, resumoA, periodoB, resumoB);
-    relRenderTable(periodoA, resumoA, periodoB, resumoB);
-  } else {
-    const chart = document.getElementById('rel-chart');
-    if(chart) chart.innerHTML = '<div style="padding:20px;color:var(--text3);text-align:center">Selecione um período.</div>';
-    const tbody = document.getElementById('rel-tbody');
-    const thead = document.getElementById('rel-thead');
-    if(thead) thead.innerHTML = '';
-    if(tbody) tbody.innerHTML = '<tr><td style="padding:20px;text-align:center;color:var(--text3)">Selecione um período.</td></tr>';
+  const cols=Math.min(slots.length,4);
+  let html=`<div style="display:grid;grid-template-columns:repeat(${cols},1fr);gap:10px;margin-bottom:18px">`;
+  aggs.forEach(({slot,data})=>{
+    const pct=data.caixas>0?Math.min(100,Math.round(data.realCaixas/data.caixas*100)):0;
+    const pctColor=pct>=100?'var(--green)':pct>=50?'var(--cyan)':'var(--amber)';
+    const s=slot.start.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'});
+    const e=slot.end.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'});
+    html+=`<div style="background:var(--s2);border:1px solid var(--border);border-radius:12px;padding:16px 14px;overflow:hidden">
+      <div style="font-family:'JetBrains Mono',monospace;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--text3);margin-bottom:10px">${slot.label} <span style="color:var(--text4)">${s}–${e}</span></div>
+      <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:6px">
+        <div>
+          <div style="font-size:10px;color:var(--text3);margin-bottom:2px">Programado</div>
+          <div style="font-family:'JetBrains Mono',monospace;font-size:24px;font-weight:700;color:var(--cyan);line-height:1">${data.caixas.toLocaleString('pt-BR')}</div>
+          <div style="font-size:10px;color:var(--text3);margin-top:3px">caixas · ${data.recs} solic.</div>
+        </div>
+        <div style="text-align:right">
+          <div style="font-size:10px;color:var(--text3);margin-bottom:2px">Realizado</div>
+          <div style="font-family:'JetBrains Mono',monospace;font-size:22px;font-weight:700;color:${pctColor};line-height:1">${data.realCaixas.toLocaleString('pt-BR')}</div>
+          <div style="font-size:10px;color:${pctColor};margin-top:3px;font-weight:700">${pct}%</div>
+        </div>
+      </div>
+      <div style="margin-top:10px;height:5px;background:var(--s3);border-radius:3px;overflow:hidden">
+        <div style="height:100%;background:${pctColor};width:${pct}%;border-radius:3px;transition:width .6s ease"></div>
+      </div>
+    </div>`;
+  });
+  html+='</div>';
+
+  // Detail table
+  const allMaqs=[...new Set(aggs.flatMap(({data})=>Object.keys(data.byMaq)))].sort();
+  if(allMaqs.length===0){
+    html+='<div style="padding:20px;text-align:center;color:var(--text3);font-size:12px">Nenhuma solicitação no período selecionado.</div>';
+    body.innerHTML=html; return;
   }
+
+  html+=`<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px;min-width:480px">
+    <thead style="background:var(--s2);border-bottom:1px solid var(--border)"><tr>
+      <th style="padding:9px 12px;text-align:left;font-family:'JetBrains Mono',monospace;font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--text3)">Máquina</th>`;
+  aggs.forEach(({slot})=>{
+    const s=slot.start.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'});
+    const e=slot.end.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'});
+    html+=`<th style="padding:9px 12px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--cyan)">${slot.label}<br><span style="color:var(--text4);font-size:8px">${s}–${e}</span></th>`;
+  });
+  html+=`<th style="padding:9px 12px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--text3)">Total</th></tr></thead><tbody>`;
+
+  allMaqs.forEach((maq,mi)=>{
+    const rowBg=mi%2===1?'background:rgba(255,255,255,.01)':'';
+    html+=`<tr style="${rowBg}"><td style="padding:9px 12px;color:var(--purple);font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:700">${maq}</td>`;
+    let tot=0;
+    aggs.forEach(({data})=>{
+      const m=data.byMaq[maq]||{caixas:0,qtd:0};
+      tot+=m.caixas;
+      html+=`<td style="padding:9px 12px;text-align:center"><span style="color:var(--cyan);font-family:'JetBrains Mono',monospace;font-weight:600">${m.caixas.toLocaleString('pt-BR')}</span> <span style="font-size:10px;color:var(--text3)">(${m.qtd})</span></td>`;
+    });
+    html+=`<td style="padding:9px 12px;text-align:center;color:var(--text);font-family:'JetBrains Mono',monospace;font-weight:700">${tot.toLocaleString('pt-BR')}</td></tr>`;
+  });
+
+  let gTotal=0; aggs.forEach(({data})=>gTotal+=data.caixas);
+  html+=`<tr style="background:rgba(0,229,204,.04);border-top:1px solid rgba(0,229,204,.2)">
+    <td style="padding:10px 12px;font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--text3)">TOTAL</td>`;
+  aggs.forEach(({data})=>{
+    html+=`<td style="padding:10px 12px;text-align:center;color:var(--cyan);font-family:'JetBrains Mono',monospace;font-size:14px;font-weight:700">${data.caixas.toLocaleString('pt-BR')}</td>`;
+  });
+  html+=`<td style="padding:10px 12px;text-align:center;color:var(--cyan);font-family:'JetBrains Mono',monospace;font-size:16px;font-weight:700">${gTotal.toLocaleString('pt-BR')}</td></tr>
+  </tbody></table></div>`;
+
+  body.innerHTML=html;
 }
 
 // ===== TABLE WEEK FILTER =====
@@ -1820,27 +1741,14 @@ function getProdInfo(rec){
 // ===== MÁQUINAS =====
 function renderMaquinas(){
   const grid = document.getElementById('maq-grid');
+  // Mostra aviso se nenhuma máquina cadastrada no Firestore
   if (!MAQUINAS.length) {
-    if(grid) grid.innerHTML = '<div style="padding:32px;text-align:center;color:var(--text3);font-size:13px">⚙️ Nenhuma máquina cadastrada no Firestore.<br><span style="font-size:11px">Cadastre em <strong>Configurações → Máquinas → + Adicionar Máquina</strong></span></div>';
+    if(grid) grid.innerHTML = '<div style="padding:32px;text-align:center;color:var(--text3);font-size:13px">'
+      + '⚙️ Nenhuma máquina cadastrada no Firestore.<br>'
+      + '<span style="font-size:11px">Cadastre em <strong>Configurações → Máquinas → + Adicionar Máquina</strong></span></div>';
     return;
   }
-
-  const machineSel = document.getElementById('maq-machine-filter');
-  const catSel = document.getElementById('maq-cat-filter');
-  const savedMachine = machineSel ? machineSel.value : '';
-  const savedCat = catSel ? catSel.value : '';
-
-  if(machineSel){
-    machineSel.innerHTML = '<option value="">Todas as máquinas</option>' + MAQUINAS.map(m => `<option value="${m}"${m===savedMachine?' selected':''}>${m}</option>`).join('');
-  }
-  if(catSel){
-    const cats = getCategoriasProduto();
-    catSel.innerHTML = '<option value="">Todas categorias</option>' + cats.map(c => `<option value="${c}"${c===savedCat?' selected':''}>${c}</option>`).join('');
-  }
-
-  const maqFilter = machineSel ? machineSel.value : '';
-  const catFilter = catSel ? catSel.value : '';
-
+  // Apply week filter
   let filteredRecs = records.filter(r=>r.status!=='Concluído');
   if(maqWeekFilter){
     const m=new Date(maqWeekFilter+'T12:00:00');
@@ -1848,22 +1756,33 @@ function renderMaquinas(){
     const ms=dateStr(m), ss=dateStr(sun);
     filteredRecs=filteredRecs.filter(r=>{const d=r.dtDesejada||r.dtSolicitacao;return d&&d>=ms&&d<=ss;});
   }
-  if(catFilter){
-    filteredRecs = filteredRecs.filter(r => getProdutoCategoriaByNome(r.produto) === catFilter);
-  }
-
+  // Compute real weekly capacity from the actual dates of the filtered records
+  // Seg–Qui = 9h, Sex = 8h (DAY_HRS), or use DIA_SEMANA_HRS if date is mapped
+  // Collect unique dates from filtered records to find the week
   let WEEK_AVAIL_HRS;
   if(maqWeekFilter){
+    // Use the exact week from the filter
     const mon=new Date(maqWeekFilter+'T12:00:00');
     WEEK_AVAIL_HRS=getWeekDays(mon).reduce((a,d)=>a+hoursOnDay(d),0);
   } else if(filteredRecs.length>0){
+    // Use most recent record's week
     const sorted=[...filteredRecs].filter(r=>r.dtDesejada||r.dtSolicitacao).sort((a,b)=>{const da=b.dtDesejada||b.dtSolicitacao||'';const db=a.dtDesejada||a.dtSolicitacao||'';return da.localeCompare(db);});
     const mon=sorted.length>0?getWeekMonday(new Date((sorted[0].dtDesejada||sorted[0].dtSolicitacao)+'T12:00:00')):getWeekMonday(new Date());
     WEEK_AVAIL_HRS=getWeekDays(mon).reduce((a,d)=>a+hoursOnDay(d),0);
   } else {
+    // Default: Mon–Fri standard week (9+9+9+9+8 = 44h)
     WEEK_AVAIL_HRS=DAY_HRS.reduce((a,b)=>a+b,0);
   }
 
+  const map={};
+  MAQUINAS.forEach(m=>map[m]={items:[],caixas:0,min:0});
+  filteredRecs.forEach(r=>{
+    if(!map[r.maquina]) map[r.maquina]={items:[],caixas:0,min:0};
+    map[r.maquina].items.push(r);
+    map[r.maquina].caixas+=r.qntCaixas||0;
+  });
+  // Per-machine capacity: use real machine hours from turnosMaquinas config
+  // Determine the reference monday: from filter, from records, or current week
   const refMon = maqWeekFilter
     ? new Date(maqWeekFilter + 'T12:00:00')
     : (filteredRecs.length > 0
@@ -1874,41 +1793,29 @@ function renderMaquinas(){
           })()
         : getWeekMonday(new Date()));
 
-  const visibleMachines = maqFilter ? MAQUINAS.filter(m => m === maqFilter) : [...MAQUINAS];
-  const map={};
-  visibleMachines.forEach(m=>map[m]={items:[],caixas:0,min:0});
-  filteredRecs.forEach(r=>{
-    if(maqFilter && r.maquina !== maqFilter) return;
-    if(!map[r.maquina]) map[r.maquina]={items:[],caixas:0,min:0};
-    map[r.maquina].items.push(r);
-    map[r.maquina].caixas+=r.qntCaixas||0;
-  });
-
+  // Usar buildSchedule para calcular horas REAIS por máquina na semana de refMon
+  // (distribui corretamente pelos blocos/turnos configurados)
   if(typeof buildSchedule==='function'){
     const {schedule:sched} = buildSchedule(refMon);
-    visibleMachines.forEach(m=>{
-      const entries=(sched[m]||[]).filter(en => {
-        if(!catFilter) return true;
-        return (en.items||[]).some(it => getProdutoCategoriaByNome(it.produto) === catFilter);
-      });
+    MAQUINAS.forEach(m=>{
+      const entries=sched[m]||[];
       let minTot=0;
       entries.forEach(({segments,setupSegments})=>{
-        (segments||[]).forEach(s=>{ minTot+=s.hrsNoDia*60; });
+        segments.forEach(s=>{ minTot+=s.hrsNoDia*60; });
         (setupSegments||[]).forEach(s=>{ minTot+=s.setupMin; });
       });
       map[m].min=minTot;
     });
   } else {
+    // fallback: soma simples se buildSchedule não disponível
     filteredRecs.forEach((r,idx,arr)=>{
-      if(maqFilter && r.maquina !== maqFilter) return;
       const p=getProdInfo(r);
       const totalUnid=r.qntUnid||(r.qntCaixas*(p.unid||1));
-      if(p.pc_min && map[r.maquina]) map[r.maquina].min+=totalUnid/p.pc_min;
+      if(p.pc_min) map[r.maquina].min+=totalUnid/p.pc_min;
       const prevSameMaq=arr.slice(0,idx).filter(x=>x.maquina===r.maquina).pop();
-      if(prevSameMaq && map[r.maquina]) map[r.maquina].min+=getSetupMin(r.maquina, prevSameMaq.produto, r.produto);
+      if(prevSameMaq) map[r.maquina].min+=getSetupMin(r.maquina, prevSameMaq.produto, r.produto);
     });
   }
-
   function maqWeekHrs(maq){
     if(typeof weekHoursMaq === 'function') return weekHoursMaq(refMon, maq);
     return WEEK_AVAIL_HRS;
@@ -1916,43 +1823,18 @@ function renderMaquinas(){
   function maqPct(usedHrs, maq){
     const cap=maqWeekHrs(maq);
     if(!cap) return 0;
-    return parseFloat((usedHrs/cap*100).toFixed(1));
+    return Math.min(100,parseFloat((usedHrs/cap*100).toFixed(1)));
   }
   function maqColor(pct){return pct>100?'var(--red)':pct>=80?'var(--warn)':'var(--cyan)';}
-
-  const totalUsedMin = visibleMachines.reduce((acc,m)=>acc + (map[m]?.min || 0),0);
-  const totalCapHrs = visibleMachines.reduce((acc,m)=>acc + (maqWeekHrs(m) || 0),0);
-  const totalPct = totalCapHrs ? parseFloat(((totalUsedMin/60)/totalCapHrs*100).toFixed(1)) : 0;
-  const resLabel = document.getElementById('maq-ocupacao-label');
-  const resVal = document.getElementById('maq-ocupacao-valor');
-  const resDet = document.getElementById('maq-ocupacao-detalhe');
-  if(resLabel){
-    const lbls = [];
-    if(maqFilter) lbls.push(maqFilter);
-    else lbls.push('Todas as máquinas');
-    if(catFilter) lbls.push(catFilter);
-    resLabel.textContent = lbls.join(' · ');
-  }
-  if(resVal){
-    resVal.textContent = `${totalPct}%`;
-    resVal.style.color = maqColor(totalPct);
-  }
-  if(resDet){
-    resDet.textContent = `${fmtHrs(totalUsedMin/60)} / ${totalCapHrs}h`;
-  }
-
-  if(!visibleMachines.length){
-    grid.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text3);font-size:13px">Nenhuma máquina encontrada.</div>';
-    return;
-  }
+  function barColor(pct){return pct>100?'var(--red)':pct>=80?'var(--warn)':'var(--cyan)';}
 
   if(maqViewMode==='list'){
     let html=`<div class="maq-list-view">
       <div class="maq-list-row" style="background:var(--s2);font-family:'JetBrains Mono',monospace;font-size:10px;text-transform:uppercase;letter-spacing:.8px;color:var(--text3)">
         <span>Máquina</span><span>Ocupação da Semana</span><span>Caixas</span><span>Prog. / Disp.</span><span>% Máquina</span>
       </div>`;
-    visibleMachines.forEach(m=>{
-      const d=map[m] || {items:[],caixas:0,min:0};
+    MAQUINAS.forEach(m=>{
+      const d=map[m];
       const usedHrs=d.min/60;
       const capHrs=maqWeekHrs(m);
       const pct=maqPct(usedHrs,m);
@@ -1979,8 +1861,8 @@ function renderMaquinas(){
     document.getElementById('maq-grid').innerHTML=html;
   } else {
     document.getElementById('maq-grid').className='maq-grid';
-    document.getElementById('maq-grid').innerHTML=visibleMachines.map(m=>{
-      const d=map[m] || {items:[],caixas:0,min:0};
+    document.getElementById('maq-grid').innerHTML=MAQUINAS.map(m=>{
+      const d=map[m];
       const usedHrs=d.min/60;
       const capHrs=maqWeekHrs(m);
       const pct=maqPct(usedHrs,m);
@@ -1990,6 +1872,7 @@ function renderMaquinas(){
       const items=d.items.slice(0,4).map(r=>`<div class="maq-li">· ${r.produto.substring(0,38)}${r.produto.length>38?'...':''} <strong style="color:var(--text)">${r.qntCaixas}cx</strong></div>`).join('');
       const more=d.items.length>4?`<div class="maq-li" style="color:var(--text3)">+${d.items.length-4} mais...</div>`:'';
       const overFlag=pct>100?`<div style="font-size:9px;color:var(--red);margin-top:2px;font-family:'JetBrains Mono',monospace">⚠ Excede em ${(pct-100).toFixed(0)}%</div>`:'';
+      // Active shifts summary
       let turnosSumario='';
       if(typeof getTurnosMaquinaDia==='function'){
         const t=getTurnosMaquinaDia(m,1);
@@ -2220,8 +2103,7 @@ async function saveForm(){
   const selMaq=document.getElementById('f-maq-form').value;
 
   if(!selMaq){toast('Selecione a máquina','err');return;}
-  if((pCod==='' || pCod==null) && pNome==='—'){toast('Selecione um produto da lista','err');return;}
-  if(!pNome || pNome==='—'){toast('Selecione um produto da lista','err');return;}
+  if((pCod===null || String(pCod).trim()==='') || pNome==='—'){toast('Selecione um produto da lista','err');return;}
   if(!qnt||qnt<1){toast('Informe a quantidade em caixas','err');return;}
   if(!dtS || !/^\d{4}-\d{2}-\d{2}$/.test(dtS)){toast('Informe uma data de início válida (AAAA-MM-DD)','err');return;}
   // Validação extra: data não pode ser muito antiga
@@ -2231,7 +2113,7 @@ async function saveForm(){
   const eid=document.getElementById('edit-id').value;
   const dtFinal = dtS || new Date().toISOString().slice(0,10);
   const obj={
-    produto:pNome,prodCod:Number.isFinite(parseInt(pCod)) ? parseInt(pCod) : 0,maquina:pMaq||selMaq,pcMin,unidPorCx,
+    produto:pNome,prodCod:parseInt(pCod),maquina:pMaq||selMaq,pcMin,unidPorCx,
     qntCaixas:qnt,qntUnid:qnt*unidPorCx,
     status:document.getElementById('f-status').value,
     dtSolicitacao:dtFinal,
@@ -6687,7 +6569,7 @@ function settingsNav(section){
   }
 
   // ── Grupo Produtos ──
-  const prodGroupSections=['produtos','categoria-produtos','ficha-tecnica-cfg'];
+  const prodGroupSections=['produtos','categoria-produto','ficha-tecnica-cfg'];
   const prodGroupBtn=document.getElementById('snav-produtos-group-btn');
   const prodSubmenu=document.getElementById('snav-produtos-submenu');
   const prodChevron=document.getElementById('snav-produtos-chevron');
@@ -6715,8 +6597,8 @@ function settingsNav(section){
   if(section==='setup-maquinas') setTimeout(()=>renderSetupMaquinas(), 50);
   if(section==='gestao-lojas') setTimeout(()=>renderGestaoLojas(), 50);
   if(section==='ficha-tecnica-cfg') setTimeout(()=>renderFichaTecnicaCfg(), 50);
-  if(section==='categoria-produtos') setTimeout(()=>renderCategoriasCfg(), 50);
   if(section==='produtos') setTimeout(()=>renderProdutosCfg(), 50);
+  if(section==='categoria-produto') setTimeout(()=>renderCategoriasProdutoCfg(), 50);
 }
 
 function handleImportZip(file){
@@ -7344,97 +7226,6 @@ function saveExtraProdutos() { localStorage.setItem('cfg_produtos', JSON.stringi
 // Retorna todos os produtos: Firestore (PRODUTOS) + extras localStorage (PRODUTOS_EXTRA)
 function getAllProdutos() { return [...PRODUTOS, ...PRODUTOS_EXTRA]; }
 
-function getProdutoCategoriaByNome(nomeProduto){
-  const nome = String(nomeProduto || '').trim().toLowerCase();
-  if(!nome) return '';
-  const prod = getAllProdutos().find(p => String(p.descricao || '').trim().toLowerCase() === nome);
-  return String(prod?.categoria || '').trim();
-}
-
-function getCategoriasProduto(){
-  const set = new Set();
-  try{
-    const salvas = JSON.parse(localStorage.getItem('cfg_categorias_produtos') || '[]');
-    (salvas || []).forEach(c => { c = String(c || '').trim(); if(c) set.add(c); });
-  }catch(e){}
-  getAllProdutos().forEach(p => {
-    const c = String(p.categoria || '').trim();
-    if(c) set.add(c);
-  });
-  records.forEach(r => {
-    const c = getProdutoCategoriaByNome(r.produto);
-    if(c) set.add(c);
-  });
-  return [...set].sort((a,b)=>a.localeCompare(b,'pt-BR'));
-}
-
-function preencherSelectCategorias(selectId, selectedValue=''){
-  const el = document.getElementById(selectId);
-  if(!el) return;
-  const atual = selectedValue || el.value || '';
-  const primeiro = '<option value="">— Sem categoria —</option>';
-  const opts = getCategoriasProduto().map(c => `<option value="${c}"${c===atual?' selected':''}>${c}</option>`).join('');
-  el.innerHTML = primeiro + opts;
-  el.value = atual;
-}
-
-function salvarCategoriasProdutoStorage(lista){
-  localStorage.setItem('cfg_categorias_produtos', JSON.stringify([...(new Set((lista||[]).map(v => String(v||'').trim()).filter(Boolean)))].sort((a,b)=>a.localeCompare(b,'pt-BR'))));
-}
-
-function salvarCategoriaProduto(){
-  const inp = document.getElementById('cat-prod-nome');
-  const nome = String(inp?.value || '').trim();
-  if(!nome){ toast('Informe o nome da categoria','err'); return; }
-  const lista = getCategoriasProduto();
-  if(!lista.some(c => c.toLowerCase() === nome.toLowerCase())){
-    lista.push(nome);
-    salvarCategoriasProdutoStorage(lista);
-  }
-  if(inp) inp.value = '';
-  renderCategoriasCfg();
-  preencherSelectCategorias('pm-categoria');
-  renderMaquinas();
-  renderRelatorios();
-  toast('Categoria salva com sucesso','ok');
-}
-
-function excluirCategoriaProduto(nome){
-  const categoria = String(nome || '').trim();
-  if(!categoria) return;
-  if(!confirm(`Excluir a categoria "${categoria}" da lista?\n\nOs produtos já cadastrados com essa categoria não serão alterados.`)) return;
-  const lista = getCategoriasProduto().filter(c => c !== categoria);
-  salvarCategoriasProdutoStorage(lista);
-  renderCategoriasCfg();
-  preencherSelectCategorias('pm-categoria');
-  renderMaquinas();
-  renderRelatorios();
-  toast('Categoria removida da lista','ok');
-}
-
-function renderCategoriasCfg(){
-  const el = document.getElementById('categoria-produtos-lista');
-  if(!el) return;
-  const cats = getCategoriasProduto();
-  if(!cats.length){
-    el.innerHTML = '<div style="padding:20px;color:var(--text3);font-size:13px">Nenhuma categoria cadastrada.</div>';
-    return;
-  }
-  const uso = {};
-  getAllProdutos().forEach(p => {
-    const c = String(p.categoria || '').trim();
-    if(c) uso[c] = (uso[c] || 0) + 1;
-  });
-  el.innerHTML = cats.map(c => `
-    <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
-      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-        <span style="font-size:12px;color:var(--text);font-weight:600">${c}</span>
-        <span style="font-size:10px;color:var(--text3);font-family:'JetBrains Mono',monospace">${uso[c] || 0} produto(s)</span>
-      </div>
-      <button onclick="excluirCategoriaProduto('${c.replace(/'/g,"\\'")}')" style="background:none;border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:11px;color:var(--text3);cursor:pointer">Remover da lista</button>
-    </div>`).join('');
-}
-
 // Normaliza um documento Firestore de produto para o formato legado {cod, descricao, unid, pc_min, maquina}
 function normalizeProdutoFirestore(data) {
   return {
@@ -7625,7 +7416,6 @@ function renderProdutosCfg() {
         <div style="display:flex;align-items:center;gap:6px;margin-top:5px;flex-wrap:wrap">
           <span style="font-size:10px;color:${desativado?'var(--text4)':'var(--warn)'};font-family:'JetBrains Mono',monospace">${p.pc_min} und/min</span>
           <span style="font-size:10px;color:var(--text3);font-family:'JetBrains Mono',monospace">${p.unid}un/cx</span>
-          ${p.categoria ? `<span style="font-size:10px;color:var(--amber);font-family:'JetBrains Mono',monospace">${p.categoria}</span>` : ''}
           <span style="color:var(--text3);font-size:10px">·</span>
           ${maqTags}
         </div>
@@ -7704,11 +7494,10 @@ function openAddProduto() {
   const sel = document.getElementById('pm-maq');
   if (sel) sel.innerHTML = MAQUINAS.map(m => `<option value="${m}">${m}</option>`).join('');
   ['pm-cod','pm-desc','pm-unid','pm-pcmin'].forEach(id => { const el = document.getElementById(id); if(el) el.value = ''; });
+  if (typeof populateProdutoCategoriaSelect === 'function') populateProdutoCategoriaSelect('');
   ['pm-cobertura','pm-prod-min','pm-multiplo','pm-prioridade'].forEach(id => { const el = document.getElementById(id); if(el) el.value = ''; });
   const tipoMin = document.getElementById('pm-tipo-min'); if(tipoMin) tipoMin.value = '';
   const pmAtivo = document.getElementById('pm-ativo'); if(pmAtivo) pmAtivo.value = 'true';
-  preencherSelectCategorias('pm-categoria');
-  const pmCat = document.getElementById('pm-categoria'); if(pmCat) pmCat.value = '';
   const pmInsumos = document.getElementById('pm-insumos-list'); if(pmInsumos) pmInsumos.innerHTML = '';
   const titleEl = document.getElementById('prod-modal-title') || document.getElementById('maq-modal-title');
   if(titleEl) titleEl.textContent = 'Novo Produto';
@@ -7740,7 +7529,7 @@ function editarProduto(cod, maquina, descricao) {
   const elTipo = document.getElementById('pm-tipo-min');   if(elTipo) elTipo.value  = produto.tipoMinimo          || '';
   const elPrio = document.getElementById('pm-prioridade'); if(elPrio) elPrio.value  = produto.prioridadeProducao  || '';
   const elAtivo= document.getElementById('pm-ativo');      if(elAtivo) elAtivo.value = (produto.produtoAtivo !== false) ? 'true' : 'false';
-  preencherSelectCategorias('pm-categoria', produto.categoria || '');
+  if (typeof populateProdutoCategoriaSelect === 'function') populateProdutoCategoriaSelect(produto.categoria || '');
   
   // Popular máquinas no select
   const sel = document.getElementById('pm-maq');
@@ -7866,7 +7655,7 @@ async function saveProdModal() {
   const tipoMinimo         = document.getElementById('pm-tipo-min')?.value             || '';
   const prioridadeProducao = parseInt(document.getElementById('pm-prioridade')?.value) || 2;
   const produtoAtivo       = document.getElementById('pm-ativo')?.value !== 'false';
-  const categoria          = document.getElementById('pm-categoria')?.value?.trim() || '';
+  const categoria          = document.getElementById('pm-categoria')?.value || '';
 
   const dados = {
     cod, descricao: desc, unid, kg_fd: 0, pc_min: pcmin, maquina: maq, categoria,
@@ -7968,7 +7757,6 @@ async function saveProdModal() {
 
     // ── 5. Renderizar e fechar modal ──────────────────────────────────
     renderProdutosCfg();
-    renderCategoriasCfg();
     if (typeof renderFichaTecnicaCfg === 'function') renderFichaTecnicaCfg();
     if (typeof renderFichaTecnica === 'function') renderFichaTecnica();
     closeProdModal();
@@ -14823,11 +14611,570 @@ window.pa_onModoChange   = pa_onModoChange;
 window.pa_onMesChange    = function(){ if(paResultados.length) renderProgAutomaticaResultado(); };
 window.paToggleInsumos = paToggleInsumos;
 window.progToggleInsumos = progToggleInsumos;
-window.renderRelatorios = renderRelatorios;
+
+// ===== AJUSTES PONTUAIS — CATEGORIA / MÁQUINAS / RELATÓRIOS =====
+let maqMachineFilter = '';
+let maqCategoryFilter = '';
+let relMode = 'mes';
+
+function escapeHtml(v){
+  return String(v == null ? '' : v)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+function getCategoriasProdutoDisponiveis(){
+  const categorias = new Set();
+  try{
+    (getAllProdutos() || []).forEach(function(p){
+      const cat = (p && p.categoria ? String(p.categoria).trim() : '');
+      if(cat) categorias.add(cat);
+    });
+  }catch(e){}
+  try{
+    const extra = JSON.parse(localStorage.getItem('cfg_categorias_produto') || '[]');
+    if(Array.isArray(extra)) extra.forEach(function(cat){ if(cat) categorias.add(String(cat).trim()); });
+  }catch(e){}
+  return Array.from(categorias).filter(Boolean).sort((a,b)=>a.localeCompare(b,'pt-BR'));
+}
+
+function salvarCategoriasProdutoCfg(lista){
+  localStorage.setItem('cfg_categorias_produto', JSON.stringify((lista||[]).filter(Boolean)));
+}
+
+function getCategoriaDoRegistro(rec){
+  if(!rec) return '';
+  try{
+    const produtos = getAllProdutos() || [];
+    const byCod = produtos.find(function(p){
+      return String(p.cod||'') === String(rec.prodCod||'') && String(p.maquina||'') === String(rec.maquina||'');
+    });
+    if(byCod && byCod.categoria) return String(byCod.categoria).trim();
+    const byNome = produtos.find(function(p){
+      return String(p.descricao||'').trim().toLowerCase() === String(rec.produto||'').trim().toLowerCase()
+        && (!rec.maquina || String(p.maquina||'') === String(rec.maquina||''));
+    });
+    if(byNome && byNome.categoria) return String(byNome.categoria).trim();
+  }catch(e){}
+  return '';
+}
+
+function populateProdutoCategoriaSelect(selectedValue){
+  const sel = document.getElementById('pm-categoria');
+  if(!sel) return;
+  const cats = getCategoriasProdutoDisponiveis();
+  sel.innerHTML = '<option value="">— Sem categoria —</option>' + cats.map(function(cat){
+    const selected = String(cat) === String(selectedValue||'') ? ' selected' : '';
+    return '<option value="'+escapeHtml(cat)+'"'+selected+'>'+escapeHtml(cat)+'</option>';
+  }).join('');
+}
+
+function renderCategoriasProdutoCfg(){
+  const box = document.getElementById('categoria-produto-list');
+  if(!box) return;
+  const cats = getCategoriasProdutoDisponiveis();
+  if(!cats.length){
+    box.innerHTML = '<div style="padding:18px;text-align:center;color:var(--text3);font-size:12px">Nenhuma categoria cadastrada.</div>';
+    return;
+  }
+  box.innerHTML = cats.map(function(cat){
+    return '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:var(--s2);margin-bottom:8px">'
+      + '<div style="font-size:12px;color:var(--text)">'+escapeHtml(cat)+'</div>'
+      + '<button onclick="removerCategoriaProdutoCfg(\''+String(cat).replace(/'/g,"\\'")+'\')" style="background:none;border:1px solid rgba(255,71,87,.35);border-radius:6px;padding:5px 10px;color:var(--red,#ff4757);cursor:pointer;font-size:11px">Excluir</button>'
+      + '</div>';
+  }).join('');
+}
+
+function openAddCategoriaProduto(){
+  const nome = prompt('Nome da categoria:');
+  if(nome == null) return;
+  const cat = String(nome).trim();
+  if(!cat){ toast('Informe o nome da categoria','err'); return; }
+  const cats = getCategoriasProdutoDisponiveis();
+  if(cats.some(function(x){ return x.toLowerCase() === cat.toLowerCase(); })){
+    toast('Categoria já cadastrada','err'); return;
+  }
+  cats.push(cat);
+  salvarCategoriasProdutoCfg(cats);
+  renderCategoriasProdutoCfg();
+  populateProdutoCategoriaSelect(document.getElementById('pm-categoria')?.value || '');
+  atualizarFiltrosCategoriaGlobais();
+  toast('Categoria cadastrada','ok');
+}
+
+function removerCategoriaProdutoCfg(cat){
+  if(!confirm('Excluir a categoria "'+cat+'"?')) return;
+  const cats = getCategoriasProdutoDisponiveis().filter(function(x){ return String(x) !== String(cat); });
+  salvarCategoriasProdutoCfg(cats);
+  renderCategoriasProdutoCfg();
+  populateProdutoCategoriaSelect(document.getElementById('pm-categoria')?.value || '');
+  atualizarFiltrosCategoriaGlobais();
+  toast('Categoria removida','ok');
+}
+
+function atualizarFiltrosCategoriaGlobais(){
+  const cats = getCategoriasProdutoDisponiveis();
+  const combos = [
+    {id:'maq-category-filter', first:'Todas categorias', value: maqCategoryFilter},
+    {id:'rel-cat-filter', first:'Todas categorias', value: document.getElementById('rel-cat-filter') ? document.getElementById('rel-cat-filter').value : ''},
+  ];
+  combos.forEach(function(cfg){
+    const sel = document.getElementById(cfg.id);
+    if(!sel) return;
+    const current = cfg.value || '';
+    sel.innerHTML = '<option value="">'+cfg.first+'</option>' + cats.map(function(cat){
+      const selected = String(cat) === String(current) ? ' selected' : '';
+      return '<option value="'+escapeHtml(cat)+'"'+selected+'>'+escapeHtml(cat)+'</option>';
+    }).join('');
+  });
+}
+
+function atualizarFiltroMaquinasUI(){
+  const sel = document.getElementById('maq-machine-filter');
+  if(!sel) return;
+  const current = maqMachineFilter || '';
+  sel.innerHTML = '<option value="">Todas as máquinas</option>' + (MAQUINAS||[]).map(function(m){
+    const selected = String(m) === String(current) ? ' selected' : '';
+    return '<option value="'+escapeHtml(m)+'"'+selected+'>'+escapeHtml(m)+'</option>';
+  }).join('');
+}
+
+function setMaqMachineFilter(val){
+  maqMachineFilter = val || '';
+  renderMaquinas();
+}
+function setMaqCategoryFilter(val){
+  maqCategoryFilter = val || '';
+  renderMaquinas();
+}
+
+function relSetMode(mode){
+  relMode = mode || 'mes';
+  ['mes','semana','dia'].forEach(function(k){
+    const btn = document.getElementById('rel-mode-'+k);
+    if(!btn) return;
+    const on = k === relMode;
+    btn.className = on ? 'btn btn-primary' : 'btn btn-ghost';
+    btn.style.borderRadius='0';
+    btn.style.padding='7px 14px';
+    btn.style.fontSize='12px';
+    if(!on) btn.style.border='none';
+  });
+  renderRelatorios();
+}
+
+function relGetLabelForRange(a,b){
+  if(relMode === 'dia') return a;
+  if(relMode === 'semana'){
+    return a.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'}) + ' – ' + b.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'});
+  }
+  return a.toLocaleDateString('pt-BR',{month:'short',year:'numeric'});
+}
+
+function relBuildOptions(){
+  const datas = (records || []).map(function(r){ return r.dtDesejada || r.dtSolicitacao || ''; }).filter(Boolean).sort();
+  const hoje = new Date();
+  const items = [];
+  if(relMode === 'dia'){
+    const unicas = Array.from(new Set(datas));
+    if(!unicas.length) unicas.push(dateStr(hoje));
+    unicas.sort().reverse().forEach(function(ds){
+      items.push({value:ds, label:ds, start:new Date(ds+'T12:00:00'), end:new Date(ds+'T12:00:00')});
+    });
+  } else if(relMode === 'semana'){
+    const set = new Set();
+    (datas.length ? datas : [dateStr(hoje)]).forEach(function(ds){
+      const mon = getWeekMonday(new Date(ds+'T12:00:00'));
+      set.add(dateStr(mon));
+    });
+    Array.from(set).sort().reverse().forEach(function(monStr){
+      const a = new Date(monStr+'T12:00:00');
+      const b = new Date(a); b.setDate(b.getDate()+6);
+      items.push({value:monStr, label:relGetLabelForRange(a,b), start:a, end:b});
+    });
+  } else {
+    const set = new Set();
+    (datas.length ? datas : [dateStr(hoje)]).forEach(function(ds){
+      const d = new Date(ds+'T12:00:00');
+      const value = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0');
+      set.add(value);
+    });
+    Array.from(set).sort().reverse().forEach(function(v){
+      const [y,m] = v.split('-').map(Number);
+      const a = new Date(y,m-1,1,12,0,0);
+      const b = new Date(y,m,0,12,0,0);
+      items.push({value:v, label:relGetLabelForRange(a,b), start:a, end:b});
+    });
+  }
+  return items;
+}
+
+function relFillFilters(){
+  const prodSel = document.getElementById('rel-produto-filter');
+  const maqSel = document.getElementById('rel-maq-filter');
+  const catSel = document.getElementById('rel-cat-filter');
+  const aSel = document.getElementById('rel-periodo-a');
+  const bSel = document.getElementById('rel-periodo-b');
+
+  if(prodSel){
+    const current = prodSel.value || '';
+    const produtos = Array.from(new Set((records||[]).map(function(r){ return String(r.produto||'').trim(); }).filter(Boolean))).sort((a,b)=>a.localeCompare(b,'pt-BR'));
+    prodSel.innerHTML = '<option value="">Todos os produtos</option>' + produtos.map(function(p){
+      const selected = p===current ? ' selected' : '';
+      return '<option value="'+escapeHtml(p)+'"'+selected+'>'+escapeHtml(p)+'</option>';
+    }).join('');
+  }
+  if(maqSel){
+    const current = maqSel.value || '';
+    maqSel.innerHTML = '<option value="">Todas as máquinas</option>' + (MAQUINAS||[]).map(function(m){
+      const selected = m===current ? ' selected' : '';
+      return '<option value="'+escapeHtml(m)+'"'+selected+'>'+escapeHtml(m)+'</option>';
+    }).join('');
+  }
+  if(catSel){
+    const current = catSel.value || '';
+    const cats = getCategoriasProdutoDisponiveis();
+    catSel.innerHTML = '<option value="">Todas categorias</option>' + cats.map(function(cat){
+      const selected = cat===current ? ' selected' : '';
+      return '<option value="'+escapeHtml(cat)+'"'+selected+'>'+escapeHtml(cat)+'</option>';
+    }).join('');
+  }
+  const options = relBuildOptions();
+  if(aSel){
+    const curA = aSel.value || '';
+    aSel.innerHTML = '<option value="">— Período A —</option>' + options.map(function(op){
+      const selected = op.value===curA ? ' selected' : '';
+      return '<option value="'+op.value+'"'+selected+'>'+escapeHtml(op.label)+'</option>';
+    }).join('');
+    if(!aSel.value && options[0]) aSel.value = options[0].value;
+  }
+  if(bSel){
+    const curB = bSel.value || '';
+    bSel.innerHTML = '<option value="">— Período B (opcional) —</option>' + options.map(function(op){
+      const selected = op.value===curB ? ' selected' : '';
+      return '<option value="'+op.value+'"'+selected+'>'+escapeHtml(op.label)+'</option>';
+    }).join('');
+  }
+  return options;
+}
+
+function relGetOptionByValue(options, value){
+  return (options||[]).find(function(op){ return op.value === value; }) || null;
+}
+
+function relGetRealizadoPeriodo(rec, start, end){
+  if(!rec || !start || !end) return 0;
+  let total = 0;
+  const d = new Date(start);
+  while(d <= end){
+    total += rptGetRealizado(rec.id, [dateStr(d)]);
+    d.setDate(d.getDate()+1);
+  }
+  return total;
+}
+
+function relAggregatePeriod(periodo, filtros){
+  const startStr = dateStr(periodo.start);
+  const endStr = dateStr(periodo.end);
+  const recs = (records||[]).filter(function(r){
+    const dt = r.dtDesejada || r.dtSolicitacao || '';
+    if(!dt || dt < startStr || dt > endStr) return false;
+    if(filtros.maquina && String(r.maquina||'') !== String(filtros.maquina)) return false;
+    if(filtros.produto && String(r.produto||'') !== String(filtros.produto)) return false;
+    if(filtros.categoria && String(getCategoriaDoRegistro(r)||'') !== String(filtros.categoria)) return false;
+    return true;
+  });
+
+  let programado = 0, realizado = 0;
+  const byMaq = {};
+  recs.forEach(function(r){
+    const caixas = parseInt(r.qntCaixas) || 0;
+    const cat = getCategoriaDoRegistro(r) || 'Sem categoria';
+    programado += caixas;
+    realizado += relGetRealizadoPeriodo(r, periodo.start, periodo.end);
+    if(!byMaq[r.maquina]) byMaq[r.maquina] = {programado:0, realizado:0, qtd:0, categorias:new Set()};
+    byMaq[r.maquina].programado += caixas;
+    byMaq[r.maquina].realizado += relGetRealizadoPeriodo(r, periodo.start, periodo.end);
+    byMaq[r.maquina].qtd += 1;
+    byMaq[r.maquina].categorias.add(cat);
+  });
+  return {recs:recs, programado:programado, realizado:realizado, byMaq:byMaq};
+}
+
+function renderRelatorios(){
+  const panel = document.getElementById('panel-relatorios');
+  if(!panel) return;
+  const options = relFillFilters();
+  const periodoA = relGetOptionByValue(options, document.getElementById('rel-periodo-a')?.value) || options[0] || null;
+  const periodoB = relGetOptionByValue(options, document.getElementById('rel-periodo-b')?.value) || null;
+  const filtros = {
+    produto: document.getElementById('rel-produto-filter')?.value || '',
+    maquina: document.getElementById('rel-maq-filter')?.value || '',
+    categoria: document.getElementById('rel-cat-filter')?.value || ''
+  };
+
+  const kpis = document.getElementById('rel-kpis');
+  const chart = document.getElementById('rel-chart');
+  const chartTitle = document.getElementById('rel-chart-title');
+  const thead = document.getElementById('rel-thead');
+  const tbody = document.getElementById('rel-tbody');
+  if(!kpis || !chart || !thead || !tbody) return;
+
+  if(!periodoA){
+    kpis.innerHTML = '';
+    chart.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text3);font-size:12px">Nenhum período disponível.</div>';
+    thead.innerHTML = '';
+    tbody.innerHTML = '';
+    return;
+  }
+
+  const aggA = relAggregatePeriod(periodoA, filtros);
+  const aggB = periodoB ? relAggregatePeriod(periodoB, filtros) : null;
+  const pctA = aggA.programado > 0 ? Math.round((aggA.realizado / aggA.programado) * 100) : 0;
+  const pctB = aggB && aggB.programado > 0 ? Math.round((aggB.realizado / aggB.programado) * 100) : 0;
+  const deltaProg = aggB ? (aggA.programado - aggB.programado) : 0;
+  const deltaReal = aggB ? (aggA.realizado - aggB.realizado) : 0;
+
+  const cards = [
+    ['Programado A', aggA.programado.toLocaleString('pt-BR')],
+    ['Realizado A', aggA.realizado.toLocaleString('pt-BR')],
+    ['Atingimento A', pctA + '%'],
+    ['Solicitações A', String(aggA.recs.length)],
+    [aggB ? 'Δ Programado' : 'Filtro categoria', aggB ? deltaProg.toLocaleString('pt-BR') : (filtros.categoria || 'Todas')]
+  ];
+  kpis.innerHTML = cards.map(function(card){
+    return '<div style="background:var(--s1);border:1px solid var(--border);border-radius:12px;padding:14px 16px">'
+      + '<div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px">'+escapeHtml(card[0])+'</div>'
+      + '<div style="font-family:\'JetBrains Mono\',monospace;font-size:22px;font-weight:700;color:var(--cyan)">'+escapeHtml(card[1])+'</div>'
+      + '</div>';
+  }).join('');
+
+  chartTitle.textContent = aggB ? ('Comparativo — ' + periodoA.label + ' vs ' + periodoB.label) : ('Programado vs Realizado — ' + periodoA.label);
+  const maxVal = Math.max(aggA.programado, aggA.realizado, aggB ? aggB.programado : 0, aggB ? aggB.realizado : 0, 1);
+  function barRow(label, value){
+    const width = Math.max(3, Math.round((value / maxVal) * 100));
+    return '<div style="display:grid;grid-template-columns:180px 1fr 90px;gap:12px;align-items:center;margin-bottom:10px">'
+      + '<div style="font-size:12px;color:var(--text2)">'+escapeHtml(label)+'</div>'
+      + '<div style="height:12px;background:var(--s2);border-radius:999px;overflow:hidden"><div style="height:100%;width:'+width+'%;background:var(--cyan);border-radius:999px"></div></div>'
+      + '<div style="text-align:right;font-family:\'JetBrains Mono\',monospace;font-size:12px;color:var(--text)">'+Number(value||0).toLocaleString('pt-BR')+'</div>'
+      + '</div>';
+  }
+  let chartHtml = barRow('Programado A', aggA.programado) + barRow('Realizado A', aggA.realizado);
+  if(aggB) chartHtml += barRow('Programado B', aggB.programado) + barRow('Realizado B', aggB.realizado);
+  chart.innerHTML = chartHtml;
+
+  const maqs = Array.from(new Set(Object.keys(aggA.byMaq).concat(aggB ? Object.keys(aggB.byMaq) : []))).sort((a,b)=>a.localeCompare(b,'pt-BR'));
+  thead.innerHTML = '<tr>'
+    + '<th style="padding:10px 12px;text-align:left">Máquina</th>'
+    + '<th style="padding:10px 12px;text-align:center">'+escapeHtml(periodoA.label)+'<br><span style="font-size:10px;color:var(--text3)">Prog.</span></th>'
+    + '<th style="padding:10px 12px;text-align:center">'+escapeHtml(periodoA.label)+'<br><span style="font-size:10px;color:var(--text3)">Real.</span></th>'
+    + (aggB ? '<th style="padding:10px 12px;text-align:center">'+escapeHtml(periodoB.label)+'<br><span style="font-size:10px;color:var(--text3)">Prog.</span></th><th style="padding:10px 12px;text-align:center">'+escapeHtml(periodoB.label)+'<br><span style="font-size:10px;color:var(--text3)">Real.</span></th>' : '')
+    + '<th style="padding:10px 12px;text-align:center">Solic.</th>'
+    + '<th style="padding:10px 12px;text-align:left">Categoria(s)</th>'
+    + '</tr>';
+
+  if(!maqs.length){
+    tbody.innerHTML = '<tr><td colspan="'+(aggB ? 6 : 4)+'" style="padding:18px;text-align:center;color:var(--text3)">Nenhum relatório no recorte selecionado.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = maqs.map(function(maq){
+    const a = aggA.byMaq[maq] || {programado:0, realizado:0, qtd:0, categorias:new Set()};
+    const b = aggB ? (aggB.byMaq[maq] || {programado:0, realizado:0, qtd:0, categorias:new Set()}) : null;
+    const cats = Array.from(new Set([].concat(Array.from(a.categorias||[]), Array.from(b ? b.categorias || [] : [])))).filter(Boolean);
+    return '<tr style="border-top:1px solid var(--border)">'
+      + '<td style="padding:10px 12px;color:var(--purple);font-family:\'JetBrains Mono\',monospace;font-weight:700">'+escapeHtml(maq)+'</td>'
+      + '<td style="padding:10px 12px;text-align:center">'+Number(a.programado||0).toLocaleString('pt-BR')+'</td>'
+      + '<td style="padding:10px 12px;text-align:center">'+Number(a.realizado||0).toLocaleString('pt-BR')+'</td>'
+      + (aggB ? '<td style="padding:10px 12px;text-align:center">'+Number(b.programado||0).toLocaleString('pt-BR')+'</td><td style="padding:10px 12px;text-align:center">'+Number(b.realizado||0).toLocaleString('pt-BR')+'</td>' : '')
+      + '<td style="padding:10px 12px;text-align:center">'+Number(a.qtd||0).toLocaleString('pt-BR')+'</td>'
+      + '<td style="padding:10px 12px;color:var(--text2)">'+escapeHtml(cats.join(', ') || '—')+'</td>'
+      + '</tr>';
+  }).join('');
+}
+
+function relExportXLSX(){
+  try{
+    const table = document.querySelector('#panel-relatorios table');
+    if(!table){ toast('Nenhum relatório para exportar','err'); return; }
+    if(typeof XLSX === 'undefined'){
+      toast('Biblioteca de exportação não disponível','err'); return;
+    }
+    const wb = XLSX.utils.table_to_book(table, {sheet:'Relatorios'});
+    XLSX.writeFile(wb, 'relatorios.xlsx');
+  }catch(e){
+    console.error(e);
+    toast('Erro ao exportar relatório','err');
+  }
+}
+
+(function(){
+  const _renderMaquinasOriginal = renderMaquinas;
+  renderMaquinas = function(){
+    atualizarFiltroMaquinasUI();
+    atualizarFiltrosCategoriaGlobais();
+    const grid = document.getElementById('maq-grid');
+    const summary = document.getElementById('maq-occupancy-summary');
+    if(!grid) return _renderMaquinasOriginal();
+
+    if (!MAQUINAS.length) {
+      if(summary) summary.innerHTML = '';
+      return _renderMaquinasOriginal();
+    }
+
+    let filteredRecs = records.filter(function(r){ return r.status !== 'Concluído'; });
+    if(maqWeekFilter){
+      const m = new Date(maqWeekFilter+'T12:00:00');
+      const sun = new Date(m); sun.setDate(m.getDate()+6);
+      const ms = dateStr(m), ss = dateStr(sun);
+      filteredRecs = filteredRecs.filter(function(r){
+        const d = r.dtDesejada || r.dtSolicitacao;
+        return d && d >= ms && d <= ss;
+      });
+    }
+    if(maqMachineFilter){
+      filteredRecs = filteredRecs.filter(function(r){ return String(r.maquina||'') === String(maqMachineFilter); });
+    }
+    if(maqCategoryFilter){
+      filteredRecs = filteredRecs.filter(function(r){ return String(getCategoriaDoRegistro(r)||'') === String(maqCategoryFilter); });
+    }
+
+    let weekAvailHrs;
+    if(maqWeekFilter){
+      const mon = new Date(maqWeekFilter+'T12:00:00');
+      weekAvailHrs = getWeekDays(mon).reduce(function(a,d){ return a + hoursOnDay(d); },0);
+    } else if(filteredRecs.length>0){
+      const sorted = filteredRecs.filter(function(r){ return r.dtDesejada || r.dtSolicitacao; }).sort(function(a,b){
+        const da = b.dtDesejada || b.dtSolicitacao || '';
+        const db = a.dtDesejada || a.dtSolicitacao || '';
+        return da.localeCompare(db);
+      });
+      const mon = sorted.length ? getWeekMonday(new Date((sorted[0].dtDesejada||sorted[0].dtSolicitacao)+'T12:00:00')) : getWeekMonday(new Date());
+      weekAvailHrs = getWeekDays(mon).reduce(function(a,d){ return a + hoursOnDay(d); },0);
+    } else {
+      weekAvailHrs = DAY_HRS.reduce(function(a,b){ return a+b; },0);
+    }
+
+    const maquinasExibidas = (maqMachineFilter ? [maqMachineFilter] : (MAQUINAS||[]).slice()).filter(Boolean);
+    const map = {};
+    maquinasExibidas.forEach(function(m){ map[m] = {items:[], caixas:0, min:0}; });
+    filteredRecs.forEach(function(r){
+      if(!map[r.maquina]) return;
+      map[r.maquina].items.push(r);
+      map[r.maquina].caixas += r.qntCaixas || 0;
+    });
+
+    const refMon = maqWeekFilter
+      ? new Date(maqWeekFilter + 'T12:00:00')
+      : (filteredRecs.length > 0
+        ? (function(){
+            const sorted2 = filteredRecs.filter(function(r){ return r.dtDesejada || r.dtSolicitacao; })
+              .sort(function(a,b){ return (b.dtDesejada||b.dtSolicitacao||'').localeCompare(a.dtDesejada||a.dtSolicitacao||''); });
+            return getWeekMonday(new Date((sorted2[0].dtDesejada||sorted2[0].dtSolicitacao)+'T12:00:00'));
+          })()
+        : getWeekMonday(new Date()));
+
+    if(typeof buildSchedule === 'function'){
+      const built = buildSchedule(refMon);
+      const sched = built && built.schedule ? built.schedule : {};
+      maquinasExibidas.forEach(function(m){
+        const entries = sched[m] || [];
+        let minTot = 0;
+        entries.forEach(function(entry){
+          (entry.segments||[]).forEach(function(s){ minTot += (s.hrsNoDia||0)*60; });
+          (entry.setupSegments||[]).forEach(function(s){ minTot += s.setupMin || 0; });
+        });
+        map[m].min = minTot;
+      });
+    } else {
+      filteredRecs.forEach(function(r, idx, arr){
+        if(!map[r.maquina]) return;
+        const p = getProdInfo(r);
+        const totalUnid = r.qntUnid || (r.qntCaixas * (p.unid||1));
+        if(p.pc_min) map[r.maquina].min += totalUnid / p.pc_min;
+        const prevSameMaq = arr.slice(0, idx).filter(function(x){ return x.maquina===r.maquina; }).pop();
+        if(prevSameMaq) map[r.maquina].min += getSetupMin(r.maquina, prevSameMaq.produto, r.produto);
+      });
+    }
+
+    function maqWeekHrs(maq){
+      if(typeof weekHoursMaq === 'function') return weekHoursMaq(refMon, maq);
+      return weekAvailHrs;
+    }
+    function maqPct(usedHrs, maq){
+      const cap = maqWeekHrs(maq);
+      if(!cap) return 0;
+      return Math.min(100, parseFloat((usedHrs/cap*100).toFixed(1)));
+    }
+    function maqColor(pct){ return pct>=80 ? 'var(--warn)' : 'var(--cyan)'; }
+
+    let totalUsed = 0, totalCap = 0, totalItems = 0;
+    maquinasExibidas.forEach(function(m){
+      totalUsed += (map[m]?.min || 0)/60;
+      totalCap += maqWeekHrs(m) || 0;
+      totalItems += (map[m]?.items || []).length;
+    });
+    const totalPct = totalCap > 0 ? Math.min(100, parseFloat((totalUsed/totalCap*100).toFixed(1))) : 0;
+    const summaryLabel = maqMachineFilter
+      ? ('Máquina: ' + maqMachineFilter)
+      : (maqCategoryFilter ? ('Categoria: ' + maqCategoryFilter) : 'Todas as máquinas');
+    if(summary){
+      summary.innerHTML = '<div style="background:var(--s1);border:1px solid var(--border);border-radius:10px;padding:12px 14px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">'
+        + '<div><div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.8px;margin-bottom:4px">Ocupação total da semana</div><div style="font-size:12px;color:var(--text2)">'+escapeHtml(summaryLabel)+'</div></div>'
+        + '<div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap"><div style="font-family:\'JetBrains Mono\',monospace;color:var(--cyan);font-size:22px;font-weight:700">'+totalPct+'%</div>'
+        + '<div style="font-size:11px;color:var(--text3)">Prog. '+fmtHrs(totalUsed)+' / '+Number(totalCap||0).toLocaleString('pt-BR')+'h<br>'+totalItems+' solicitação(ões)</div></div>'
+        + '</div>';
+    }
+
+    if(maqViewMode==='list'){
+      let html = '<div class="maq-list-view"><div class="maq-list-row" style="background:var(--s2);font-family:\'JetBrains Mono\',monospace;font-size:10px;text-transform:uppercase;letter-spacing:.8px;color:var(--text3)"><span>Máquina</span><span>Ocupação da Semana</span><span>Caixas</span><span>Prog. / Disp.</span><span>% Máquina</span></div>';
+      maquinasExibidas.forEach(function(m){
+        const d = map[m] || {items:[],caixas:0,min:0};
+        const usedHrs = d.min/60;
+        const capHrs = maqWeekHrs(m);
+        const pct = maqPct(usedHrs,m);
+        const col = maqColor(pct);
+        html += '<div class="maq-list-row"><div style="font-family:\'JetBrains Mono\',monospace;font-weight:500;font-size:13px;color:var(--purple)">'+escapeHtml(m)+'</div>'
+          + '<div><div class="maq-bar-bg" style="margin:0"><div class="maq-bar" style="width:'+pct+'%;background:'+col+'"></div></div><div style="font-size:10px;color:var(--text3);margin-top:3px;font-family:\'JetBrains Mono\',monospace">'+d.items.length+' solicit.</div></div>'
+          + '<div style="color:'+col+';font-family:\'JetBrains Mono\',monospace;font-weight:600">'+Number(d.caixas||0).toLocaleString('pt-BR')+' cx</div>'
+          + '<div style="color:var(--text2);font-family:\'JetBrains Mono\',monospace;font-size:11px"><span style="color:'+col+';font-weight:700">'+fmtHrs(usedHrs)+'</span><span style="color:var(--text3)"> / '+capHrs+'h</span></div>'
+          + '<div style="color:'+col+';font-family:\'JetBrains Mono\',monospace;font-weight:700">'+pct+'%</div></div>';
+      });
+      html += '</div>';
+      grid.className = '';
+      grid.innerHTML = html;
+    } else {
+      grid.className = 'maq-grid';
+      grid.innerHTML = maquinasExibidas.map(function(m){
+        const d = map[m] || {items:[],caixas:0,min:0};
+        const usedHrs = d.min/60;
+        const capHrs = maqWeekHrs(m);
+        const pct = maqPct(usedHrs,m);
+        const col = maqColor(pct);
+        const items = d.items.slice(0,4).map(function(r){
+          return '<div class="maq-li">· '+escapeHtml(String(r.produto||'').substring(0,38))+(String(r.produto||'').length>38?'...':'')+' <strong style="color:var(--text)">'+Number(r.qntCaixas||0).toLocaleString('pt-BR')+'cx</strong></div>';
+        }).join('');
+        const more = d.items.length>4 ? '<div class="maq-li" style="color:var(--text3)">+'+(d.items.length-4)+' mais...</div>' : '';
+        return '<div class="maq-card" style="cursor:pointer" onclick="toggleMaqCardDetail(\'maqcard-'+m.replace(/[^a-zA-Z0-9]/g,'_')+'\')"><div class="maq-title">'+escapeHtml(m)+'</div>'
+          + '<div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text2);font-family:\'JetBrains Mono\',monospace;margin-top:4px"><span>'+d.items.length+' solicit.</span><span><strong style="color:'+col+'">'+Number(d.caixas||0).toLocaleString('pt-BR')+'</strong> caixas</span></div>'
+          + '<div class="maq-bar-bg"><div class="maq-bar" style="width:'+pct+'%;background:'+col+'"></div></div>'
+          + '<div style="display:flex;justify-content:space-between;align-items:center;font-family:\'JetBrains Mono\',monospace;font-size:11px;margin-top:4px"><span style="color:var(--text3)">Prog:</span><span style="color:'+col+';font-weight:700">'+fmtHrs(usedHrs)+'</span><span style="color:var(--text3)">/ '+capHrs+'h disp.</span><span style="color:'+col+';font-weight:700;font-size:12px">'+pct+'%</span></div>'
+          + (d.items.length ? '<div class="maq-list">'+items+more+'</div>' : '')
+          + '<div id="maqcard-'+m.replace(/[^a-zA-Z0-9]/g,'_')+'" style="display:none;margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">'+buildMaqCardDetail(m)+'</div>'
+          + '<div style="text-align:center;margin-top:6px;font-size:10px;color:var(--text3)">▾ detalhes</div></div>';
+      }).join('');
+      if(!maquinasExibidas.length){
+        grid.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text3);font-size:12px">Nenhuma máquina encontrada para o filtro selecionado.</div>';
+      }
+    }
+  };
+})();
+
+window.setMaqMachineFilter = setMaqMachineFilter;
+window.setMaqCategoryFilter = setMaqCategoryFilter;
 window.relSetMode = relSetMode;
-window.relExportXLSX = function(){
-  toast('Exportação de relatórios disponível para implementação posterior sem alterar os dados da tela.', 'ok');
-};
-window.salvarCategoriaProduto = salvarCategoriaProduto;
-window.excluirCategoriaProduto = excluirCategoriaProduto;
-window.renderCategoriasCfg = renderCategoriasCfg;
+window.renderRelatorios = renderRelatorios;
+window.relExportXLSX = relExportXLSX;
+window.openAddCategoriaProduto = openAddCategoriaProduto;
+window.removerCategoriaProdutoCfg = removerCategoriaProdutoCfg;
+window.renderCategoriasProdutoCfg = renderCategoriasProdutoCfg;
+

@@ -259,10 +259,10 @@
         <select id="maq-week-filter" onchange="filterMaqWeek(this.value)" style="font-size:12px;padding:7px 10px;min-width:180px">
           <option value="">Todas as semanas</option>
         </select>
-        <select id="maq-machine-filter" onchange="renderMaquinas()" style="font-size:12px;padding:7px 10px;min-width:170px">
+        <select id="maq-machine-filter" onchange="setMaqMachineFilter(this.value)" style="font-size:12px;padding:7px 10px;min-width:180px">
           <option value="">Todas as máquinas</option>
         </select>
-        <select id="maq-cat-filter" onchange="renderMaquinas()" style="font-size:12px;padding:7px 10px;min-width:170px">
+        <select id="maq-category-filter" onchange="setMaqCategoryFilter(this.value)" style="font-size:12px;padding:7px 10px;min-width:180px">
           <option value="">Todas categorias</option>
         </select>
         <div style="display:flex;background:var(--s1);border:1px solid var(--border);border-radius:8px;overflow:hidden">
@@ -271,14 +271,7 @@
         </div>
       </div>
     </div>
-    <div id="maq-ocupacao-resumo" style="margin-bottom:12px;background:var(--s1);border:1px solid var(--border);border-radius:10px;padding:10px 14px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
-      <div style="font-size:11px;text-transform:uppercase;letter-spacing:.8px;color:var(--text3)">Ocupação total da semana</div>
-      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-        <span id="maq-ocupacao-label" style="font-size:12px;color:var(--text2)">Todas as máquinas</span>
-        <span id="maq-ocupacao-valor" style="font-family:'JetBrains Mono',monospace;font-size:22px;font-weight:700;color:var(--cyan)">0%</span>
-        <span id="maq-ocupacao-detalhe" style="font-size:11px;color:var(--text3)">0h / 0h</span>
-      </div>
-    </div>
+    <div id="maq-occupancy-summary" style="margin-bottom:12px"></div>
     <div class="maq-grid" id="maq-grid"></div>
   </div>
 
@@ -938,6 +931,10 @@
             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/></svg>
             Cadastro de Produtos
           </button>
+          <button onclick="settingsNav('categoria-produto')" id="snav-categoria-produto" class="snav-btn" style="width:100%;text-align:left;background:none;border:1px solid transparent;border-radius:6px;padding:6px 10px;color:var(--text2);font-family:'Space Grotesk',sans-serif;font-size:11px;cursor:pointer;display:flex;align-items:center;gap:7px;transition:all .15s" onmouseover="if(!this.classList.contains('snav-active'))this.style.background='var(--s2)'" onmouseout="if(!this.classList.contains('snav-active'))this.style.background='none'">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 7h-9"/><path d="M14 17H5"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/></svg>
+            Categoria
+          </button>
           <button onclick="settingsNav('ficha-tecnica-cfg')" id="snav-ficha-tecnica-cfg" class="snav-btn" style="width:100%;text-align:left;background:none;border:1px solid transparent;border-radius:6px;padding:6px 10px;color:var(--text2);font-family:'Space Grotesk',sans-serif;font-size:11px;cursor:pointer;display:flex;align-items:center;gap:7px;transition:all .15s" onmouseover="if(!this.classList.contains('snav-active'))this.style.background='var(--s2)'" onmouseout="if(!this.classList.contains('snav-active'))this.style.background='none'">
             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
             Ficha Técnica
@@ -1066,6 +1063,19 @@
       </div>
 
       <!-- SEÇÃO FUNCIONÁRIOS DA PRODUÇÃO -->
+      <div id="scontent-categoria-produto" class="scontent" style="display:none;flex-direction:column;gap:0">
+        <div style="background:var(--s1);border:1px solid var(--border);border-radius:10px;overflow:hidden">
+          <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between">
+            <div style="display:flex;align-items:center;gap:8px">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--cyan)" stroke-width="2" stroke-linecap="round"><path d="M20 7h-9"/><path d="M14 17H5"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/></svg>
+              <span style="font-size:13px;font-weight:700;color:var(--text)">Categoria de Produtos</span>
+            </div>
+            <button onclick="openAddCategoriaProduto()" style="background:var(--cyan);color:#000;border:none;border-radius:6px;padding:5px 12px;font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:11px;cursor:pointer">+ Adicionar</button>
+          </div>
+          <div id="categoria-produto-list" style="padding:10px 12px"></div>
+        </div>
+      </div>
+
       <div id="scontent-funcionarios" class="scontent" style="display:none;flex-direction:column;gap:0">
         <div style="background:var(--s1);border:1px solid var(--border);border-radius:10px;overflow:hidden">
           <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between">
@@ -1133,23 +1143,6 @@
       <div id="scontent-turnos" class="scontent" style="display:none;flex-direction:column;gap:0"></div>
 
       <!-- SEÇÃO TEMPOS DE SETUP -->
-
-      <div id="scontent-categoria-produtos" class="scontent" style="display:none;flex-direction:column;gap:12px">
-        <div style="padding:16px 18px;border-bottom:1px solid var(--border)">
-          <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
-            <div>
-              <span style="font-size:13px;font-weight:700;color:var(--text)">Categorias de Produtos</span>
-              <div style="font-size:11px;color:var(--text3);margin-top:4px">Cadastre e visualize as categorias usadas nos produtos.</div>
-            </div>
-            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-              <input id="cat-prod-nome" type="text" placeholder="Nome da categoria" style="min-width:220px;background:var(--s2);border:1px solid var(--border);border-radius:6px;padding:7px 12px;color:var(--text);font-family:'Space Grotesk',sans-serif;font-size:12px;outline:none">
-              <button class="btn btn-primary" onclick="salvarCategoriaProduto()" style="padding:7px 12px">+ Adicionar</button>
-            </div>
-          </div>
-        </div>
-        <div id="categoria-produtos-lista" style="display:flex;flex-direction:column"></div>
-      </div>
-
       <div id="scontent-setup-maquinas" class="scontent" style="display:none;flex-direction:column;gap:12px">
         <div style="background:var(--s1);border:1px solid var(--border);border-radius:10px;overflow:hidden">
           <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between">
