@@ -535,7 +535,7 @@ async function carregarSetupFirestore() {
     SETUP_FIRESTORE = {};
     snap.docs.forEach(d => {
       const data = d.data();
-      const maq = (data.maquina || '').toUpperCase().trim();
+      const maq = data.maquina || '';
       const pA = normProd(data.produto_origem || '');
       const pB = normProd(data.produto_destino || '');
       const t = parseInt(data.tempo_setup) || 0;
@@ -574,33 +574,18 @@ async function salvarSetupFirestore(maquina, prodOrigem, prodDestino, tempoMinut
   } catch(e) { toast('Erro ao salvar setup: ' + e.message, 'err'); }
 }
 
-// Normaliza nome de produto para chave de lookup de setup.
-// Remove o sufixo de embalagem (ex: "- CX 12", "- UN 6") que não faz parte
-// da identidade do produto para fins de troca de setup.
+// Normaliza nome de produto para chave de lookup
 function normProd(s){
   return (s||'').toUpperCase().trim()
-    // Remover sufixo de embalagem antes de qualquer outra coisa:
-    //   "PRODUTO X - CX 12"  → "PRODUTO X"
-    //   "PRODUTO X CX 12"    → "PRODUTO X"   (sem travessão)
-    //   "PRODUTO X - UN 6"   → "PRODUTO X"
-    //   "PRODUTO X - PCT 24" → "PRODUTO X"
-    .replace(/\s*[-–]\s*(CX|UN|PCT|FD|SC|BD|KG|KIT)\s*\d+.*$/i, '')
-    .replace(/\s+(CX|UN|PCT|FD|SC|BD|KG|KIT)\s+\d+.*$/i, '')
-    // Normalizar pontuação e espaços
-    .replace(/[_\-]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-    // Variantes de marca / localização
-    .replace(/\bDA\s+TERRINHA\b/g,  'TERRINHA')
-    .replace(/\bDE\s+TERRINHA\b/g,  'TERRINHA')
-    .replace(/\bDATERRINHA\b/g,     'TERRINHA')
-    .replace(/\bDO\s+RANCHO\b/g,    'RANCHO')
-    .replace(/\bCOOP\b/g,           'COOP')
-    .replace(/\bMERCADAO\b/g,       'MERCADAO')
-    .replace(/\bOBA\b/g,            'OBA')
-    // Colapsar espaços finais novamente após substituições
-    .replace(/\s+/g, ' ')
-    .trim();
+    .replace(/\s+/g,' ')
+    .replace(/[_\-]+/g,' ')
+    .replace(/\bDA\s+TERRINHA\b/g,'TERRINHA')
+    .replace(/\bDE\s+TERRINHA\b/g,'TERRINHA')
+    .replace(/\bDATERRINHA\b/g,'TERRINHA')
+    .replace(/\bDO\s+RANCHO\b/g,'RANCHO')
+    .replace(/\bCOOP\b/g,'COOP')
+    .replace(/\bMERCADAO\b/g,'MERCADAO')
+    .replace(/\bOBA\b/g,'OBA');
 }
 
 // Matriz de setup: agora vem exclusivamente do Firestore (coleção setup_maquinas).
@@ -612,10 +597,9 @@ const SETUP_DATA = {};
 function getSetupMin(maq, prodDescA, prodDescB) {
   if (!maq || !prodDescA || !prodDescB) return 0;
   if (prodDescA === prodDescB) return 0;
-  const maqNorm = (maq || '').toUpperCase().trim();
 
   // 1) Firestore (carregarSetupFirestore populou SETUP_FIRESTORE)
-  const fsMaq = SETUP_FIRESTORE[maqNorm];
+  const fsMaq = SETUP_FIRESTORE[maq];
   if (fsMaq) {
     const normA = normProd(prodDescA);
     const normB = normProd(prodDescB);
@@ -1721,37 +1705,48 @@ function fmtHrs(h){
 // Central helper: get reliable pc_min and unid for a record
 function getProdInfo(rec){
   const all = getAllProdutos();
-
-  // Resolve ficha do produto (por código ou nome)
-  let ficha = null;
-  if(rec.prodCod) ficha = all.find(x => x.cod === rec.prodCod);
-  if(!ficha && rec.produto) ficha = all.find(x => rec.produto.startsWith(x.descricao.substring(0,22)));
-
-  // Velocidade da máquina específica para este produto.
-  // getPcMinMaquinaProduto lê de produtosCompativeis[].velocidade da máquina correta.
-  const nomeProduto = ficha ? ficha.descricao : (rec.produto || '');
-  const velMaquina = rec.maquina ? getPcMinMaquinaProduto(rec.maquina, nomeProduto) : null;
-
-  if(ficha){
-    // Ordem de prioridade da velocidade:
-    // 1. Velocidade configurada na máquina para este produto (produtosCompativeis)
-    // 2. pcMin salvo no registro (calculado pela PA para a máquina específica)
-    // 3. Velocidade genérica da ficha do produto (fallback)
-    const pcMinFinal = (velMaquina && velMaquina > 0)
-      ? velMaquina
-      : (rec.pcMin && rec.pcMin > 0 ? rec.pcMin : ficha.pc_min);
-    return { ...ficha, pc_min: pcMinFinal };
+  // Priority 1: match by product code (most reliable)
+  if(rec.prodCod){
+    const byCode=all.find(x=>x.cod===rec.prodCod);
+    if(byCode) {
+      const maqData = getMaquinaData(rec.maquina);
+      if (maqData && Array.isArray(maqData.produtosCompativeis)) {
+        const produtoEntry = maqData.produtosCompativeis.find(p =>
+          p.produto === byCode.descricao ||
+          byCode.descricao.includes(p.produto) ||
+          p.produto.includes(byCode.descricao)
+        );
+        if (produtoEntry && produtoEntry.velocidade && produtoEntry.velocidade > 0) {
+          return { ...byCode, pc_min: produtoEntry.velocidade };
+        }
+      }
+      return byCode;
+    }
   }
-
-  // Sem ficha: usar velocidade da máquina ou do registro
-  const pcMinFallback = (velMaquina && velMaquina > 0)
-    ? velMaquina
-    : (rec.pcMin && rec.pcMin > 0 ? rec.pcMin : 0);
-  if(pcMinFallback > 0) return { pc_min: pcMinFallback, unid: rec.unidPorCx || 1 };
-
-  // Último recurso: primeiro produto da máquina
-  const byMaq = all.find(x => x.maquina === rec.maquina);
-  return byMaq || { pc_min: 1, unid: 1 };
+  // Priority 2: match by machine + product name prefix
+  const byName=all.find(x=>x.maquina===rec.maquina&&rec.produto&&rec.produto.startsWith(x.descricao.substring(0,22)));
+  if(byName) {
+    const maqData = getMaquinaData(rec.maquina);
+    if (maqData && Array.isArray(maqData.produtosCompativeis)) {
+      const produtoEntry = maqData.produtosCompativeis.find(p =>
+        p.produto === byName.descricao ||
+        byName.descricao.includes(p.produto) ||
+        p.produto.includes(byName.descricao)
+      );
+      if (produtoEntry && produtoEntry.velocidade && produtoEntry.velocidade > 0) {
+        return { ...byName, pc_min: produtoEntry.velocidade };
+      }
+    }
+    return byName;
+  }
+  // Priority 3: use stored pcMin/unidPorCx from record itself
+  if(rec.pcMin&&rec.unidPorCx) return {pc_min:rec.pcMin, unid:rec.unidPorCx};
+  // Priority 4: check machine data from Firestore
+  const maqData = getMaquinaData(rec.maquina);
+  if (maqData && maqData.pcMin) return {pc_min: parseFloat(maqData.pcMin), unid: rec.unidPorCx || 1};
+  // Priority 5: first product of same machine
+  const byMaq=all.find(x=>x.maquina===rec.maquina);
+  return byMaq||{pc_min:1,unid:1};
 }
 
 // ===== MÁQUINAS =====
@@ -2442,41 +2437,6 @@ function weekHoursMaq(monday, maq){
 //   dayIdx       = index in days[] (0..6)
 //   turnoBlkIdx  = index in activeBlocks[] for that day
 //   usedInBlkMin = minutes already consumed in the current block
-function allocateBoxesAcrossSegments(segments, totalBoxes){
-  const safeTotal = Math.max(0, Math.round(Number(totalBoxes) || 0));
-  if(!Array.isArray(segments) || !segments.length) return;
-
-  const raw = segments.map(seg => Math.max(0, Number(seg.caixasExatasRaw ?? seg.caixasNoDia ?? 0) || 0));
-  let base = raw.map(v => Math.floor(v));
-  let used = base.reduce((a,b)=>a+b,0);
-  let remainder = safeTotal - used;
-
-  if(remainder > 0){
-    const order = raw
-      .map((v,idx)=>({idx, frac:v-Math.floor(v)}))
-      .sort((a,b)=> b.frac - a.frac || a.idx - b.idx);
-    for(let i=0;i<order.length && remainder>0;i++, remainder--){
-      base[order[i].idx] += 1;
-    }
-  }else if(remainder < 0){
-    const order = raw
-      .map((v,idx)=>({idx, frac:v-Math.floor(v)}))
-      .sort((a,b)=> a.frac - b.frac || b.idx - a.idx);
-    for(let i=0;i<order.length && remainder<0;i++){
-      const idx = order[i].idx;
-      if(base[idx] > 0){
-        base[idx] -= 1;
-        remainder += 1;
-      }
-    }
-  }
-
-  segments.forEach((seg, idx)=>{
-    seg.caixasExatas = base[idx];
-    seg.caixasNoDia = base[idx];
-  });
-}
-
 function buildSchedule(monday){
   const days=getWeekDays(monday);
   const mondayStr=dateStr(days[0]);
@@ -2505,16 +2465,11 @@ function buildSchedule(monday){
     if(!startDate) return false;
     if(startDate>=mondayStr && startDate<=sundayStr) return true;
     if(startDate<mondayStr){
-      // Overflow real: só registros que foram INICIADOS mas não concluídos.
-      // Registros Pendentes (totalProduzido = 0) de semanas anteriores NÃO
-      // devem aparecer em semanas futuras — eles ficam visíveis apenas na
-      // sua semana original até o usuário os reprogramar ou produzi-los.
-      // Isso evita acúmulo de quantidades e repetição infinita no Gantt.
+      // Verificar se ainda há produção restante (overflow real)
       const totalProd = (typeof calcularTotalProduzido==='function')
         ? calcularTotalProduzido(r.id) : 0;
-      if(totalProd <= 0) return false; // pendente puro — não overflow
       const remaining = (r.qntCaixas||0) - totalProd;
-      return remaining > 0; // só overflow real: iniciado mas não concluído
+      return remaining > 0; // só overflow real
     }
     return false;
   });
@@ -2530,12 +2485,6 @@ function buildSchedule(monday){
     byMaq[m].sort((a,b)=>{
       const sa=a.sortOrder!=null?a.sortOrder:a.id;
       const sb=b.sortOrder!=null?b.sortOrder:b.id;
-      // Não-alergênico sempre antes de alergênico na mesma máquina
-      const pA = getAllProdutos().find(p => p.descricao === a.produto || p.descricao?.trim() === a.produto?.trim());
-      const pB = getAllProdutos().find(p => p.descricao === b.produto || p.descricao?.trim() === b.produto?.trim());
-      const aAlerg = pA?.alergenico === true ? 1 : 0;
-      const bAlerg = pB?.alergenico === true ? 1 : 0;
-      if(aAlerg !== bAlerg) return aAlerg - bAlerg; // não-alerg (0) vem antes de alerg (1)
       return sa-sb;
     });
   }
@@ -2644,16 +2593,8 @@ function buildSchedule(monday){
         const blkAvailMin=blkTotalMin-snap.usedMin;
         if(blkAvailMin<=0.001){snap.blkIdx++;snap.usedMin=0;continue;}
         const useMin=Math.min(remainSetupMin,blkAvailMin);
-        // Calcular startPct/endPct para renderizar como barra visual laranja no Gantt
-        const dayCapMinSetup=(hoursOnDayMaq(days[snap.dayIdx],maq))*60;
-        const allBlocksSetup=getBlocks(days[snap.dayIdx],maq);
-        let blkOffMinSetup=0;
-        for(let bi2=0;bi2<snap.blkIdx;bi2++) blkOffMinSetup+=(allBlocksSetup[bi2].fimMin-allBlocksSetup[bi2].inicioMin);
-        const absStartSetup=blkOffMinSetup+snap.usedMin;
         setupSegments.push({date:dateStr(days[snap.dayIdx]),dayIdx:snap.dayIdx,
-          turnoIdx:blk.turnoIdx,turnoLabel:blk.label,setupMin:useMin,
-          startPct:dayCapMinSetup>0?(absStartSetup/dayCapMinSetup)*100:0,
-          endPct:dayCapMinSetup>0?((absStartSetup+useMin)/dayCapMinSetup)*100:0});
+          turnoIdx:blk.turnoIdx,turnoLabel:blk.label,setupMin:useMin});
         remainSetupMin-=useMin;
         snap.usedMin+=useMin;
         if(snap.usedMin>=blkTotalMin-0.001){snap.blkIdx++;snap.usedMin=0;}
@@ -2682,15 +2623,13 @@ function buildSchedule(monday){
         const startPct=dayCapMin>0?(absStartMin/dayCapMin)*100:0;
         const endPct=dayCapMin>0?((absStartMin+useMin)/dayCapMin)*100:0;
 
-        const caixasExatasRaw=cxPerMin*useMin;
+        const caixasHoje=Math.round(cxPerMin*useMin);
         segments.push({
           date:dateStr(days[snap.dayIdx]),
           dayIdx:snap.dayIdx,
           turnoIdx:blk.turnoIdx,
           turnoLabel:blk.label,
-          caixasNoDia:0,
-          caixasExatasRaw,
-          caixasExatas:0,
+          caixasNoDia:caixasHoje,
           hrsNoDia:useMin/60,
           startPct,
           endPct,
@@ -2705,8 +2644,6 @@ function buildSchedule(monday){
         snap.usedMin+=useMin;
         if(snap.usedMin>=blkTotalMin-0.001){snap.blkIdx++;snap.usedMin=0;}
       }
-
-      allocateBoxesAcrossSegments(segments, cxRestanteRec);
 
       // Advance global cursor to where this record ended
       cursor.dayIdx=snap.dayIdx;
@@ -2847,10 +2784,9 @@ function renderGanttSemanal(){
       <span style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block">${r.produto.substring(0,30)}</span>
     </div>`).join('');
 
-  // COL WIDTHS — LABEL_W e OBS_W são ajustáveis pelo usuário (salvo no localStorage)
-  const MAQ_W=72, QTY_W=48, TEMPO_W=52, SETUP_W=52, TOTMAQ_W=68, DQTY_W=36;
+  // COL WIDTHS — LABEL_W é ajustável pelo usuário (salvo no localStorage)
+  const MAQ_W=72, QTY_W=48, TEMPO_W=52, SETUP_W=52, TOTMAQ_W=68, OBS_W=140, DQTY_W=36;
   const LABEL_W = parseInt(localStorage.getItem('gantt-label-width') || '280');
-  const OBS_W   = parseInt(localStorage.getItem('gantt-obs-width')   || '140');
   const gridCols=`${MAQ_W}px ${LABEL_W}px ${QTY_W}px ${TEMPO_W}px ${SETUP_W}px ${TOTMAQ_W}px ${OBS_W}px repeat(7,1fr) repeat(7,${DQTY_W}px)`;
 
   // Pre-calculate total SCHEDULED hours per machine for THIS WEEK only
@@ -2890,11 +2826,7 @@ function renderGanttSemanal(){
     <div class="g-head-label" style="font-size:9px">Tempo<br>h</div>
     <div class="g-head-label" style="font-size:9px">Set Up<br>h</div>
     <div class="g-head-label" style="font-size:9px">H.<br>Prog.</div>
-    <div class="g-head-label" style="font-size:9px;white-space:nowrap;position:relative" id="gantt-col-obs">Observação
-      <div id="gantt-obs-resizer" style="position:absolute;right:0;top:0;width:6px;height:100%;cursor:col-resize;display:flex;align-items:center;justify-content:center;z-index:10" title="Arraste para redimensionar">
-        <div style="width:2px;height:60%;background:var(--border);border-radius:2px"></div>
-      </div>
-    </div>`;
+    <div class="g-head-label" style="font-size:9px">Obser-<br>vação</div>`;
   days.forEach(d=>{
     const isToday=dateStr(d)===today;
     const isWknd=hoursOnDay(d)===0;
@@ -2953,9 +2885,7 @@ function renderGanttSemanal(){
     for(const entry of entries){
       const obs = (entry.rec.obs || '').trim();
       const prodNorm = (entry.rec.produto || '').trim().toLowerCase();
-      // Registros automáticos (obs vazia) agrupam só por produto+máquina
-      // Registros manuais com obs diferente ficam em linhas separadas
-      const pk = obs ? (prodNorm + '||' + obs.toLowerCase()) : prodNorm;
+      const pk = prodNorm;
       if(!prodMap[pk]){
         prodMap[pk] = {
           produto:    entry.rec.produto,
@@ -2964,25 +2894,22 @@ function renderGanttSemanal(){
           color:      colorMap[entry.rec.id],
           qntCaixas:  0,
           setupMin:   0,
-          segments:      [],   // segmentos de produção
-          setupSegments: [],   // segmentos de setup (para barra laranja)
+          segments:   [],       // todos os segmentos de todos os registros
           recs:       []
         };
       }
-      prodMap[pk].qntCaixas     += (entry.rec.qntCaixas || 0);
-      prodMap[pk].setupMin      += (entry.setupMin || 0);
-      prodMap[pk].segments       = prodMap[pk].segments.concat(entry.segments || []);
-      prodMap[pk].setupSegments  = prodMap[pk].setupSegments.concat(entry.setupSegments || []);
+      prodMap[pk].qntCaixas += (entry.rec.qntCaixas || 0);
+      prodMap[pk].setupMin  += (entry.setupMin || 0);   // somar setup total
+      prodMap[pk].segments  = prodMap[pk].segments.concat(entry.segments || []);
       prodMap[pk].recs.push(entry.rec);
     }
     const prodEntries = Object.values(prodMap);
 
     for(const prodEntry of prodEntries){
-      const { produto, obs, maquina: recMaq, color, qntCaixas, setupMin, segments, setupSegments, recs } = prodEntry;
+      const { produto, obs, maquina: recMaq, color, qntCaixas, setupMin, segments, recs } = prodEntry;
 
       // Calcular horas de produção totais (soma de todos os segmentos)
       const prodHrs = segments.reduce((a, sg) => a + (sg.hrsNoDia || 0), 0);
-      if(prodHrs <= 0 && setupMin <= 0) continue;
       const prodHrsStr = fmtHrs(prodHrs);
 
       html+=`<div class="gantt-row" style="grid-template-columns:${gridCols}">`;
@@ -2990,34 +2917,20 @@ function renderGanttSemanal(){
       // Máquina col
       html+=`<div class="g-col-maq"><span class="g-col-maq-txt">${recMaq}</span></div>`;
 
-      // Produto label col — inclui badge de alergênico se aplicável
-      const prodAlerg = getAllProdutos().find(p => p.descricao === produto || p.descricao?.trim() === produto?.trim());
-      const isAlerg = prodAlerg?.alergenico === true;
-      html+=`<div class="g-label"><strong title="${produto}${obs?' — '+obs:''}">${produto}</strong>${isAlerg?'<span style="font-size:9px;font-weight:700;color:#ff9900;background:rgba(255,153,0,.15);border:1px solid rgba(255,153,0,.35);padding:1px 5px;border-radius:6px;margin-left:5px;white-space:nowrap">⚠️ Alerg.</span>':''}</div>`;
+      // Produto label col
+      html+=`<div class="g-label"><strong title="${produto}${obs?' — '+obs:''}">${produto}</strong></div>`;
 
       // Qtd cx col — soma de todos os registros
       html+=`<div class="g-col-qty"><div class="g-col-qty-txt">${qntCaixas}<br><span style="font-size:9px;color:var(--text3);font-weight:400">cx</span></div></div>`;
 
-      // Tempo col — só produção; tooltip mostra total com setup
-      const totalHrsComSetup = prodHrs + setupMin/60;
-      const totalHrsTooltip = setupMin > 0
-        ? `Produção: ${prodHrsStr} + Setup: ${fmtHrs(setupMin/60)} = Total: ${fmtHrs(totalHrsComSetup)}`
-        : `Produção: ${prodHrsStr}`;
-      html+=`<div style="display:flex;align-items:center;justify-content:center;border-left:1px solid var(--border);background:var(--s1);font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:600;color:var(--warn);padding:4px 2px;text-align:center" title="${totalHrsTooltip}">${prodHrsStr}</div>`;
+      // Tempo col
+      html+=`<div style="display:flex;align-items:center;justify-content:center;border-left:1px solid var(--border);background:var(--s1);font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:600;color:var(--warn);padding:4px 2px;text-align:center">${prodHrsStr}</div>`;
 
       // Set Up col — setup total (apenas o primeiro registro tem setup real)
       const setupHrs=setupMin/60;
       const setupStr=setupMin>0?fmtHrs(setupHrs):'—';
       const setupColor=setupMin>0?'var(--orange)':'var(--text3)';
-      // Verificar se setup não está configurado (para tooltip diagnóstico)
-      const setupPadrao=getSetupPadrao(recMaq);
-      const temSetupFS=!!(SETUP_FIRESTORE[(recMaq||'').toUpperCase().trim()] && Object.keys(SETUP_FIRESTORE[(recMaq||'').toUpperCase().trim()]).length>0);
-      const setupTooltip=setupMin>0
-        ? `Setup: ${setupStr}`
-        : (setupPadrao>0||temSetupFS
-            ? `Setup: ${setupStr} (produto único na máquina, sem troca)`
-            : `⚠ Setup padrão não configurado — defina em Configurações → Máquinas`);
-      html+=`<div style="display:flex;align-items:center;justify-content:center;border-left:1px solid var(--border);background:var(--s1);font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:${setupMin>0?'600':'400'};color:${setupColor};padding:4px 2px;text-align:center" title="${setupTooltip}">${setupStr}</div>`;
+      html+=`<div style="display:flex;align-items:center;justify-content:center;border-left:1px solid var(--border);background:var(--s1);font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:${setupMin>0?'600':'400'};color:${setupColor};padding:4px 2px;text-align:center" title="Setup: ${setupStr}">${setupStr}</div>`;
 
       // H. Prog. col — total scheduled hours for this machine this week (only first row)
       const weekProgStr=firstRowOfMaq?fmtHrs(maqTotH):'';
@@ -3057,37 +2970,9 @@ function renderGanttSemanal(){
             html+=`<div style="position:absolute;left:${blkLeft.toFixed(1)}%;width:${blkW.toFixed(1)}%;top:0;bottom:0;background:${blkColors[blk.turnoIdx]||''};border-left:1px dashed rgba(255,255,255,.06)"></div>`;
           });
 
-          // ── Barras de Setup (laranja, acima da barra de produção) ────────
-          const daySetupSegs = (setupSegments||[]).filter(s=>s.dayIdx===di && s.startPct!=null);
-          daySetupSegs.forEach(ss=>{
-            const sLeft  = Math.max(0, ss.startPct).toFixed(1);
-            const sWidth = Math.max(0.3, ss.endPct - ss.startPct).toFixed(1);
-            html+=`<div style="position:absolute;left:${sLeft}%;width:${sWidth}%;top:0;height:28%;background:rgba(255,153,0,0.75);border-radius:2px 2px 0 0;z-index:1"
-              title="Setup: ${fmtHrs(ss.setupMin/60)}${ss.turnoLabel?' · '+ss.turnoLabel:''}"></div>`;
-          });
-
-          // Mesclar segmentos contíguos do mesmo dia para evitar barra partida.
-          // Dois segmentos são contíguos quando endPct de um ≈ startPct do próximo
-          // (diferença ≤ 0.5 pp). Segmentos de turnos diferentes mas consecutivos
-          // também são fundidos — a barra única vai do início do primeiro ao fim do último.
-          const segsMerged = [];
-          const segsOrdered = [...daySeg].sort((a,b) => a.startPct - b.startPct);
-          segsOrdered.forEach(seg => {
-            const last = segsMerged[segsMerged.length - 1];
-            if(last && Math.abs(seg.startPct - last.endPct) <= 0.5){
-              // Fundir: estender o último segmento
-              last.endPct      = Math.max(last.endPct, seg.endPct);
-              last.caixasNoDia += seg.caixasNoDia;
-              last.hrsNoDia    += seg.hrsNoDia;
-              last.turnoLabel   = ''; // multi-turno: não exibir label de turno
-            } else {
-              segsMerged.push({ ...seg });
-            }
-          });
-
-          segsMerged.forEach(seg=>{
-            const leftPct  = Math.max(0, seg.startPct).toFixed(1);
-            const widthPct = Math.max(0.5, seg.endPct - seg.startPct).toFixed(1);
+          daySeg.forEach(seg=>{
+            const leftPct=seg.startPct.toFixed(1);
+            const widthPct=(seg.endPct-seg.startPct).toFixed(1);
             const cx=seg.caixasNoDia;
             const hrsLabel=fmtHrs(seg.hrsNoDia);
             const turnoTip=seg.turnoLabel?` · ${seg.turnoLabel}`:'';
@@ -3126,14 +3011,6 @@ function renderGanttSemanal(){
   document.getElementById('gantt-table').innerHTML=html;
   document.getElementById('gantt-summary').innerHTML='';
 
-  // ── Helper local: reconstruir grid com larguras salvas ──
-  function _ganttRebuildGrid(){
-    const MAQ_W=72, QTY_W=48, TEMPO_W=52, SETUP_W=52, TOTMAQ_W=68, DQTY_W=36;
-    const lW = parseInt(localStorage.getItem('gantt-label-width') || '280');
-    const oW = parseInt(localStorage.getItem('gantt-obs-width')   || '140');
-    return `${MAQ_W}px ${lW}px ${QTY_W}px ${TEMPO_W}px ${SETUP_W}px ${TOTMAQ_W}px ${oW}px repeat(7,1fr) repeat(7,${DQTY_W}px)`;
-  }
-
   // ── Resize da coluna Produto do Gantt ──
   (function initGanttLabelResizer(){
     const resizer = document.getElementById('gantt-label-resizer');
@@ -3144,38 +3021,17 @@ function renderGanttSemanal(){
       const startW = parseInt(localStorage.getItem('gantt-label-width') || '280');
       resizer.querySelector('div').style.background = 'var(--cyan)';
       function onMove(ev){
-        const newW = Math.max(120, Math.min(520, startW + (ev.clientX - startX)));
+        const delta = ev.clientX - startX;
+        const newW = Math.max(120, Math.min(520, startW + delta));
         localStorage.setItem('gantt-label-width', newW);
-        const g = _ganttRebuildGrid();
-        document.querySelectorAll('.gantt-row, .gantt-head-row').forEach(el=>{ el.style.gridTemplateColumns = g; });
+        const MAQ_W=72, QTY_W=48, TEMPO_W=52, SETUP_W=52, TOTMAQ_W=68, OBS_W=140, DQTY_W=36;
+        const newGrid=`${MAQ_W}px ${newW}px ${QTY_W}px ${TEMPO_W}px ${SETUP_W}px ${TOTMAQ_W}px ${OBS_W}px repeat(7,1fr) repeat(7,${DQTY_W}px)`;
+        document.querySelectorAll('.gantt-row, .gantt-head-row').forEach(el=>{
+          el.style.gridTemplateColumns = newGrid;
+        });
       }
       function onUp(){
         resizer.querySelector('div').style.background = 'var(--border)';
-        document.removeEventListener('mousemove', onMove);
-        document.removeEventListener('mouseup', onUp);
-      }
-      document.addEventListener('mousemove', onMove);
-      document.addEventListener('mouseup', onUp);
-    });
-  })();
-
-  // ── Resize da coluna Observação do Gantt ──
-  (function initGanttObsResizer(){
-    const obsResizer = document.getElementById('gantt-obs-resizer');
-    if(!obsResizer) return;
-    obsResizer.addEventListener('mousedown', function(e){
-      e.preventDefault();
-      const startX = e.clientX;
-      const startW = parseInt(localStorage.getItem('gantt-obs-width') || '140');
-      obsResizer.querySelector('div').style.background = 'var(--cyan)';
-      function onMove(ev){
-        const newW = Math.max(60, Math.min(400, startW + (ev.clientX - startX)));
-        localStorage.setItem('gantt-obs-width', newW);
-        const g = _ganttRebuildGrid();
-        document.querySelectorAll('.gantt-row, .gantt-head-row').forEach(el=>{ el.style.gridTemplateColumns = g; });
-      }
-      function onUp(){
-        obsResizer.querySelector('div').style.background = 'var(--border)';
         document.removeEventListener('mousemove', onMove);
         document.removeEventListener('mouseup', onUp);
       }
@@ -3630,8 +3486,7 @@ function buildInsumosSchedule(monday){
       for(const i of ins){
         const dayQtys=Array(7).fill(0);
         for(const seg of segments){
-          const caixasSeg = Number(seg.caixasExatas ?? seg.caixasNoDia ?? 0) || 0;
-          dayQtys[seg.dayIdx]+=caixasSeg*i.q;
+          dayQtys[seg.dayIdx]+=seg.caixasNoDia*i.q;
         }
         insumoRows.push({nome:i.n,cat:i.c,days:dayQtys,total:dayQtys.reduce((a,b)=>a+b,0)});
       }
@@ -5883,11 +5738,11 @@ function renderProducaoDiaControlado() {
           .join('');
         if (!funcOpts) return;
         html += `
-          <div style="padding:5px 8px;border-top:1px solid var(--border);background:rgba(139,92,246,.05);display:flex;align-items:center;gap:6px">
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" stroke-width="2" style="flex-shrink:0"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-            <span style="font-size:9px;color:var(--purple);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;width:90px;min-width:90px;flex-shrink:0" title="${maq}">${maq}</span>
+          <div style="padding:4px 8px;border-top:1px solid var(--border);background:rgba(139,92,246,.05);display:flex;align-items:center;gap:6px">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+            <span style="font-size:9px;color:var(--purple);white-space:nowrap">${maq.length>10?maq.substring(0,10)+'…':maq}</span>
             <select onchange="pdSelecionarFunc(this,'${ds}','${maq}')"
-                    style="flex:1;min-width:0;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:10px;padding:2px 4px">
+                    style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:10px;padding:2px 4px">
               <option value="">— operador —</option>
               ${funcOpts}
             </select>
@@ -7565,7 +7420,6 @@ function renderProdutosCfg() {
           <span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:${desativado?'var(--text4)':'var(--cyan)'};flex-shrink:0">${p.cod}</span>
           <span style="font-size:12px;color:${desativado?'var(--text3)':'var(--text)'}">${p.descricao}</span>
           ${desativado ? '<span style="font-size:9px;font-weight:700;color:var(--red);background:rgba(255,71,87,.12);border:1px solid rgba(255,71,87,.3);padding:1px 7px;border-radius:10px;letter-spacing:.5px">DESATIVADO</span>' : ''}
-          ${p.alergenico ? '<span style="font-size:9px;font-weight:700;color:#ff9900;background:rgba(255,153,0,.12);border:1px solid rgba(255,153,0,.3);padding:1px 7px;border-radius:10px;letter-spacing:.5px">⚠️ ALERGÊNICO</span>' : ''}
         </div>
         <div style="display:flex;align-items:center;gap:6px;margin-top:5px;flex-wrap:wrap">
           <span style="font-size:10px;color:${desativado?'var(--text4)':'var(--warn)'};font-family:'JetBrains Mono',monospace">${p.pc_min} und/min</span>
@@ -7651,7 +7505,6 @@ function openAddProduto() {
   ['pm-cobertura','pm-prod-min','pm-multiplo','pm-prioridade'].forEach(id => { const el = document.getElementById(id); if(el) el.value = ''; });
   const tipoMin = document.getElementById('pm-tipo-min'); if(tipoMin) tipoMin.value = '';
   const pmAtivo = document.getElementById('pm-ativo'); if(pmAtivo) pmAtivo.value = 'true';
-  const pmAlerg = document.getElementById('pm-alergenico'); if(pmAlerg) pmAlerg.value = 'false';
   const pmInsumos = document.getElementById('pm-insumos-list'); if(pmInsumos) pmInsumos.innerHTML = '';
   const titleEl = document.getElementById('prod-modal-title') || document.getElementById('maq-modal-title');
   if(titleEl) titleEl.textContent = 'Novo Produto';
@@ -7683,7 +7536,6 @@ function editarProduto(cod, maquina, descricao) {
   const elTipo = document.getElementById('pm-tipo-min');   if(elTipo) elTipo.value  = produto.tipoMinimo          || '';
   const elPrio = document.getElementById('pm-prioridade'); if(elPrio) elPrio.value  = produto.prioridadeProducao  || '';
   const elAtivo= document.getElementById('pm-ativo');      if(elAtivo) elAtivo.value = (produto.produtoAtivo !== false) ? 'true' : 'false';
-  const elAlerg= document.getElementById('pm-alergenico'); if(elAlerg) elAlerg.value = produto.alergenico ? 'true' : 'false';
   
   // Popular máquinas no select
   const sel = document.getElementById('pm-maq');
@@ -7809,11 +7661,10 @@ async function saveProdModal() {
   const tipoMinimo         = document.getElementById('pm-tipo-min')?.value             || '';
   const prioridadeProducao = parseInt(document.getElementById('pm-prioridade')?.value) || 2;
   const produtoAtivo       = document.getElementById('pm-ativo')?.value !== 'false';
-  const alergenico         = document.getElementById('pm-alergenico')?.value === 'true';
 
   const dados = {
     cod, descricao: desc, unid, kg_fd: 0, pc_min: pcmin, maquina: maq,
-    metaCoberturaDias, producaoMinima, multiploProducao, tipoMinimo, prioridadeProducao, produtoAtivo, alergenico
+    metaCoberturaDias, producaoMinima, multiploProducao, tipoMinimo, prioridadeProducao, produtoAtivo
   };
 
   const eraNovoProduto = !_produtoEditando;
@@ -8926,7 +8777,6 @@ const MODULO_ACOES = {
   configuracoes: ['visualizar','editar','administrar'],
   funcionarios : ['visualizar','editar','criar','excluir'],
   usuarios     : ['visualizar','editar','criar','excluir','administrar'],
-  relatorios   : ['visualizar','exportar'],
 };
 
 // Descrição detalhada do que cada ação libera em cada módulo
@@ -8999,10 +8849,6 @@ const MODULO_ACOES_DESC = {
     criar      : 'Criar novos usuários com acesso ao sistema',
     excluir    : 'Excluir usuários permanentemente',
     administrar: 'Forçar reset de senha e ativar/desativar contas',
-  },
-  relatorios   : {
-    visualizar : 'Ver a aba de relatórios',
-    exportar   : 'Exportar relatórios em Excel, PDF e Imagem',
   },
 };
 
@@ -9502,7 +9348,6 @@ function buildSidebar(user) {
     { tab:'api-sync',      icon:'🔌', label:'Importação/API',    modulo:'importacao' },
     { tab:'funcionarios',  icon:'👷', label:'Funcionários',      modulo:'funcionarios' },
     { tab:'usuarios',      icon:'👥', label:'Usuários',          modulo:'usuarios' },
-    { tab:'relatorios',    icon:'📊', label:'Relatórios',        modulo:'relatorios' },
   ];
 
   // Filtra apenas os que o perfil pode visualizar
@@ -9522,8 +9367,7 @@ function switchTabSidebar(name) {
     'dashboard':'dashboard','programacao':'programacao','maquinas':'maquinas',
     'gantt':'gantt','apontamento':'realizado','insumos-maq':'insumos_maq',
     'insumos-geral':'insumos_geral','calculos':'calculos','prog-auto':'calculos',
-    'projecao':'projecao','ficha-tecnica':'ficha_tecnica','api-sync':'importacao',
-    'relatorios':'relatorios'
+    'projecao':'projecao','ficha-tecnica':'ficha_tecnica','api-sync':'importacao'
   };
   const modulo = moduloMap[name];
   if (modulo && !canAccess(modulo)) {
@@ -9553,8 +9397,7 @@ function switchTabSidebar(name) {
     'dashboard':'Dashboard','programacao':'Programação','maquinas':'Máquinas',
     'gantt':'Prog. Visual','apontamento':'Realizado','insumos-maq':'Insumos / Máq.',
     'insumos-geral':'Insumos Geral','ficha-tecnica':'Ficha Técnica',
-    'api-sync':'Importação/API','calculos':'Prog. Automática','projecao':'Projeção de Vendas',
-    'relatorios':'Relatórios'
+    'api-sync':'Importação/API','calculos':'Prog. Automática','projecao':'Projeção de Vendas'
   };
   if(bc) bc.innerHTML = `<span>PROGPROD MES</span> <span style="opacity:.4">/</span> <span class="cur">${labels[name]||name}</span>`;
   // Tab-specific renders
@@ -9568,23 +9411,6 @@ function switchTabSidebar(name) {
   if(name==='api-sync') renderApiSync();
   if(name==='calculos'||name==='prog-auto') renderCalculos();
   if(name==='projecao') renderProjecao();
-  if(name==='relatorios') {
-    // Garantir que o painel existe antes de inicializar
-    let rPanel = document.getElementById('panel-relatorios');
-    if (!rPanel) {
-      rPanel = document.createElement('div');
-      rPanel.id = 'panel-relatorios';
-      rPanel.className = 'panel';
-      const container = document.getElementById('main-content')
-        || document.getElementById('content')
-        || document.getElementById('app')
-        || document.body;
-      container.appendChild(rPanel);
-    }
-    rPanel.classList.add('on');
-    // Sincronizar records e popular filtros antes de renderizar
-    setTimeout(() => { grpInitFiltros(); grpRender(); }, 80);
-  }
   if(name==='usuarios') { openSettings(); setTimeout(()=>settingsNav('usuarios'), 80); }
 }
 
@@ -9600,12 +9426,6 @@ function toggleTopbarMenu() {
   const menu = document.getElementById('topbar-menu');
   if(menu) menu.classList.toggle('on');
 }
-
-// ── Alternar tema claro / escuro (definido em index.html como script global) ──
-// A função toggleTema() está no script inline do index.html para garantir
-// que esteja no escopo global e possa ser chamada por onclick="toggleTema()".
-// Este alias registra a função no window caso o módulo seja carregado antes.
-
 
 // ===== LOGIN HANDLING =====
 function handleLogin() {
@@ -10746,31 +10566,8 @@ function gerarProgAutomarica(){
   const riscoLim  = parseFloat(document.getElementById('pa-risco-critico')?.value||'3');
   const maxPctMaq = parseFloat(document.getElementById('pa-max-pct-maq')?.value||'60') / 100;
 
-  // ── Calcular monday de referência ─────────────────────────────────
-  // Modo "Mês": usar a primeira segunda-feira do mês alvo selecionado.
-  //             Isso evita que a programação caia no mês atual quando o
-  //             usuário quer programar o mês seguinte.
-  // Modo "Semana": usar a semana selecionada no selector (comportamento original).
-  const modoPeriodo = document.querySelector('input[name="pa-modo-periodo"]:checked')?.value || 'mes';
-  const mesSel      = document.getElementById('pa-mes-sel')?.value;     // "YYYY-MM"
-  const semanaSel   = document.getElementById('pa-semana-sel')?.value;  // "YYYY-MM-DD"
-
-  let monday;
-  if(modoPeriodo === 'mes' && mesSel){
-    // Primeira segunda-feira do mês alvo
-    const [anoAlvo, mesAlvo] = mesSel.split('-').map(Number);
-    const primeiroDiaMes = new Date(anoAlvo, mesAlvo - 1, 1, 12, 0, 0);
-    monday = getWeekMonday(primeiroDiaMes);
-    // Se a segunda caiu no mês anterior, avançar uma semana para ficar dentro do mês alvo
-    if(monday.getMonth() !== primeiroDiaMes.getMonth() && monday < primeiroDiaMes){
-      monday = new Date(monday); monday.setDate(monday.getDate() + 7);
-    }
-  } else if(modoPeriodo === 'semana' && semanaSel){
-    monday = new Date(semanaSel + 'T12:00:00');
-  } else {
-    monday = getWeekMonday(new Date());
-  }
-
+  const semanaSel = document.getElementById('pa-semana-sel')?.value;
+  const monday    = semanaSel ? new Date(semanaSel+'T12:00:00') : getWeekMonday(new Date());
   const days      = getWeekDays(monday);
   const alertEl   = document.getElementById('pa-alerta');
 
@@ -10782,10 +10579,9 @@ function gerarProgAutomarica(){
   const anoRef        = monday.getFullYear();
   const ultimoDiaMes  = new Date(anoRef, mesRef + 1, 0); // último dia do mês ref
 
-  // Pré-calcular os 4 Mondays (ou 1 se modo semana) respeitando a regra de fechamento
-  const numSemanasPA = (modoPeriodo === 'semana') ? 1 : 4;
+  // Pré-calcular os 4 Mondays e suas capacidades respeitando a regra de fechamento
   const semanasPA = []; // [{monday, sunday, capPorMaq}]
-  for(let si = 0; si < numSemanasPA; si++){
+  for(let si = 0; si < 4; si++){
     const wMon = new Date(monday); wMon.setDate(monday.getDate() + si * 7);
     const wSun = new Date(wMon);   wSun.setDate(wMon.getDate() + 6);
     // Clip de dias para este mês se modo 'este-mes' e esta semana cruza a virada
@@ -10908,8 +10704,8 @@ function gerarProgAutomarica(){
     // Item 2 — produção programada por semana (entra no estoque na semana certa)
     // si=0: já contabilizado em naoPontadaAtual
     // si>0: entra na simulação quando o loop chegar naquela semana
-    const jaProgPorSemana = Array(numSemanasPA).fill(0);
-    for(let si = 0; si < numSemanasPA; si++){
+    const jaProgPorSemana = [0, 0, 0, 0];
+    for(let si = 0; si < 4; si++){
       const sp      = semanasPA[si];
       const wMonStr = dateStr(sp.monday);
       const wSunStr = dateStr(sp.sunday);
@@ -11021,12 +10817,12 @@ function gerarProgAutomarica(){
   // PROBLEMA 4 FIX: capacidade de cada semana é calculada com base nos
   // dias EFETIVOS da semana (respeitando clip de mês quando 'este-mes').
   const maqCapacidades = {};  // horas efetivas disponíveis/semana (média das 4 semanas)
-  const maqCapPorSemana = Array.from({length:numSemanasPA}, () => { const s={}; MAQUINAS.forEach(m=>s[m]=0); return s; });
+  const maqCapPorSemana = Array.from({length:4}, () => { const s={}; MAQUINAS.forEach(m=>s[m]=0); return s; });
   for(const maq of MAQUINAS){
     const maqData2 = getMaquinaData(maq);
     const efic = (maqData2 && parseFloat(maqData2.eficiencia) > 0)
       ? parseFloat(maqData2.eficiencia) / 100 : 1;
-    for(let si = 0; si < numSemanasPA; si++){
+    for(let si = 0; si < 4; si++){
       const sp = semanasPA[si];
       let hrsEfetivas = weekHrsForMachine(maq, sp.monday);
       if(!hrsEfetivas || hrsEfetivas <= 0){
@@ -11089,55 +10885,20 @@ function gerarProgAutomarica(){
   candidates.forEach(c => {
     allocations[c.prod] = {
       hrsTotal: 0, cxTotal: 0,
-      semanas: Array(numSemanasPA).fill(0),
+      semanas: [0,0,0,0],
       maquinas: {},
-      detalhes: Array.from({length:numSemanasPA}, () => ([]))
+      detalhes: Array.from({length:4}, () => ([]))
     };
   });
 
-  const maqHrsUsadas    = Array.from({length:numSemanasPA}, () => {
+  const maqHrsUsadas    = Array.from({length:4}, () => {
     const s = {}; MAQUINAS.forEach(m => { s[m] = 0; }); return s;
   });
-  const maqHrsRestantes = Array.from({length:numSemanasPA}, (_, si) => {
+  // PROBLEMA 4 FIX: usar capacidade efetiva por semana (com clip de mês)
+  // maxPctMaq aplicado já aqui para que scoreMaquina e todos os checks downstream
+  // respeitem o limite configurado (ex: 90%) desde o início da alocação.
+  const maqHrsRestantes = Array.from({length:4}, (_, si) => {
     const s = {}; MAQUINAS.forEach(m => { s[m] = (maqCapPorSemana[si][m] || 0) * maxPctMaq; }); return s;
-  });
-
-  // ── FIX 5: descontar horas de registros já existentes no Gantt ────
-  // Sem esse desconto, a programação automática ignora o que já está
-  // programado e aloca até 100% da capacidade, ultrapassando o limite
-  // configurado pelo usuário (ex: 90%).
-  // Para cada registro já existente (não-Concluído), calculamos as horas
-  // que ele ocupa em cada uma das 4 semanas e descontamos de maqHrsRestantes.
-  records.forEach(r => {
-    if(r.status === 'Concluído') return;
-    const maqNome = r.maquina;
-    if(!maqNome || !MAQUINAS.includes(maqNome)) return;
-    const pcMinRec = (function(){
-      const maqD = getMaquinaData(maqNome);
-      const prodEntry = Array.isArray(maqD?.produtosCompativeis)
-        ? maqD.produtosCompativeis.find(p => p.produto === r.produto) : null;
-      return parseFloat(prodEntry?.velocidade || maqD?.pcMin || 1) || 1;
-    })();
-    const unidRec = (function(){
-      const ficha = getAllProdutos().find(p => String(p.cod) === String(r.prodCod) || p.descricao === r.produto);
-      return parseFloat(ficha?.unid || 1) || 1;
-    })();
-    const hrsRec = ((r.qntCaixas || 0) * unidRec) / (pcMinRec * 60);
-    if(hrsRec <= 0) return;
-    const dtRec = r.dtDesejada || r.dtSolicitacao || '';
-    for(let si = 0; si < numSemanasPA; si++){
-      const sp = semanasPA[si];
-      const wSun = dateStr(sp.sunday);
-      if(dtRec >= wMon && dtRec <= wSun){
-        if(maqHrsRestantes[si][maqNome] != null){
-          maqHrsRestantes[si][maqNome] = Math.max(0, maqHrsRestantes[si][maqNome] - hrsRec);
-        }
-        if(maqHrsUsadas[si][maqNome] != null){
-          maqHrsUsadas[si][maqNome] += hrsRec;
-        }
-        break;
-      }
-    }
   });
 
   // ── Helper: score de máquina ────────────────────────────────────
@@ -11245,7 +11006,8 @@ function gerarProgAutomarica(){
     // recommending production that is already covered by scheduled records.
     const path = [];
     let estoq = c.estoqueSim; // = estoque + naoPontadaAtual
-    for(let s = 0; s < numSemanasPA; s++){
+    for(let s = 0; s < 4; s++){
+      // Inject already-programmed production for this week (Item 2)
       estoq += (c.jaProgPorSemana && c.jaProgPorSemana[s] > 0 && s > 0)
         ? c.jaProgPorSemana[s] : 0;
       const ini = estoq;
@@ -11259,13 +11021,13 @@ function gerarProgAutomarica(){
     }
     c._trajetoria = path;
 
-    // Regra 3: não precisa produzir se o período fecha bem sem nova produção
-    if(path[numSemanasPA-1].cobFin >= cobTeto){
+    // Regra 3: não precisa produzir se o mês fecha bem sem nova produção
+    if(path[3].cobFin >= cobTeto){
       c._semanaEntry = -1;
       return;
     }
 
-    // Regra 1: já crítico no início → entrar imediatamente
+    // Regra 1: já crítico no início do mês → entrar imediatamente
     if(path[0].cobIni < cobMin){
       c._semanaEntry = 0;
       return;
@@ -11273,7 +11035,7 @@ function gerarProgAutomarica(){
 
     // Regra 2: encontrar a semana onde cobFim cai abaixo de cobMin
     let semRuptura = -1;
-    for(let s = 0; s < numSemanasPA; s++){
+    for(let s = 0; s < 4; s++){
       if(path[s].cobFin < cobMin){
         semRuptura = s;
         break;
@@ -11283,17 +11045,18 @@ function gerarProgAutomarica(){
     if(semRuptura >= 0){
       c._semanaEntry = semRuptura;
     } else {
-      // Regra 4: sem ruptura no período mas fechamento abaixo de cobTeto
-      let entry = numSemanasPA - 1;
-      for(let s = numSemanasPA - 1; s >= 0; s--){
+      // Regra 4: sem ruptura no mês mas fechamento abaixo de cobTeto
+      // Encontrar a semana mais TARDIA onde cobFin < cobTeto
+      let entry = 3;
+      for(let s = 3; s >= 0; s--){
         if(path[s].cobFin < cobTeto) entry = s;
         else break;
       }
       c._semanaEntry = entry;
     }
 
-    // Regra 5: ajuste por carga estimada (só aplicável com > 1 semana)
-    if(numSemanasPA > 1 && c._semanaEntry > 0){
+    // Regra 5: ajuste por carga estimada de máquina (antecipação defensiva)
+    if(c._semanaEntry > 0){
       const semAlvo  = c._semanaEntry;
       const semAntes = semAlvo - 1;
 
@@ -11314,6 +11077,7 @@ function gerarProgAutomarica(){
 
       if(occEstimada > 0.80){
         const cobFinSemAntes = path[semAntes].cobFin;
+        // Só antecipa se ainda há necessidade E não vai ultrapassar o teto
         if(cobFinSemAntes < cobTeto){
           c._semanaEntry = semAntes;
         }
@@ -11321,8 +11085,8 @@ function gerarProgAutomarica(){
     }
   });
 
-  // ── LOOP PRINCIPAL: semanas, guiado por _semanaEntry ─────────────
-  for(let sem = 0; sem < numSemanasPA; sem++){
+  // ── LOOP PRINCIPAL: 4 semanas, guiado por _semanaEntry ───────────
+  for(let sem = 0; sem < 4; sem++){
 
     // ITEM 2 FIX — injetar produção já programada desta semana no estoque simulado
     // jaProgPorSemana[0] já está em estoqueSimInicial; semanas 1-3 entram aqui.
@@ -11410,7 +11174,7 @@ function gerarProgAutomarica(){
           // Simular restante do mês SEM nova produção, mas COM jaProgPorSemana futuro
           let estoqSemProd = c.estoqueSim;
           let cobreSemp = true;
-          for(let fs = sem; fs < numSemanasPA; fs++){
+          for(let fs = sem; fs < 4; fs++){
             // Injetar produção já programada desta semana futura (não duplicar sem=0)
             if(fs > 0) estoqSemProd += (c.jaProgPorSemana && c.jaProgPorSemana[fs]) || 0;
             // Injetar nova alocação desta semana se já foi registrada
@@ -11468,7 +11232,7 @@ function gerarProgAutomarica(){
         // FIX 2 — carryover: se ainda sobrou quantidade não alocada por falta
         // de capacidade, guardar para que a próxima semana absorva o deficit.
         // Isso evita "blocos fantasma" — o Gantt só mostrará o que realmente cabe.
-        if(cxRestante > 0 && sem < numSemanasPA - 1){
+        if(cxRestante > 0 && sem < 3){
           c._carryover = (c._carryover || 0) + cxRestante;
         }
       }
@@ -11506,7 +11270,7 @@ function gerarProgAutomarica(){
   // ── Recalcular prioridade com estado pós-simulação ───────────────
   candidates.forEach(c => {
     let estoq = c.estoque + (c.naoPontadaAtual || 0);
-    for(let s = 0; s < numSemanasPA; s++){
+    for(let s = 0; s < 4; s++){
       if(s > 0) estoq += (c.jaProgPorSemana && c.jaProgPorSemana[s]) || 0;
       estoq = Math.max(0, estoq + (allocations[c.prod].semanas[s] || 0) - c.demandaSemanal);
     }
@@ -11523,7 +11287,7 @@ function gerarProgAutomarica(){
   function recalcPath(c){
     const path = [];
     let estoq = c.estoque + (c.naoPontadaAtual || 0); // igual a estoqueSimInicial
-    for(let s = 0; s < numSemanasPA; s++){
+    for(let s = 0; s < 4; s++){
       // Injetar produção já programada nesta semana (s>0; s=0 já está em estoq)
       if(s > 0) estoq += (c.jaProgPorSemana && c.jaProgPorSemana[s]) || 0;
       const ini = estoq + (allocations[c.prod].semanas[s] || 0);
@@ -11579,7 +11343,7 @@ function gerarProgAutomarica(){
   for(let pass = 0; pass < 3; pass++){
     let algumaTroca = false;
 
-    for(let sem = 0; sem < numSemanasPA; sem++){
+    for(let sem = 0; sem < 4; sem++){
       for(const maqSrc of MAQUINAS){
         const capSrc = (maqCapPorSemana[sem]?.[maqSrc] || maqCapacidades[maqSrc] || 1);
         const occSrc = maqHrsUsadas[sem][maqSrc] / capSrc;
@@ -11662,7 +11426,7 @@ function gerarProgAutomarica(){
 
     for(const maq of MAQUINAS){
       // Use per-semana capacity (calculated per week for FASE B loop)
-      for(let semOrig = 0; semOrig < numSemanasPA; semOrig++){
+      for(let semOrig = 0; semOrig < 4; semOrig++){
         const cap = (maqCapPorSemana[semOrig]?.[maq] || maqCapacidades[maq] || 1);
         const occ = maqHrsUsadas[semOrig][maq] / cap;
 
@@ -11679,7 +11443,7 @@ function gerarProgAutomarica(){
             if(!det) continue;
 
             const candidatosDst = [];
-            for(let s = semOrig + 1; s < numSemanasPA; s++) candidatosDst.push(s);
+            for(let s = semOrig + 1; s < 4; s++) candidatosDst.push(s);
             for(let s = semOrig - 1; s >= 0; s--) candidatosDst.push(s);
 
             for(const semDst of candidatosDst){
@@ -11690,7 +11454,7 @@ function gerarProgAutomarica(){
               // Verificar que remoção em semOrig não causa ruptura
               let estoqCheck = c.estoque;
               let ruptura = false;
-              for(let s = 0; s < numSemanasPA; s++){
+              for(let s = 0; s < 4; s++){
                 const cxS = s === semOrig ? (allocations[c.prod].semanas[s] - det.cx) : allocations[c.prod].semanas[s];
                 estoqCheck = Math.max(0, estoqCheck + cxS - c.demandaSemanal);
                 if(s <= semOrig && c.demandaDiaria > 0 && estoqCheck / c.demandaDiaria < cobMin){
@@ -11701,7 +11465,7 @@ function gerarProgAutomarica(){
 
               // Verificar teto no destino
               let estoqDst = c.estoque;
-              for(let s = 0; s < numSemanasPA; s++){
+              for(let s = 0; s < 4; s++){
                 const cxS = (s === semOrig ? (allocations[c.prod].semanas[s] - det.cx) : allocations[c.prod].semanas[s])
                           + (s === semDst ? det.cx : 0);
                 estoqDst = Math.max(0, estoqDst + cxS - c.demandaSemanal);
@@ -11718,7 +11482,7 @@ function gerarProgAutomarica(){
 
         // ── Semana leve: antecipar de semana futura mais cheia ───────
         if(occ < ALVO_MIN_OCC){
-          for(let semSrc = semOrig + 1; semSrc < numSemanasPA; semSrc++){
+          for(let semSrc = semOrig + 1; semSrc < 4; semSrc++){
             const occSrc = maqHrsUsadas[semSrc][maq] / cap;
             if(occSrc <= ALVO_MIN_OCC) continue;
 
@@ -11737,7 +11501,7 @@ function gerarProgAutomarica(){
 
               // Verificar teto após antecipação
               let estoqCheck = c.estoque;
-              for(let s = 0; s < numSemanasPA; s++){
+              for(let s = 0; s < 4; s++){
                 const cxS = (s === semSrc ? (allocations[c.prod].semanas[s] - det.cx) : allocations[c.prod].semanas[s])
                           + (s === semOrig ? det.cx : 0);
                 estoqCheck = Math.max(0, estoqCheck + cxS - c.demandaSemanal);
@@ -11763,7 +11527,7 @@ function gerarProgAutomarica(){
   for(let pass = 0; pass < 2; pass++){
     let algumFill = false;
 
-    for(let sem = 0; sem < numSemanasPA; sem++){
+    for(let sem = 0; sem < 4; sem++){
       // Máquinas ociosas: <30% e não são 0% apenas porque nada foi programado
       const maqsOciosas = MAQUINAS.filter(m => {
         const cap = maqCapacidades[m] || 1;
@@ -11988,7 +11752,7 @@ function gerarProgAutomarica(){
   renderProgAutomaticaResultado();
   renderProgAutomaticaStats();
   document.getElementById('pa-apply-btn').style.display = paResultados.length ? 'flex' : 'none';
-  toast(`✅ Programação equilibrada: ${paResultados.length} produtos em ${numSemanasPA} semana${numSemanasPA > 1 ? 's' : ''}`, 'ok');
+  toast(`✅ Programação equilibrada: ${paResultados.length} produtos em 4 semanas`, 'ok');
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -12357,19 +12121,10 @@ async function aplicarProgAutomaticaNoGantt(){
     `O Gantt refletirá exatamente a divisão calculada.`
   )) return;
 
-  // Ordenar sugestões: não-alergênico antes de alergênico por dia×máquina
-  // Isso garante que ao criar os registros, o sortOrder coloca não-alerg primeiro.
-  const sugsOrdenadas = [...paResultados].sort((a, b) => {
-    const fA = getAllProdutos().find(p => String(p.cod)===String(a.cod) || p.descricao===a.prod);
-    const fB = getAllProdutos().find(p => String(p.cod)===String(b.cod) || p.descricao===b.prod);
-    const aA = fA?.alergenico === true ? 1 : 0;
-    const bA = fB?.alergenico === true ? 1 : 0;
-    return aA - bA; // não-alerg (0) antes de alerg (1)
-  });
-
+  const ficha0    = null; // será buscado por produto abaixo
   let criados = 0;
 
-  for(const sug of sugsOrdenadas){
+  for(const sug of paResultados){
     const plano    = planosMap.get(sug) || [];
     const ficha    = getAllProdutos().find(p => String(p.cod)===String(sug.cod) || p.descricao===sug.prod);
     const unidUsar = (ficha && ficha.unid) || sug.unid || 1;
@@ -12475,7 +12230,6 @@ function renderCalculos(){
 
 window.toggleSidebar = toggleSidebar;
 window.toggleTopbarMenu = toggleTopbarMenu;
-if(typeof toggleTema === 'function') window.toggleTema = toggleTema;
 window.handleLogin = handleLogin;
 window.logout = () => import('./auth.js').then(m => m.logout());
 
@@ -14784,7 +14538,6 @@ window.tableWeekReset = tableWeekReset;
 window.tableWeekNav = tableWeekNav;
 window.toggleHdMenu = toggleHdMenu;
 window.toggleTopbarMenu = toggleTopbarMenu;
-if(typeof toggleTema === 'function') window.toggleTema = toggleTema;
 window.goPg = goPg;
 window.editRec = editRec;
 window.askDel = askDel;
@@ -14819,177 +14572,6 @@ window.reload = reload;
 window.reloadFresh = reloadFresh;
 window.invalidateCache = invalidateCache;
 window.loadReorderList = loadReorderList;
-
-// ===== IMPORTAÇÃO EXCEL — PROGRAMAÇÃO =====
-// Lê colunas: Produto | Quantidade | Data (e opcionais: Máquina, Status, Observação)
-async function importarProgramacaoExcel(file) {
-  if (!file) return;
-  if (!can('programacao', 'criar')) { toast('Sem permissão para importar programação.', 'err'); return; }
-
-  const btnEl = document.getElementById('btn-imp-prog');
-  if (btnEl) { btnEl.disabled = true; btnEl.textContent = '⏳ Importando...'; }
-
-  try {
-    // Ler arquivo
-    const buf = await file.arrayBuffer();
-    const wb = XLSX.read(buf, { type: 'array', cellDates: true });
-    const ws = wb.Sheets[wb.SheetNames[0]];
-    const rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
-
-    if (!rows.length) { toast('Planilha vazia ou sem dados.', 'err'); return; }
-
-    // Mapear cabeçalhos de forma flexível (case-insensitive, sem acento)
-    const norm = s => (s || '').toString().toLowerCase()
-      .normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
-
-    const firstRow = rows[0];
-    const colMap = {};
-    for (const k of Object.keys(firstRow)) {
-      const n = norm(k);
-      if (!colMap.produto    && /^prod/.test(n))                          colMap.produto    = k;
-      if (!colMap.quantidade && /^(qtd|quant|quantidade|caixas|cx)/.test(n)) colMap.quantidade = k;
-      if (!colMap.data       && /^(data|dt|date|inicio|início)/.test(n)) colMap.data       = k;
-      if (!colMap.maquina    && /^(maq|maquin|machine)/.test(n))         colMap.maquina    = k;
-      if (!colMap.status     && /^status/.test(n))                        colMap.status     = k;
-      if (!colMap.obs        && /^(obs|observ|ref|destino)/.test(n))      colMap.obs        = k;
-    }
-
-    if (!colMap.produto)    { toast('Coluna "Produto" não encontrada. Verifique o cabeçalho.', 'err'); return; }
-    if (!colMap.quantidade) { toast('Coluna "Quantidade" não encontrada. Verifique o cabeçalho.', 'err'); return; }
-    if (!colMap.data)       { toast('Coluna "Data" não encontrada. Verifique o cabeçalho.', 'err'); return; }
-
-    const todayStr = new Date().toISOString().slice(0, 10);
-    const todos = getAllProdutos();
-
-    let ok = 0, erros = 0, erroMsgs = [];
-
-    for (let i = 0; i < rows.length; i++) {
-      const row = rows[i];
-      const nomeBusca = (row[colMap.produto] || '').toString().trim();
-      if (!nomeBusca) continue;
-
-      const qnt = parseInt(row[colMap.quantidade]) || 0;
-      if (qnt < 1) { erros++; erroMsgs.push(`Linha ${i+2}: "${nomeBusca}" — quantidade inválida (${row[colMap.quantidade]})`); continue; }
-
-      // Data: aceita Date object (XLSX com cellDates), string YYYY-MM-DD, DD/MM/YYYY
-      let dtStr = '';
-      const dtRaw = row[colMap.data];
-      if (dtRaw instanceof Date && !isNaN(dtRaw)) {
-        dtStr = dtRaw.toISOString().slice(0, 10);
-      } else {
-        const s = (dtRaw || '').toString().trim();
-        if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
-          dtStr = s;
-        } else if (/^\d{2}\/\d{2}\/\d{4}$/.test(s)) {
-          const [d, m, y] = s.split('/');
-          dtStr = `${y}-${m}-${d}`;
-        } else if (/^\d{5}$/.test(s)) {
-          // Serial numérico do Excel
-          const d = new Date(Math.round((parseFloat(s) - 25569) * 86400 * 1000));
-          dtStr = d.toISOString().slice(0, 10);
-        }
-      }
-      if (!dtStr) { dtStr = todayStr; }
-
-      // Máquina da coluna (opcional) — senão usa maquinaPadrao do produto
-      const maqColuna = colMap.maquina ? (row[colMap.maquina] || '').toString().trim() : '';
-
-      // Buscar produto: nome exato → parcial (contém) → normalizado
-      const normNome = norm(nomeBusca);
-      let prod = todos.find(p => p.descricao === nomeBusca)
-        || todos.find(p => norm(p.descricao) === normNome)
-        || todos.find(p => norm(p.descricao).includes(normNome) || normNome.includes(norm(p.descricao)));
-
-      // Se tem máquina na coluna, filtrar por ela também
-      if (prod && maqColuna) {
-        const maqNorm = norm(maqColuna);
-        const prodComMaq = todos.find(p =>
-          norm(p.descricao) === normNome && norm(p.maquina).includes(maqNorm)
-        );
-        if (prodComMaq) prod = prodComMaq;
-      }
-
-      if (!prod) {
-        erros++;
-        erroMsgs.push(`Linha ${i+2}: produto "${nomeBusca}" não encontrado no cadastro`);
-        continue;
-      }
-
-      const maqFinal = maqColuna || prod.maquina || '';
-      if (!maqFinal) {
-        erros++;
-        erroMsgs.push(`Linha ${i+2}: "${nomeBusca}" — máquina não definida`);
-        continue;
-      }
-
-      const statusValidos = ['Pendente', 'Em Andamento', 'Concluído'];
-      const statusCol = colMap.status ? (row[colMap.status] || '').toString().trim() : '';
-      const status = statusValidos.includes(statusCol) ? statusCol : 'Pendente';
-
-      const obs = colMap.obs ? (row[colMap.obs] || '').toString().trim() : '';
-
-      const obj = {
-        produto: prod.descricao,
-        prodCod: parseInt(prod.cod) || 0,
-        maquina: maqFinal,
-        pcMin: prod.pc_min || 0,
-        unidPorCx: prod.unid || 1,
-        qntCaixas: qnt,
-        qntUnid: qnt * (prod.unid || 1),
-        status,
-        dtSolicitacao: dtStr,
-        dtDesejada: dtStr,
-        obs,
-        sortOrder: Date.now() + i,
-        updatedAt: new Date().toISOString(),
-      };
-
-      try {
-        await dbPut(obj);
-        ok++;
-      } catch (e) {
-        erros++;
-        erroMsgs.push(`Linha ${i+2}: erro ao salvar "${nomeBusca}" — ${e.message}`);
-      }
-    }
-
-    await reloadFresh();
-
-    if (ok > 0 && erros === 0) {
-      toast(`✅ ${ok} item(ns) importado(s) com sucesso!`, 'ok');
-    } else if (ok > 0 && erros > 0) {
-      toast(`⚠️ ${ok} importado(s), ${erros} com erro. Veja o console.`, 'warn');
-      console.warn('[IMPORT PROG] Erros:\n' + erroMsgs.join('\n'));
-    } else {
-      toast(`❌ Nenhum item importado. ${erros} erro(s). Veja o console.`, 'err');
-      console.error('[IMPORT PROG] Erros:\n' + erroMsgs.join('\n'));
-    }
-  } catch (e) {
-    toast('Erro ao ler arquivo: ' + e.message, 'err');
-    console.error('[IMPORT PROG]', e);
-  } finally {
-    if (btnEl) { btnEl.disabled = false; btnEl.textContent = '📥 Importar Excel'; }
-    // Limpar o input para permitir reimportar o mesmo arquivo
-    const inp = document.getElementById('inp-imp-prog');
-    if (inp) inp.value = '';
-  }
-}
-window.importarProgramacaoExcel = importarProgramacaoExcel;
-
-function importarProgramacaoTemplate() {
-  const wb = XLSX.utils.book_new();
-  const ws = XLSX.utils.aoa_to_sheet([
-    ['Produto', 'Quantidade', 'Data', 'Maquina', 'Status', 'Observacao'],
-    ['EXEMPLO PRODUTO DA TERRINHA 1KG', 500, '2026-04-01', 'SELGRON 01', 'Pendente', ''],
-    ['EXEMPLO PRODUTO DA TERRINHA 500G', 300, '2026-04-03', '', '', 'Nacional'],
-  ]);
-  ws['!cols'] = [{ wch: 45 }, { wch: 12 }, { wch: 14 }, { wch: 18 }, { wch: 15 }, { wch: 20 }];
-  XLSX.utils.book_append_sheet(wb, ws, 'Programacao');
-  XLSX.writeFile(wb, 'Template_Importacao_Programacao.xlsx');
-}
-window.importarProgramacaoTemplate = importarProgramacaoTemplate;
-
-
 
 // ===== API SYNC EXPORTS =====
 window.renderApiSync = renderApiSync;
@@ -15034,437 +14616,3 @@ window.pa_onModoChange   = pa_onModoChange;
 window.pa_onMesChange    = function(){ if(paResultados.length) renderProgAutomaticaResultado(); };
 window.paToggleInsumos = paToggleInsumos;
 window.progToggleInsumos = progToggleInsumos;
-
-// ── Estado e helpers dos relatórios ──────────────────────────────
-let _grpTabAtivo = 'producao';
-
-function _grpFiltros() {
-  return {
-    dtIni:   (document.getElementById('grp-dt-ini')  || {}).value || '',
-    dtFim:   (document.getElementById('grp-dt-fim')  || {}).value || '',
-    maquina: (document.getElementById('grp-maq')     || {}).value || '',
-    produto: (document.getElementById('grp-prod')    || {}).value || '',
-    func:    (document.getElementById('grp-func')    || {}).value || '',
-  };
-}
-
-function grpSwitchTab(id) {
-  _grpTabAtivo = id;
-
-  // Atualizar botões ativos
-  document.querySelectorAll('.grp-tab-btn, [onclick*="grpSwitchTab"]').forEach(btn => {
-    const oc = btn.getAttribute('onclick') || '';
-    const on = oc.includes("'" + id + "'") || oc.includes('"' + id + '"');
-    btn.classList.toggle('on', on);
-  });
-
-  // Esconder todos os painéis grp
-  document.querySelectorAll('.grp-panel, [id^="grp-panel-"]').forEach(p => {
-    p.classList.remove('on');
-  });
-
-  // Mostrar painel correspondente
-  const alvo = document.getElementById('grp-panel-' + id);
-  if (alvo) alvo.classList.add('on');
-
-  // Renderizar conteúdo do painel
-  grpRender();
-}
-
-// ── Renderizar sub-aba ativa ──────────────────────────────────────
-function grpRender() {
-  switch (_grpTabAtivo) {
-    case 'producao':     _grpRenderProducao();     break;
-    case 'maquinas':     _grpRenderMaquinas();     break;
-    case 'produtos':     _grpRenderProdutos();     break;
-    case 'funcionarios': _grpRenderFuncionarios(); break;
-    case 'insumos':      _grpRenderInsumos();      break;
-    case 'gerencial':    _grpRenderGerencial();    break;
-  }
-}
-
-// ── Helper: filtrar records pelos filtros globais ─────────────────
-function _grpGetRecords() {
-  const f = _grpFiltros();
-  return (records || []).filter(r => {
-    const dt = r.dtDesejada || r.dtSolicitacao || '';
-    if (f.dtIni   && dt && dt < f.dtIni)           return false;
-    if (f.dtFim   && dt && dt > f.dtFim)            return false;
-    if (f.maquina && r.maquina !== f.maquina)       return false;
-    if (f.produto && r.produto !== f.produto)       return false;
-    return true;
-  });
-}
-
-// ── Helper: realizado de um record no período ─────────────────────
-function _grpRealizado(r) {
-  const f = _grpFiltros();
-  let total = 0;
-  try {
-    const suffix = '_' + r.id;
-    const keys = aponGetAllKeys();
-    keys.forEach(k => {
-      if (!k.endsWith(suffix)) return;
-      const dt = k.slice('apon_'.length, k.length - suffix.length);
-      if (f.dtIni && dt < f.dtIni) return;
-      if (f.dtFim && dt > f.dtFim) return;
-      const d = aponStorageGet(k);
-      if (d) [7,8,9,10,11,12,13,14,15,16,17].forEach(h => { total += parseInt(d[h])||0; });
-    });
-  } catch(e) {}
-  return total;
-}
-
-// ── Helper: renderizar tabela em um container ─────────────────────
-function _grpTabela(containerId, colunas, linhas, totais) {
-  const el = document.getElementById(containerId);
-  if (!el) return;
-  if (!linhas.length) {
-    el.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text3);font-size:12px">Sem dados no período selecionado</div>';
-    return;
-  }
-  const th = colunas.map(c =>
-    `<th style="padding:9px 12px;text-align:${c.right?'right':'left'};font-family:'JetBrains Mono',monospace;font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.8px;color:var(--text3)">${c.label}</th>`
-  ).join('');
-
-  const rows = linhas.map((row, i) => {
-    const bg = i % 2 === 1 ? 'background:rgba(255,255,255,.01)' : '';
-    const cells = colunas.map(c => {
-      const v = row[c.key];
-      const cor = c.cor ? c.cor(v, row) : 'var(--text)';
-      return `<td style="padding:9px 12px;${c.right?'text-align:right;':''}font-family:${c.mono?'\'JetBrains Mono\',monospace':'inherit'};color:${cor}">${v ?? '—'}</td>`;
-    }).join('');
-    return `<tr style="${bg}">${cells}</tr>`;
-  }).join('');
-
-  const tot = totais ? `<tr style="background:rgba(242,101,34,.06);border-top:1px solid rgba(242,101,34,.2)">
-    ${colunas.map(c => `<td style="padding:9px 12px;${c.right?'text-align:right;':''}font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--cyan)">${totais[c.key] ?? ''}</td>`).join('')}
-  </tr>` : '';
-
-  el.innerHTML = `<div style="overflow-x:auto">
-    <table style="width:100%;border-collapse:collapse;font-size:12px">
-      <thead style="background:var(--s2);border-bottom:1px solid var(--border)"><tr>${th}</tr></thead>
-      <tbody>${rows}${tot}</tbody>
-    </table>
-  </div>`;
-}
-
-// ── PRODUÇÃO ──────────────────────────────────────────────────────
-function _grpRenderProducao() {
-  const body = document.getElementById('grp-panel-producao');
-  if (!body) return;
-  const recs = _grpGetRecords();
-  if (!recs.length) {
-    body.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text3);font-size:12px">Sem dados no período</div>';
-    return;
-  }
-  // Agrupar por dia
-  const porDia = {};
-  recs.forEach(r => {
-    const dt = r.dtDesejada || r.dtSolicitacao || '';
-    if (!dt) return;
-    if (!porDia[dt]) porDia[dt] = { programado: 0, realizado: 0 };
-    porDia[dt].programado += r.qntCaixas || 0;
-    porDia[dt].realizado  += _grpRealizado(r);
-  });
-  const linhas = Object.entries(porDia).sort().map(([dt, d]) => {
-    const efic = d.programado > 0 ? Math.round(d.realizado / d.programado * 100) : 0;
-    const cor  = efic >= 85 ? '#2ec97a' : efic >= 70 ? '#f5c518' : '#e8321a';
-    return { data: dt, programado: d.programado.toLocaleString('pt-BR'), realizado: d.realizado.toLocaleString('pt-BR'), efic: efic + '%', _efic: efic };
-  });
-  const totP = Object.values(porDia).reduce((a,d) => a + d.programado, 0);
-  const totR = Object.values(porDia).reduce((a,d) => a + d.realizado, 0);
-  const totE = totP > 0 ? Math.round(totR / totP * 100) : 0;
-  _grpTabela('grp-panel-producao', [
-    { key:'data',       label:'Data',        mono:true },
-    { key:'programado', label:'Programado',  right:true, mono:true },
-    { key:'realizado',  label:'Realizado',   right:true, mono:true, cor:(v,r) => r._efic >= 85 ? '#2ec97a' : r._efic >= 70 ? '#f5c518' : '#e8321a' },
-    { key:'efic',       label:'Eficiência',  right:true, mono:true, cor:(v,r) => r._efic >= 85 ? '#2ec97a' : r._efic >= 70 ? '#f5c518' : '#e8321a' },
-  ], linhas, { data:'TOTAL', programado: totP.toLocaleString('pt-BR'), realizado: totR.toLocaleString('pt-BR'), efic: totE + '%' });
-}
-
-// ── MÁQUINAS ──────────────────────────────────────────────────────
-function _grpRenderMaquinas() {
-  const recs = _grpGetRecords();
-  const porMaq = {};
-  recs.forEach(r => {
-    if (!r.maquina) return;
-    if (!porMaq[r.maquina]) porMaq[r.maquina] = { programado:0, realizado:0, ordens:0 };
-    porMaq[r.maquina].programado += r.qntCaixas || 0;
-    porMaq[r.maquina].realizado  += _grpRealizado(r);
-    porMaq[r.maquina].ordens++;
-  });
-  const linhas = Object.entries(porMaq).sort().map(([maq, d]) => {
-    const efic = d.programado > 0 ? Math.round(d.realizado / d.programado * 100) : 0;
-    return { maquina: maq, ordens: d.ordens, programado: d.programado.toLocaleString('pt-BR'), realizado: d.realizado.toLocaleString('pt-BR'), efic: efic + '%', _efic: efic };
-  });
-  const totP = Object.values(porMaq).reduce((a,d) => a + d.programado, 0);
-  const totR = Object.values(porMaq).reduce((a,d) => a + d.realizado, 0);
-  _grpTabela('grp-panel-maquinas', [
-    { key:'maquina',    label:'Máquina',     mono:true, cor:()=>'var(--cyan)' },
-    { key:'ordens',     label:'Ordens',      right:true, mono:true },
-    { key:'programado', label:'Programado',  right:true, mono:true },
-    { key:'realizado',  label:'Realizado',   right:true, mono:true, cor:(v,r) => r._efic >= 85 ? '#2ec97a' : r._efic >= 70 ? '#f5c518' : '#e8321a' },
-    { key:'efic',       label:'Eficiência',  right:true, mono:true, cor:(v,r) => r._efic >= 85 ? '#2ec97a' : r._efic >= 70 ? '#f5c518' : '#e8321a' },
-  ], linhas, { maquina:'TOTAL', programado: totP.toLocaleString('pt-BR'), realizado: totR.toLocaleString('pt-BR'), efic: '' });
-}
-
-// ── PRODUTOS ──────────────────────────────────────────────────────
-function _grpRenderProdutos() {
-  const recs = _grpGetRecords();
-  const porProd = {};
-  recs.forEach(r => {
-    if (!r.produto) return;
-    if (!porProd[r.produto]) porProd[r.produto] = { maquina: r.maquina, programado:0, realizado:0 };
-    porProd[r.produto].programado += r.qntCaixas || 0;
-    porProd[r.produto].realizado  += _grpRealizado(r);
-  });
-  const linhas = Object.entries(porProd)
-    .sort((a,b) => b[1].realizado - a[1].realizado)
-    .map(([prod, d]) => {
-      const efic = d.programado > 0 ? Math.round(d.realizado / d.programado * 100) : 0;
-      return { produto: prod, maquina: d.maquina || '—', programado: d.programado.toLocaleString('pt-BR'), realizado: d.realizado.toLocaleString('pt-BR'), efic: efic + '%', _efic: efic };
-    });
-  _grpTabela('grp-panel-produtos', [
-    { key:'produto',    label:'Produto' },
-    { key:'maquina',    label:'Máquina',     mono:true, cor:()=>'var(--cyan)' },
-    { key:'programado', label:'Programado',  right:true, mono:true },
-    { key:'realizado',  label:'Realizado',   right:true, mono:true, cor:(v,r) => r._efic >= 85 ? '#2ec97a' : r._efic >= 70 ? '#f5c518' : '#e8321a' },
-    { key:'efic',       label:'Eficiência',  right:true, mono:true, cor:(v,r) => r._efic >= 85 ? '#2ec97a' : r._efic >= 70 ? '#f5c518' : '#e8321a' },
-  ], linhas, null);
-}
-
-// ── FUNCIONÁRIOS ──────────────────────────────────────────────────
-function _grpRenderFuncionarios() {
-  const body = document.getElementById('grp-panel-funcionarios');
-  if (!body) return;
-  const f = _grpFiltros();
-  // Agrupar apontamentos por funcionário
-  const porFunc = {};
-  try {
-    const keys = aponGetAllKeys();
-    keys.forEach(k => {
-      // chave: apon_YYYY-MM-DD_recId
-      const parts = k.split('_');
-      if (parts.length < 3 || parts[0] !== 'apon') return;
-      const dt = parts[1];
-      if (f.dtIni && dt < f.dtIni) return;
-      if (f.dtFim && dt > f.dtFim) return;
-      const d = aponStorageGet(k);
-      if (!d) return;
-      const func = d.operador || d.funcionario || '—';
-      if (f.func && func !== f.func) return;
-      if (!porFunc[func]) porFunc[func] = { total: 0, dias: new Set() };
-      [7,8,9,10,11,12,13,14,15,16,17].forEach(h => { porFunc[func].total += parseInt(d[h])||0; });
-      porFunc[func].dias.add(dt);
-    });
-  } catch(e) {}
-  const linhas = Object.entries(porFunc)
-    .sort((a,b) => b[1].total - a[1].total)
-    .map(([func, d]) => ({
-      funcionario: func,
-      dias: d.dias.size,
-      total: d.total.toLocaleString('pt-BR') + ' cx',
-      media: d.dias.size > 0 ? Math.round(d.total / d.dias.size).toLocaleString('pt-BR') + ' cx/dia' : '—',
-    }));
-  if (!linhas.length) {
-    body.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text3);font-size:12px">Sem apontamentos no período — verifique os filtros de data</div>';
-    return;
-  }
-  _grpTabela('grp-panel-funcionarios', [
-    { key:'funcionario', label:'Funcionário' },
-    { key:'dias',        label:'Dias',         right:true, mono:true },
-    { key:'total',       label:'Total Prod.',  right:true, mono:true, cor:()=>'var(--cyan)' },
-    { key:'media',       label:'Média/Dia',    right:true, mono:true },
-  ], linhas, null);
-}
-
-// ── INSUMOS ───────────────────────────────────────────────────────
-function _grpRenderInsumos() {
-  const body = document.getElementById('grp-panel-insumos');
-  if (!body) return;
-  try {
-    const pc = window.projecaoCalculada || [];
-    if (!pc.length) {
-      body.innerHTML = '<div style="padding:24px;color:var(--text3);font-size:12px">📈 Calcule a Projeção de Vendas para ver análise de cobertura de insumos</div>';
-      return;
-    }
-    const riscoConfig = {
-      critico: { cor:'#e8321a', label:'CRÍTICO', icon:'🔴' },
-      alto:    { cor:'#f5c518', label:'ALTO',    icon:'🟡' },
-      medio:   { cor:'#f26522', label:'MÉDIO',   icon:'🟠' },
-      ok:      { cor:'#2ec97a', label:'OK',      icon:'🟢' },
-    };
-    const sorted = [...pc].sort((a,b) => {
-      const rv = {critico:0,alto:1,medio:2,ok:3};
-      return (rv[a.risco]??4) - (rv[b.risco]??4);
-    });
-    body.innerHTML = sorted.slice(0,20).map(p => {
-      const cfg = riscoConfig[p.risco] || riscoConfig.ok;
-      return `<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;border-radius:7px;margin-bottom:6px;background:rgba(255,255,255,.03);border:1px solid var(--border)">
-        <div style="display:flex;align-items:center;gap:8px;flex:1;min-width:0">
-          <span>${cfg.icon}</span>
-          <div>
-            <div style="font-size:12px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:280px">${p.produto}</div>
-            <div style="font-size:10px;color:var(--text3)">${p.maquina||'—'} · Demanda: ${p.demandaDiaria?.toFixed(0)??'?'} cx/dia</div>
-          </div>
-        </div>
-        <div style="display:flex;align-items:center;gap:12px;flex-shrink:0">
-          <div style="text-align:right">
-            <div style="font-family:'JetBrains Mono',monospace;font-size:14px;font-weight:700;color:${cfg.cor}">${p.coberturaAtual!=null?p.coberturaAtual.toFixed(1)+'d':'—'}</div>
-            <div style="font-size:9px;color:var(--text3)">COBERTURA</div>
-          </div>
-          <span style="display:inline-block;padding:2px 8px;border-radius:5px;font-size:10px;font-weight:700;background:${cfg.cor}22;color:${cfg.cor};border:1px solid ${cfg.cor}44;min-width:52px;text-align:center">${cfg.label}</span>
-        </div>
-      </div>`;
-    }).join('');
-  } catch(e) {
-    body.innerHTML = '<div style="padding:16px;color:var(--text3);font-size:12px">Erro ao carregar dados de insumos</div>';
-  }
-}
-
-// ── GERENCIAL ─────────────────────────────────────────────────────
-function _grpRenderGerencial() {
-  const recs = _grpGetRecords();
-  // KPIs gerenciais
-  let totalProg = 0, totalReal = 0;
-  const porMaq = {};
-  recs.forEach(r => {
-    const real = _grpRealizado(r);
-    totalProg += r.qntCaixas || 0;
-    totalReal += real;
-    if (!r.maquina) return;
-    if (!porMaq[r.maquina]) porMaq[r.maquina] = { prog:0, real:0 };
-    porMaq[r.maquina].prog += r.qntCaixas || 0;
-    porMaq[r.maquina].real += real;
-  });
-  const efic = totalProg > 0 ? Math.round(totalReal / totalProg * 100) : 0;
-  const eficCor = efic >= 85 ? '#2ec97a' : efic >= 70 ? '#f5c518' : '#e8321a';
-  let rupturas = 0;
-  try { rupturas = (window.projecaoCalculada||[]).filter(p => p.risco==='critico'||p.risco==='alto').length; } catch(e) {}
-
-  const kpiEl = document.getElementById('grp-panel-gerencial');
-  if (!kpiEl) return;
-
-  const kpiHtml = `
-    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px">
-      ${[
-        { label:'Produção Total',   val: totalReal.toLocaleString('pt-BR') + ' cx', cor:'var(--cyan)',  icon:'📦' },
-        { label:'Programado',       val: totalProg.toLocaleString('pt-BR') + ' cx', cor:'var(--text2)', icon:'📋' },
-        { label:'Eficiência Geral', val: efic + '%',                                 cor: eficCor,       icon:'📈' },
-        { label:'Risco Ruptura',    val: rupturas + ' prod.',                        cor: rupturas===0?'#2ec97a':'#e8321a', icon:'🚨' },
-      ].map(k => `
-        <div style="background:var(--s1);border:1px solid var(--border);border-radius:12px;padding:16px 18px;border-left:3px solid ${k.cor}">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-            <div style="font-size:10px;text-transform:uppercase;letter-spacing:.7px;color:var(--text3)">${k.label}</div>
-            <span style="font-size:18px">${k.icon}</span>
-          </div>
-          <div style="font-family:'JetBrains Mono',monospace;font-size:26px;font-weight:700;color:${k.cor}">${k.val}</div>
-        </div>`).join('')}
-    </div>`;
-
-  const linhas = Object.entries(porMaq).sort().map(([maq, d]) => {
-    const e = d.prog > 0 ? Math.round(d.real / d.prog * 100) : 0;
-    return { maquina: maq, programado: d.prog.toLocaleString('pt-BR'), realizado: d.real.toLocaleString('pt-BR'), efic: e + '%', _efic: e };
-  });
-
-  kpiEl.innerHTML = kpiHtml;
-  const tabelaId = 'grp-panel-gerencial-tabela';
-  kpiEl.insertAdjacentHTML('beforeend', `<div id="${tabelaId}"></div>`);
-  _grpTabela(tabelaId, [
-    { key:'maquina',    label:'Máquina',     mono:true, cor:()=>'var(--cyan)' },
-    { key:'programado', label:'Programado',  right:true, mono:true },
-    { key:'realizado',  label:'Realizado',   right:true, mono:true, cor:(v,r)=>r._efic>=85?'#2ec97a':r._efic>=70?'#f5c518':'#e8321a' },
-    { key:'efic',       label:'Eficiência',  right:true, mono:true, cor:(v,r)=>r._efic>=85?'#2ec97a':r._efic>=70?'#f5c518':'#e8321a' },
-  ], linhas, null);
-}
-
-// ── grpClear — botão Limpar ───────────────────────────────────────
-function grpClear() {
-  ['grp-dt-ini','grp-dt-fim','grp-maq','grp-prod','grp-func'].forEach(id => {
-    const el = document.getElementById(id); if (el) el.value = '';
-  });
-  grpRender();
-}
-
-// ── grpExport — botão Excel ───────────────────────────────────────
-function grpExport() {
-  if (window.relatorios && typeof window.relatorios.exportXLSX === 'function') {
-    window.relatorios.exportXLSX();
-    return;
-  }
-  // Fallback: exportar os dados da aba ativa
-  const recs = _grpGetRecords();
-  try {
-    const wb = XLSX.utils.book_new();
-    const rows = [['Produto','Máquina','Programado','Realizado','Data']];
-    recs.forEach(r => rows.push([r.produto||'', r.maquina||'', r.qntCaixas||0, _grpRealizado(r), r.dtDesejada||r.dtSolicitacao||'']));
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), 'Relatório');
-    XLSX.writeFile(wb, 'Relatorio_' + _grpTabAtivo + '_' + new Date().toLocaleDateString('pt-BR').replace(/\//g,'-') + '.xlsx');
-  } catch(e) { alert('Erro ao exportar: ' + e.message); }
-}
-
-window.grpRender         = grpRender;
-window.grpSwitchTab      = grpSwitchTab;
-window.grpClear          = grpClear;
-window.grpExport         = grpExport;
-// Aliases usados pelo HTML
-window.grpResetFiltros   = grpClear;
-window.grpExportXLSX     = grpExport;
-window._grpFiltros       = _grpFiltros;
-
-// ── Expor dados que _grpGetRecords e _grpRealizado precisam ──────
-// records é let no escopo do módulo — atualizado via grpSyncRecords()
-window.aponGetAllKeys  = aponGetAllKeys;
-window.aponStorageGet  = aponStorageGet;
-
-function grpSyncRecords() {
-  window.records = records;
-}
-window.grpSyncRecords = grpSyncRecords;
-
-// ── Popular selects de filtro ao entrar na aba ────────────────────
-function grpInitFiltros() {
-  grpSyncRecords();
-
-  // Select de máquinas
-  const selMaq = document.getElementById('grp-maq');
-  if (selMaq && selMaq.options.length <= 1) {
-    const maquinas = [...new Set((records || []).map(r => r.maquina).filter(Boolean))].sort();
-    maquinas.forEach(m => {
-      const o = document.createElement('option');
-      o.value = o.textContent = m;
-      selMaq.appendChild(o);
-    });
-  }
-
-  // Select de produtos
-  const selProd = document.getElementById('grp-prod');
-  if (selProd && selProd.options.length <= 1) {
-    const produtos = [...new Set((records || []).map(r => r.produto).filter(Boolean))].sort();
-    produtos.forEach(p => {
-      const o = document.createElement('option');
-      o.value = o.textContent = p;
-      selProd.appendChild(o);
-    });
-  }
-
-  // Select de operadores/funcionários (vem dos apontamentos)
-  const selFunc = document.getElementById('grp-func');
-  if (selFunc && selFunc.options.length <= 1) {
-    const funcs = new Set();
-    try {
-      aponGetAllKeys().forEach(k => {
-        const d = aponStorageGet(k);
-        if (d && (d.operador || d.funcionario)) funcs.add(d.operador || d.funcionario);
-      });
-    } catch(e) {}
-    [...funcs].sort().forEach(fn => {
-      const o = document.createElement('option');
-      o.value = o.textContent = fn;
-      selFunc.appendChild(o);
-    });
-  }
-}
-window.grpInitFiltros = grpInitFiltros;
-
