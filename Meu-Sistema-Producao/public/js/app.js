@@ -2418,6 +2418,11 @@ function hoursOnDayMaq(d, maq){
     const maqHrs = hoursOnDayForMaq(d, maq);
     return maqHrs;
   }
+  // Fallback: se getActiveShiftBlocks disponível, soma duração real dos blocos
+  if(maq && typeof getActiveShiftBlocks === 'function'){
+    const blks = getActiveShiftBlocks(d, maq);
+    return blks.reduce((s,b) => s + (b.fimMin - b.inicioMin) / 60, 0);
+  }
   return hoursOnDay(d);
 }
 
@@ -2427,6 +2432,14 @@ function weekHoursMaq(monday, maq){
     return weekHoursForMaq(monday, maq);
   }
   const days = getWeekDays(monday);
+  // Se getActiveShiftBlocks disponível, soma duração real dos turnos ativos por dia
+  if(maq && typeof getActiveShiftBlocks === 'function'){
+    return days.reduce((a,d) => {
+      const blks = getActiveShiftBlocks(d, maq);
+      const hrsDay = blks.reduce((s,b) => s + (b.fimMin - b.inicioMin) / 60, 0);
+      return a + hrsDay;
+    }, 0);
+  }
   return days.reduce((a,d) => a + hoursOnDayMaq(d, maq), 0);
 }
 
