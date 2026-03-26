@@ -214,6 +214,7 @@ function buildRelatoriosHTML() {
           <tr style="background:var(--s2);border-bottom:1px solid var(--border)">
             ${_thSort('maquina','Máquina')}
             ${_thSort('produto','Produto')}
+            <th class="rel2-sort-th">Categoria da Máquina</th>
             ${_thSort('programado','Programado')}
             ${_thSort('realizado','Realizado')}
             ${_thSort('eficiencia','Eficiência %')}
@@ -483,7 +484,7 @@ function _calcularDados() {
       const rv = realizadoMap[r.id] || 0;
       return rv > (best.v || 0) ? { nome: r.produto, v: rv } : best;
     }, {});
-    return { maquina: maq, produto: topProd.nome || '—', programado: dados.programado, realizado: real, eficiencia: efic, setup, pctOcioso: pctOc };
+    return { maquina: maq, produto: topProd.nome || '—', categoriaMaquina: _getCategoriaMaquina(maq), programado: dados.programado, realizado: real, eficiencia: efic, setup, pctOcioso: pctOc };
   });
   _dadosCache = { recs, realizadoMap, porMaquina, porProduto, porCategoriaProduto, porCategoriaMaquina, producaoPorDia, setupPorRegistro, totalProgramado, totalRealizado, eficienciaMedia, pctOcupado, pctSetup, pctOcioso, diasComProducao, numMaquinas, rupturas, tabelaRows, minutosProdutivos, minutosSetupTotal };
   return _dadosCache;
@@ -928,7 +929,7 @@ function _renderTabelaRows(rows) {
   });
 
   if (!filtradas.length) {
-    tbody.innerHTML = `<tr><td colspan="7" style="padding:24px;text-align:center;color:var(--text3);font-size:12px">Sem dados para os filtros selecionados</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="8" style="padding:24px;text-align:center;color:var(--text3);font-size:12px">Sem dados para os filtros selecionados</td></tr>`;
     if (footer) footer.textContent = '';
     return;
   }
@@ -959,6 +960,7 @@ function _renderTabelaRows(rows) {
     return `<tr style="background:${rowBg};${rowBorder}">
       <td class="rel2-td" style="color:var(--cyan);font-family:'JetBrains Mono',monospace;font-weight:700;font-size:12px">${r.maquina}</td>
       <td class="rel2-td" style="color:var(--text);max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${_esc(r.produto)}">${r.produto}</td>
+      <td class="rel2-td" style="color:var(--text2);font-size:11px">${r.categoriaMaquina || 'SEM CATEGORIA'}</td>
       <td class="rel2-td" style="text-align:right;font-family:'JetBrains Mono',monospace;color:var(--text2)">${_fmtNum(r.programado)}</td>
       <td class="rel2-td" style="text-align:right;font-family:'JetBrains Mono',monospace;font-weight:600;color:${eficCor}">${_fmtNum(r.realizado)}</td>
       <td class="rel2-td" style="text-align:right">

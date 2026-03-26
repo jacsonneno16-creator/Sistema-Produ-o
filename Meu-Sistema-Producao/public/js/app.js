@@ -570,7 +570,7 @@ function resetCategoriaForm() {
   const ativo = document.getElementById('cat-ativo-inp'); if (ativo) ativo.value = 'true';
 }
 
-async function saveCategoriaCfg() {
+function saveCategoriaCfg() {
   const nome = (document.getElementById('cat-nome-inp')?.value || '').trim();
   const ordem = parseInt(document.getElementById('cat-ordem-inp')?.value || '0') || 0;
   const ativo = document.getElementById('cat-ativo-inp')?.value !== 'false';
@@ -604,7 +604,7 @@ function editarCategoriaCfg(id) {
   document.getElementById('cat-ativo-inp').value = cat.ativo === false ? 'false' : 'true';
 }
 
-async function excluirCategoriaCfg(id) {
+function excluirCategoriaCfg(id) {
   const cat = (CATEGORIAS || []).find(c => c.id === id);
   if (!cat) return;
   if (!confirm('Excluir categoria "' + cat.nome + '"?')) return;
@@ -988,6 +988,7 @@ window.criarLojaCfg = criarLojaCfg;
 
 // ===== WEEK FILTER HELPERS =====
 let maqViewMode = 'grid'; // 'grid' or 'list'
+let maqSelectedCards = []; // nomes das máquinas selecionadas no painel de máquinas
 let maqWeekFilter = ''; // '' = all, or monday dateStr
 
 function getRecordsWeekMondaysSet(){
@@ -1912,6 +1913,72 @@ function getProdInfo(rec){
 }
 
 // ===== MÁQUINAS =====
+
+function _maqSafeId(nome){
+  return 'maqcard-'+String(nome||'').replace(/[^a-zA-Z0-9]/g,'_');
+}
+function maqIsSelected(nome){
+  return maqSelectedCards.includes(nome);
+}
+function toggleMaqCardSelected(nome, evt){
+  if(evt){
+    evt.preventDefault();
+    evt.stopPropagation();
+  }
+  if(maqIsSelected(nome)){
+    maqSelectedCards = maqSelectedCards.filter(x => x !== nome);
+  } else {
+    maqSelectedCards = [...maqSelectedCards, nome];
+  }
+  renderMaquinas();
+}
+function clearMaqCardSelection(){
+  maqSelectedCards = [];
+  renderMaquinas();
+}
+function renderMaqSelectionSummary(map, refMon){
+  const host = document.getElementById('maq-selection-summary');
+  if(!host || !map) return;
+  const nomes = Object.keys(map);
+  const totais = nomes.reduce((acc, nome) => {
+    const d = map[nome] || { caixas:0, min:0 };
+    acc.caixas += d.caixas || 0;
+    acc.min += d.min || 0;
+    acc.cap += (typeof weekHoursMaq === 'function' ? weekHoursMaq(refMon, nome) : 0);
+    return acc;
+  }, { caixas:0, min:0, cap:0 });
+  const selNomes = maqSelectedCards.filter(nome => nomes.includes(nome));
+  if(selNomes.length !== maqSelectedCards.length){
+    maqSelectedCards = selNomes;
+  }
+  const sel = selNomes.reduce((acc, nome) => {
+    const d = map[nome] || { caixas:0, min:0 };
+    acc.caixas += d.caixas || 0;
+    acc.min += d.min || 0;
+    acc.cap += (typeof weekHoursMaq === 'function' ? weekHoursMaq(refMon, nome) : 0);
+    return acc;
+  }, { caixas:0, min:0, cap:0 });
+  const totalPct = totais.cap > 0 ? ((totais.min/60) / totais.cap * 100) : 0;
+  const selPct = sel.cap > 0 ? ((sel.min/60) / sel.cap * 100) : 0;
+  host.style.display = '';
+  host.innerHTML = `
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px">
+      <div style="background:var(--s1);border:1px solid var(--border);border-radius:10px;padding:10px 12px">
+        <div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.9px;font-family:'JetBrains Mono',monospace">Ocupação total</div>
+        <div style="margin-top:6px;font-size:18px;font-weight:700;color:var(--cyan);font-family:'JetBrains Mono',monospace">${totalPct.toFixed(1)}%</div>
+        <div style="margin-top:4px;font-size:11px;color:var(--text2)">${fmtHrs((totais.min||0)/60)} programadas · ${Math.round(totais.caixas||0)} cx</div>
+      </div>
+      <div style="background:var(--s1);border:1px solid var(--border);border-radius:10px;padding:10px 12px">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+          <div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.9px;font-family:'JetBrains Mono',monospace">Máquinas selecionadas</div>
+          ${selNomes.length ? `<button onclick="clearMaqCardSelection()" style="background:none;border:1px solid var(--border);border-radius:6px;padding:3px 8px;font-size:10px;color:var(--text2);cursor:pointer">Limpar</button>` : ''}
+        </div>
+        <div style="margin-top:6px;font-size:18px;font-weight:700;color:${selNomes.length ? 'var(--warn)' : 'var(--text3)'};font-family:'JetBrains Mono',monospace">${selNomes.length ? selPct.toFixed(1)+'%' : '0%'}</div>
+        <div style="margin-top:4px;font-size:11px;color:var(--text2)">${selNomes.length ? `${selNomes.length} máquina(s) · ${fmtHrs((sel.min||0)/60)} · ${Math.round(sel.caixas||0)} cx` : 'Selecione os cards para somar separado'}</div>
+      </div>
+    </div>`;
+}
+
 function renderMaquinas(){
   const grid = document.getElementById('maq-grid');
   // Mostra aviso se nenhuma máquina cadastrada no Firestore
@@ -2000,6 +2067,7 @@ function renderMaquinas(){
   }
   function maqColor(pct){return pct>100?'var(--red)':pct>=80?'var(--warn)':'var(--cyan)';}
   function barColor(pct){return pct>100?'var(--red)':pct>=80?'var(--warn)':'var(--cyan)';}
+  renderMaqSelectionSummary(map, refMon);
 
   if(maqViewMode==='list'){
     let html=`<div class="maq-list-view">
@@ -2052,12 +2120,15 @@ function renderMaquinas(){
         const ativos=['T1','T2','T3'].filter((_,i)=>t[i]);
         turnosSumario=ativos.length?`<div style="font-size:9px;color:var(--text3);font-family:'JetBrains Mono',monospace;margin-top:2px">Turnos Seg: ${ativos.join(' + ')}</div>`:'';
       }
-      return `<div class="maq-card" style="cursor:pointer" onclick="toggleMaqCardDetail('maqcard-${m.replace(/[^a-zA-Z0-9]/g,'_')}')">
-        <div class="maq-title">${m}</div>
+      const selected = maqIsSelected(m);
+      const safeId = _maqSafeId(m);
+      return `<div class="maq-card" style="cursor:pointer;position:relative;${selected ? "border-color:var(--warn);box-shadow:0 0 0 1px rgba(255,184,0,.35), 0 8px 24px rgba(0,0,0,.22)" : ""}" onclick="toggleMaqCardDetail('${safeId}')">
+        <button onclick="toggleMaqCardSelected(${JSON.stringify(m)}, event)" style="position:absolute;top:10px;right:10px;background:${selected ? 'rgba(255,184,0,.18)' : 'var(--s2)'};border:1px solid ${selected ? 'rgba(255,184,0,.45)' : 'var(--border)'};border-radius:999px;padding:4px 10px;font-size:10px;color:${selected ? 'var(--warn)' : 'var(--text2)'};cursor:pointer;font-family:'JetBrains Mono',monospace">${selected ? 'Selecionado' : 'Selecionar'}</button>
+        <div class="maq-title" style="padding-right:98px">${m}</div>
         ${turnosSumario}
         <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text2);font-family:'JetBrains Mono',monospace;margin-top:4px">
           <span>${d.items.length} solicit.</span>
-          <span><strong style="color:${col}">${d.caixas}</strong> caixas</span>
+          <span><strong style="color:${col}">${Math.round(d.caixas||0)}</strong> caixas</span>
         </div>
         <div class="maq-bar-bg"><div class="maq-bar" style="width:${displayPct}%;background:${col}"></div></div>
         <div style="display:flex;justify-content:space-between;align-items:center;font-family:'JetBrains Mono',monospace;font-size:11px;margin-top:4px">
@@ -2068,7 +2139,7 @@ function renderMaquinas(){
         </div>
         ${overFlag}
         ${d.items.length?`<div class="maq-list">${items}${more}</div>`:''}
-        <div id="maqcard-${m.replace(/[^a-zA-Z0-9]/g,'_')}" style="display:none;margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">${buildMaqCardDetail(m)}</div>
+        <div id="${safeId}" style="display:none;margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">${buildMaqCardDetail(m)}</div>
         <div style="text-align:center;margin-top:6px;font-size:10px;color:var(--text3)">▾ detalhes</div>
       </div>`;
     }).join('');
@@ -6807,8 +6878,6 @@ function toggleSnavGroup(group){
 }
 
 function settingsNav(section){
-  const requestedSection = section;
-  const targetSection = section === 'categoria' ? 'produtos' : section;
   // Esconde todos os conteúdos
   document.querySelectorAll('.scontent').forEach(el=>{
     el.style.display='none';
@@ -6824,11 +6893,12 @@ function settingsNav(section){
     }
   });
   // Mostra a seção correta
-  const content=document.getElementById('scontent-'+targetSection);
+  const contentId = section === 'categorias-cfg' ? 'scontent-produtos' : 'scontent-'+section;
+  const content=document.getElementById(contentId);
   if(content) content.style.display='flex';
-  if(targetSection==='produtos') setTimeout(async()=>{ try { await carregarCategoriasCached(); renderCategoriasCfg(); preencherSelectCategorias('prod-categoria-inp'); preencherSelectCategorias('maq-categoria-inp'); } catch(e){} }, 30);
+  if(section==='produtos' || section==='categorias-cfg') setTimeout(async()=>{ try { await carregarCategoriasCached(); renderCategoriasCfg(); preencherSelectCategorias('prod-categoria-inp'); preencherSelectCategorias('maq-categoria-inp'); if(section==='categorias-cfg'){ const alvo=document.getElementById('categorias-card-cfg'); if(alvo) alvo.scrollIntoView({behavior:'smooth', block:'start'}); } } catch(e){} }, 30);
   // Ativa o botão nav correspondente
-  const navBtn=document.getElementById('snav-'+requestedSection);
+  const navBtn=document.getElementById('snav-'+section);
   if(navBtn){
     navBtn.classList.add('snav-active');
     navBtn.style.background='rgba(0,212,255,.1)';
@@ -6857,12 +6927,12 @@ function settingsNav(section){
   }
 
   // ── Grupo Produtos ──
-  const prodGroupSections=['produtos','ficha-tecnica-cfg','categoria'];
+  const prodGroupSections=['produtos','ficha-tecnica-cfg','categorias-cfg'];
   const prodGroupBtn=document.getElementById('snav-produtos-group-btn');
   const prodSubmenu=document.getElementById('snav-produtos-submenu');
   const prodChevron=document.getElementById('snav-produtos-chevron');
   if(prodGroupBtn){
-    if(prodGroupSections.includes(requestedSection) || prodGroupSections.includes(targetSection)){
+    if(prodGroupSections.includes(section)){
       prodGroupBtn.style.background='rgba(0,212,255,.1)';
       prodGroupBtn.style.border='1px solid rgba(0,212,255,.25)';
       prodGroupBtn.style.color='var(--cyan)';
@@ -6885,8 +6955,7 @@ function settingsNav(section){
   if(section==='setup-maquinas') setTimeout(()=>renderSetupMaquinas(), 50);
   if(section==='gestao-lojas') setTimeout(()=>renderGestaoLojas(), 50);
   if(section==='ficha-tecnica-cfg') setTimeout(()=>renderFichaTecnicaCfg(), 50);
-  if(targetSection==='produtos') setTimeout(()=>renderProdutosCfg(), 50);
-  if(section==='categoria') setTimeout(()=>{ const card=document.getElementById('prod-categorias-card'); if(card) card.scrollIntoView({behavior:'smooth', block:'start'}); const el=document.getElementById('cat-nome-inp'); if(el) el.focus(); }, 80);
+  if(section==='produtos' || section==='categorias-cfg') setTimeout(()=>renderProdutosCfg(), 50);
   if(section==='processos') setTimeout(()=>renderProcessos(), 50);
 }
 
@@ -7180,6 +7249,7 @@ function openEditMaquina(nome) {
   calcMaqCapacidade();
   carregarCategoriasCached().then(()=>preencherSelectCategorias('maq-categoria-inp', d.categoria || ''));
   switchMaqTab('dados');
+  carregarCategoriasCached().then(()=>preencherSelectCategorias('maq-categoria-inp',''));
   populateMaqProdSel();
   renderMaqProdsLista();
   document.getElementById('maq-modal').style.display = 'flex';
@@ -7855,6 +7925,7 @@ function editarProduto(cod, maquina, descricao) {
   }
 
   // Mudar título do modal
+  carregarCategoriasCached().then(()=>preencherSelectCategorias('prod-categoria-inp',''));
   const titleEl = document.getElementById('prod-modal-title') || document.getElementById('maq-modal-title');
   if (titleEl) titleEl.textContent = 'Editar Produto';
 
@@ -12926,6 +12997,8 @@ window.saveMaquinaModal = saveMaquinaModal;
 window.excluirMaquinaFirestore = excluirMaquinaFirestore;
 window.toggleMaqDetail = toggleMaqDetail;
 window.toggleMaqCardDetail = toggleMaqCardDetail;
+window.toggleMaqCardSelected = toggleMaqCardSelected;
+window.clearMaqCardSelection = clearMaqCardSelection;
 window.renderFichaTecnicaCfg = renderFichaTecnicaCfg;
 window.ftCfgToggle = ftCfgToggle;
 window.ftCfgAbrirFicha = ftCfgAbrirFicha;
