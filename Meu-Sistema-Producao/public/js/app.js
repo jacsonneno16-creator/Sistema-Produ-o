@@ -576,6 +576,9 @@ async function saveCategoriaCfg() {
   const ativo = document.getElementById('cat-ativo-inp')?.value !== 'false';
   const editId = (document.getElementById('cat-edit-id')?.value || '').trim();
   if (!nome) { toast('Informe o nome da categoria', 'err'); return; }
+  // Desabilitar botão durante o save para evitar duplo clique
+  const btnSave = document.querySelector('[onclick*="saveCategoriaCfg"]');
+  if (btnSave) { btnSave.disabled = true; btnSave.textContent = 'Salvando...'; }
   try {
     const duplicada = (CATEGORIAS || []).find(c => (c.nome || '').trim().toUpperCase() === nome.toUpperCase() && c.id !== editId);
     if (duplicada) { toast('Categoria já cadastrada', 'err'); return; }
@@ -591,8 +594,11 @@ async function saveCategoriaCfg() {
     preencherSelectCategorias('maq-categoria-inp');
     preencherSelectCategorias('prod-categoria-inp');
     resetCategoriaForm();
-    toast('Categoria salva com sucesso', 'ok');
+    toast(editId ? 'Categoria atualizada com sucesso' : 'Categoria salva com sucesso', 'ok');
   } catch(e) { toast('Erro ao salvar categoria: ' + e.message, 'err'); }
+  finally {
+    if (btnSave) { btnSave.disabled = false; btnSave.textContent = '💾 Salvar categoria'; }
+  }
 }
 
 function editarCategoriaCfg(id) {
@@ -1971,21 +1977,38 @@ function renderMaqSelectionSummary(map, refMon){
   }, { caixas:0, min:0, cap:0 });
   const totalPct = totais.cap > 0 ? ((totais.min/60) / totais.cap * 100) : 0;
   const selPct = sel.cap > 0 ? ((sel.min/60) / sel.cap * 100) : 0;
+  const totalOccColor = totalPct > 100 ? 'var(--red)' : totalPct >= 80 ? 'var(--warn)' : 'var(--cyan)';
+  const selOccColor   = selPct   > 100 ? 'var(--red)' : selPct   >= 80 ? 'var(--warn)' : 'var(--warn)';
+  const totalBarPct   = Math.min(100, totalPct);
+  const selBarPct     = Math.min(100, selPct);
   host.style.display = '';
   host.innerHTML = `
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px">
-      <div style="background:var(--s1);border:1px solid var(--border);border-radius:10px;padding:10px 12px">
-        <div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.9px;font-family:'JetBrains Mono',monospace">Ocupação total</div>
-        <div style="margin-top:6px;font-size:18px;font-weight:700;color:var(--cyan);font-family:'JetBrains Mono',monospace">${totalPct.toFixed(1)}%</div>
-        <div style="margin-top:4px;font-size:11px;color:var(--text2)">${fmtHrs((totais.min||0)/60)} programadas · ${Math.round(totais.caixas||0)} cx</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px">
+      <div style="background:var(--s1);border:1px solid var(--border);border-radius:10px;padding:10px 14px">
+        <div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.9px;font-family:'JetBrains Mono',monospace">Ocupação total da semana</div>
+        <div style="display:flex;align-items:baseline;gap:8px;margin-top:6px">
+          <span style="font-size:20px;font-weight:700;color:${totalOccColor};font-family:'JetBrains Mono',monospace">${totalPct.toFixed(1)}%</span>
+          <span style="font-size:11px;color:var(--text3)">${fmtHrs((totais.min||0)/60)} prog. / ${totais.cap}h disp.</span>
+        </div>
+        <div style="margin-top:6px;height:5px;background:var(--s3);border-radius:3px;overflow:hidden">
+          <div style="height:100%;width:${totalBarPct}%;background:${totalOccColor};border-radius:3px;transition:width .3s"></div>
+        </div>
+        <div style="margin-top:4px;font-size:11px;color:var(--text2)">${nomes.length} máquina(s) · ${Math.round(totais.caixas||0)} cx programadas</div>
       </div>
-      <div style="background:var(--s1);border:1px solid var(--border);border-radius:10px;padding:10px 12px">
+      <div style="background:var(--s1);border:1px solid var(--border);border-radius:10px;padding:10px 14px">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
           <div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.9px;font-family:'JetBrains Mono',monospace">Máquinas selecionadas</div>
-          ${selNomes.length ? `<button onclick="clearMaqCardSelection()" style="background:none;border:1px solid var(--border);border-radius:6px;padding:3px 8px;font-size:10px;color:var(--text2);cursor:pointer">Limpar</button>` : ''}
+          ${selNomes.length ? `<button onclick="clearMaqCardSelection()" style="background:none;border:1px solid var(--border);border-radius:6px;padding:3px 8px;font-size:10px;color:var(--text2);cursor:pointer;font-family:'Space Grotesk',sans-serif">✕ Limpar</button>` : ''}
         </div>
-        <div style="margin-top:6px;font-size:18px;font-weight:700;color:${selNomes.length ? 'var(--warn)' : 'var(--text3)'};font-family:'JetBrains Mono',monospace">${selNomes.length ? selPct.toFixed(1)+'%' : '0%'}</div>
-        <div style="margin-top:4px;font-size:11px;color:var(--text2)">${selNomes.length ? `${selNomes.length} máquina(s) · ${fmtHrs((sel.min||0)/60)} · ${Math.round(sel.caixas||0)} cx` : 'Selecione os cards para somar separado'}</div>
+        <div style="display:flex;align-items:baseline;gap:8px;margin-top:6px">
+          <span style="font-size:20px;font-weight:700;color:${selNomes.length ? selOccColor : 'var(--text3)'};font-family:'JetBrains Mono',monospace">${selNomes.length ? selPct.toFixed(1)+'%' : '—'}</span>
+          ${selNomes.length ? `<span style="font-size:11px;color:var(--text3)">${fmtHrs((sel.min||0)/60)} prog. / ${sel.cap}h disp.</span>` : ''}
+        </div>
+        ${selNomes.length ? `
+        <div style="margin-top:6px;height:5px;background:var(--s3);border-radius:3px;overflow:hidden">
+          <div style="height:100%;width:${selBarPct}%;background:${selOccColor};border-radius:3px;transition:width .3s"></div>
+        </div>` : ''}
+        <div style="margin-top:4px;font-size:11px;color:var(--text2)">${selNomes.length ? `${selNomes.length} máquina(s) · ${Math.round(sel.caixas||0)} cx` : 'Selecione os cards para somar separado'}</div>
       </div>
     </div>`;
 }
@@ -2862,6 +2885,13 @@ function buildSchedule(monday){
       while(remainSetupMin>0.001 && snap.dayIdx<7){
         const blocks=advanceCursor(snap, days, maq);
         if(!blocks) break;
+        // Pular blocos sem disponibilidade antes de consumir
+        while(snap.blkIdx < blocks.length){
+          const _avail=(blocks[snap.blkIdx].fimMin-blocks[snap.blkIdx].inicioMin)-snap.usedMin;
+          if(_avail>0.001) break;
+          snap.blkIdx++; snap.usedMin=0;
+        }
+        if(snap.blkIdx>=blocks.length){snap.dayIdx++;snap.blkIdx=0;snap.usedMin=0;continue;}
         const blk=blocks[snap.blkIdx];
         const blkTotalMin=blk.fimMin-blk.inicioMin;
         const blkAvailMin=blkTotalMin-snap.usedMin;
@@ -15571,3 +15601,12 @@ window.closeModalProcesso = closeModalProcesso;
 window.salvarProcesso     = salvarProcesso;
 window.deleteProcesso     = deleteProcesso;
 window.renderProcessos    = renderProcessos;
+
+// ── Exportar funções de Categoria para o window ──
+// (necessário para que os botões onclick="saveCategoriaCfg()" no HTML funcionem)
+window.saveCategoriaCfg    = saveCategoriaCfg;
+window.editarCategoriaCfg  = editarCategoriaCfg;
+window.excluirCategoriaCfg = excluirCategoriaCfg;
+window.renderCategoriasCfg = renderCategoriasCfg;
+window.resetCategoriaForm  = resetCategoriaForm;
+window.preencherSelectCategorias = preencherSelectCategorias;
