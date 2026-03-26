@@ -1708,7 +1708,7 @@ function sBadge(s){
 // Zero-pads minutes < 10 as requested (e.g. "10h08min")
 function fmtHrs(h){
   if(!h||h<=0) return '—';
-  const totalMin=(h*60);
+  const totalMin=Math.round(h*60);
   if(totalMin<60){
     const m=String(totalMin).padStart(2,'0');
     return m+'min';
@@ -1733,20 +1733,20 @@ function getProdInfo(rec){
   const velMaquina = rec.maquina ? getPcMinMaquinaProduto(rec.maquina, nomeProduto) : null;
 
   if(ficha){
-    // Ordem de prioridade da velocidade:
-    // 1. Velocidade configurada na máquina para este produto (produtosCompativeis)
-    // 2. pcMin salvo no registro (calculado pela PA para a máquina específica)
-    // 3. Velocidade genérica da ficha do produto (fallback)
-    const pcMinFinal = (velMaquina && velMaquina > 0)
-      ? velMaquina
-      : (rec.pcMin && rec.pcMin > 0 ? rec.pcMin : ficha.pc_min);
+    // Mesma prioridade da aba Programação:
+    // 1. pcMin salvo no registro
+    // 2. Velocidade configurada na máquina para este produto
+    // 3. Velocidade genérica da ficha do produto
+    const pcMinFinal = (rec.pcMin && rec.pcMin > 0)
+      ? rec.pcMin
+      : ((velMaquina && velMaquina > 0) ? velMaquina : ficha.pc_min);
     return { ...ficha, pc_min: pcMinFinal };
   }
 
-  // Sem ficha: usar velocidade da máquina ou do registro
-  const pcMinFallback = (velMaquina && velMaquina > 0)
-    ? velMaquina
-    : (rec.pcMin && rec.pcMin > 0 ? rec.pcMin : 0);
+  // Sem ficha: usar primeiro o pcMin do registro, depois a máquina
+  const pcMinFallback = (rec.pcMin && rec.pcMin > 0)
+    ? rec.pcMin
+    : ((velMaquina && velMaquina > 0) ? velMaquina : 0);
   if(pcMinFallback > 0) return { pc_min: pcMinFallback, unid: rec.unidPorCx || 1 };
 
   // Último recurso: primeiro produto da máquina
