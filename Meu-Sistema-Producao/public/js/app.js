@@ -748,24 +748,30 @@ function normProd(s){
 // SETUP_DATA mantido como objeto vazio — não contém mais dados estáticos.
 const SETUP_DATA = {};
 
+// Normaliza nome de máquina para comparação robusta (cobre espaços e traços)
+function normMaq(s){ return (s||'').toUpperCase().trim().replace(/\s+/g,' ').replace(/\s*[-_]+\s*/g,'-'); }
+
 // Retorna tempo de setup em minutos entre dois produtos na mesma máquina.
 // Fonte: Firestore (setup_maquinas) → tempo padrão da máquina → 0
 function getSetupMin(maq, prodDescA, prodDescB) {
   if (!maq || !prodDescA || !prodDescB) return 0;
   if (prodDescA === prodDescB) return 0;
 
-  // 1) Firestore (carregarSetupFirestore populou SETUP_FIRESTORE)
-  // Tentar uppercase (padrão de indexação) depois original e trim
-  const fsMaq = SETUP_FIRESTORE[maq.toUpperCase().trim()]
-             || SETUP_FIRESTORE[maq.trim()]
-             || SETUP_FIRESTORE[maq];
+  // 1) Firestore — busca com normalização robusta do nome da máquina
+  const maqNorm = normMaq(maq);
+  let fsMaq = null;
+  for(const key of Object.keys(SETUP_FIRESTORE)){
+    if(key === maq.trim() || key === maq.toUpperCase().trim() || normMaq(key) === maqNorm){
+      fsMaq = SETUP_FIRESTORE[key];
+      break;
+    }
+  }
+
   if (fsMaq) {
     const normA = normProd(prodDescA);
     const normB = normProd(prodDescB);
-
-    // Tentar todas as combinações: normalizado e original
-    const keysA = [...new Set([normA, prodDescA.trim()])];
-    const keysB = [...new Set([normB, prodDescB.trim()])];
+    const keysA = [...new Set([normA, prodDescA.trim(), prodDescA.trim().toUpperCase()])];
+    const keysB = [...new Set([normB, prodDescB.trim(), prodDescB.trim().toUpperCase()])];
 
     for(const kA of keysA){
       for(const kB of keysB){
@@ -774,28 +780,29 @@ function getSetupMin(maq, prodDescA, prodDescB) {
       }
     }
 
-    // Diagnóstico: mostrar o que foi buscado vs o que existe no SETUP_FIRESTORE
     if(!window._setupDiagKeys) window._setupDiagKeys = [];
-    const keyBuscada = `${normA} → ${normB}`;
+    const keyBuscada = normA + ' > ' + normB;
     if(!window._setupDiagKeys.includes(keyBuscada)){
       window._setupDiagKeys.push(keyBuscada);
-      const chavesCadastradas = Object.keys(fsMaq).map(k =>
-        `${k} → [${Object.keys(fsMaq[k]||{}).join(', ')}]`
-      ).join(' | ');
-      console.warn(`[SETUP] Máquina "${maq}" — buscando: "${keyBuscada}" | Cadastrado: ${chavesCadastradas || 'nenhum'}`);
+      console.warn('[SETUP] ' + maq + ' buscando: ' + keyBuscada + ' | Cadastrado: ' + Object.keys(fsMaq).slice(0,5).join(', '));
     }
   } else {
-    // Máquina sem nenhuma entrada no SETUP_FIRESTORE
     if(!window._setupDiagNoMaq) window._setupDiagNoMaq = new Set();
     if(!window._setupDiagNoMaq.has(maq)){
       window._setupDiagNoMaq.add(maq);
-      console.warn(`[SETUP] Máquina "${maq}" não encontrada no SETUP_FIRESTORE. Chaves existentes: ${Object.keys(SETUP_FIRESTORE).join(', ') || 'nenhuma'}`);
+      console.warn('[SETUP] Maquina "' + maq + '" (norm:"' + maqNorm + '") nao encontrada. Chaves: ' + Object.keys(SETUP_FIRESTORE).join(', '));
     }
   }
 
-  // 2) Tempo padrão configurado na máquina (campo tempoSetupPadrao)
+  // 2) Tempo padrão da máquina (tempoSetupPadrao) — usada quando há troca de produto
   const padrao = getSetupPadrao(maq);
   if (padrao > 0) return padrao;
+
+  // 3) Fallback: buscar pelo nome normalizado em MAQUINAS_DATA
+  if(typeof MAQUINAS_DATA !== 'undefined' && MAQUINAS_DATA){
+    const maqData = Object.values(MAQUINAS_DATA).find(d => d && normMaq(d.nome||'') === maqNorm);
+    if(maqData && parseFloat(maqData.tempoSetupPadrao) > 0) return parseFloat(maqData.tempoSetupPadrao);
+  }
 
   return 0;
 }
@@ -2701,9 +2708,18 @@ function hoursOnDayMaq(d, maq){
 
 // Returns total week hours for a specific machine
 function weekHoursMaq(monday, maq){
+  // 1) Função externa de turnos por máquina (turnos.js)
   if(maq && typeof weekHoursForMaq === 'function'){
-    return weekHoursForMaq(monday, maq);
+    const h = weekHoursForMaq(monday, maq);
+    if(h > 0) return h;
   }
+  // 2) Calcular direto de hoursOnDayMaq (usa turnosMaquinas se disponível)
+  if(maq){
+    const days = getWeekDays(monday);
+    const total = days.reduce((a,d) => a + hoursOnDayMaq(d, maq), 0);
+    if(total > 0) return total;
+  }
+  // 3) Fallback: horas gerais da semana (sem distinção por máquina)
   const days = getWeekDays(monday);
   return days.reduce((a,d) => a + hoursOnDay(d), 0);
 }
@@ -12760,7 +12776,8 @@ window.closeFuncDeactivateModal = closeFuncDeactivateModal;
 window.closeFuncModal = closeFuncModal;
 window.closeReorderModal = closeReorderModal;
 window.closeSettings = closeSettings;
-window.settingsNav = settingsNav;
+// settingsNav exportado com hook de injeção de categorias (não sobrescrever)
+if(typeof window.settingsNav !== "function" || window.settingsNav === settingsNav) window.settingsNav = settingsNav;
 window.toggleSnavGroup = toggleSnavGroup;
 window.handleImportZip = handleImportZip;
 window.confirmClearAll = confirmClearAll;
@@ -15809,10 +15826,87 @@ window.deleteProcesso     = deleteProcesso;
 window.renderProcessos    = renderProcessos;
 
 // ── Exportar funções de Categoria para o window ──
-// (necessário para que os botões onclick="saveCategoriaCfg()" no HTML funcionem)
-window.saveCategoriaCfg    = saveCategoriaCfg;
-window.editarCategoriaCfg  = editarCategoriaCfg;
-window.excluirCategoriaCfg = excluirCategoriaCfg;
-window.renderCategoriasCfg = renderCategoriasCfg;
-window.resetCategoriaForm  = resetCategoriaForm;
+// Aliases cobrem TODOS os possíveis nomes que o HTML pode chamar
+window.saveCategoriaCfg       = saveCategoriaCfg;
+window.salvarCategoria        = saveCategoriaCfg;   // alias HTML alternativo
+window.salvarCategoriaCfg     = saveCategoriaCfg;   // alias HTML alternativo
+window.cadastrarCategoria     = saveCategoriaCfg;   // alias HTML alternativo
+window.editarCategoriaCfg     = editarCategoriaCfg;
+window.excluirCategoriaCfg    = excluirCategoriaCfg;
+window.renderCategoriasCfg    = renderCategoriasCfg;
+window.resetCategoriaForm     = resetCategoriaForm;
 window.preencherSelectCategorias = preencherSelectCategorias;
+
+// ── Injetar card de Categorias dentro da aba Produto se não existir ──
+// Roda após o DOM estar pronto para garantir que scontent-produtos existe
+(function injetarCardCategorias(){
+  function _inject(){
+    // Já existe? Não faz nada
+    if(document.getElementById('categorias-card-cfg')) return;
+
+    // Procurar o container da aba produtos
+    const host = document.getElementById('scontent-produtos')
+      || document.querySelector('[data-section="produtos"]')
+      || document.querySelector('#panel-configuracoes [data-tab="produtos"]');
+    if(!host) return;
+
+    const card = document.createElement('div');
+    card.id = 'categorias-card-cfg';
+    card.style.cssText = 'background:var(--s1);border:1px solid var(--border);border-radius:12px;padding:20px 22px;margin-top:20px';
+    card.innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px">
+        <div>
+          <div style="font-size:14px;font-weight:700;color:var(--text)">Categorias <span id="cat-count" style="font-size:11px;color:var(--text3);font-weight:400">(0)</span></div>
+          <div style="font-size:11px;color:var(--text3);margin-top:2px">Organize seus produtos por categoria</div>
+        </div>
+        <button onclick="salvarCategoria()" style="background:var(--orange);color:#fff;border:none;border-radius:8px;padding:7px 16px;font-size:12px;font-weight:600;cursor:pointer;font-family:'Space Grotesk',sans-serif">💾 Salvar categoria</button>
+      </div>
+      <input type="hidden" id="cat-edit-id" value="">
+      <div style="display:grid;grid-template-columns:1fr 100px 160px;gap:10px;margin-bottom:14px;align-items:end">
+        <div>
+          <label style="font-size:10px;color:var(--text3);display:block;margin-bottom:4px;text-transform:uppercase;letter-spacing:.7px">Nome da categoria</label>
+          <input id="cat-nome-inp" type="text" placeholder="Ex: Grãos, Temperos, Doces..." style="width:100%;box-sizing:border-box;background:var(--s2);border:1px solid var(--border);border-radius:7px;padding:8px 10px;color:var(--text);font-size:13px;font-family:'Space Grotesk',sans-serif">
+        </div>
+        <div>
+          <label style="font-size:10px;color:var(--text3);display:block;margin-bottom:4px;text-transform:uppercase;letter-spacing:.7px">Ordem</label>
+          <input id="cat-ordem-inp" type="number" min="0" placeholder="0" style="width:100%;box-sizing:border-box;background:var(--s2);border:1px solid var(--border);border-radius:7px;padding:8px 10px;color:var(--text);font-size:13px;font-family:'Space Grotesk',sans-serif">
+        </div>
+        <div>
+          <label style="font-size:10px;color:var(--text3);display:block;margin-bottom:4px;text-transform:uppercase;letter-spacing:.7px">Status</label>
+          <select id="cat-ativo-inp" style="width:100%;box-sizing:border-box;background:var(--s2);border:1px solid var(--border);border-radius:7px;padding:8px 10px;color:var(--text);font-size:13px;font-family:'Space Grotesk',sans-serif">
+            <option value="true">Ativa</option>
+            <option value="false">Inativa</option>
+          </select>
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;margin-bottom:12px">
+        <input id="cat-search-inp" type="text" placeholder="Filtrar categorias..." oninput="renderCategoriasCfg()" style="flex:1;background:var(--s2);border:1px solid var(--border);border-radius:7px;padding:7px 10px;color:var(--text);font-size:12px;font-family:'Space Grotesk',sans-serif">
+        <button onclick="resetCategoriaForm()" style="background:none;border:1px solid var(--border);border-radius:7px;padding:7px 12px;font-size:11px;color:var(--text2);cursor:pointer;font-family:'Space Grotesk',sans-serif">✕ Limpar</button>
+      </div>
+      <div id="cat-list" style="min-height:40px"></div>`;
+    host.appendChild(card);
+
+    // Carregar dados após injetar
+    if(typeof carregarCategoriasCached === 'function'){
+      carregarCategoriasCached().then(()=>{ renderCategoriasCfg(); }).catch(()=>{});
+    }
+  }
+
+  // Tentar imediatamente e depois no DOMContentLoaded
+  if(document.readyState === 'loading'){
+    document.addEventListener('DOMContentLoaded', _inject);
+  } else {
+    setTimeout(_inject, 300);
+  }
+
+  // Injetar também quando settingsNav for chamada para a aba produtos
+  const _origSettingsNav = typeof settingsNav === 'function' ? settingsNav : null;
+  if(_origSettingsNav){
+    window.settingsNav = function(section){
+      _origSettingsNav(section);
+      if(section === 'produtos' || section === 'categorias-cfg'){
+        setTimeout(_inject, 100);
+      }
+    };
+  }
+})();
