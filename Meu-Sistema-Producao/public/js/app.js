@@ -542,11 +542,31 @@ async function carregarCategoriasCached(forceReload = false) {
 
 async function carregarCategoriasFirestore() {
   try {
-    const snap = await getDocs(query(lojaCol('categorias'), orderBy('ordem'), orderBy('nome')));
-    CATEGORIAS = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const snap = await getDocs(query(lojaCol('categorias'), orderBy('ordem')));
+    const cats = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    // Ordenar em memória por ordem e depois nome (evita índice composto no Firestore)
+    cats.sort((a,b) => {
+      const oa = a.ordem ?? 0, ob = b.ordem ?? 0;
+      if(oa !== ob) return oa - ob;
+      return (a.nome||'').localeCompare(b.nome||'');
+    });
+    CATEGORIAS = cats;
   } catch(e) {
     console.warn('[CATEGORIAS] Erro ao carregar:', e.message);
-    CATEGORIAS = [];
+    // Tentar sem orderBy caso o índice não exista
+    try {
+      const snap2 = await getDocs(lojaCol('categorias'));
+      const cats2 = snap2.docs.map(d => ({ id: d.id, ...d.data() }));
+      cats2.sort((a,b) => {
+        const oa = a.ordem ?? 0, ob = b.ordem ?? 0;
+        if(oa !== ob) return oa - ob;
+        return (a.nome||'').localeCompare(b.nome||'');
+      });
+      CATEGORIAS = cats2;
+    } catch(e2) {
+      console.warn('[CATEGORIAS] Erro no fallback:', e2.message);
+      CATEGORIAS = [];
+    }
   }
 }
 
@@ -2769,10 +2789,17 @@ function buildSchedule(monday){
         ? calcularTotalProduzido(r.id) : 0;
       const remaining = (r.qntCaixas||0) - totalProd;
       if(remaining <= 0) return false;
-      // Só entra como overflow se produção foi iniciada OU não há registro
-      // futuro para o mesmo produto+máquina (evita que S1 apareça no Gantt de S2/S3/S4
-      // quando a programação automática já criou registros separados por semana)
+      // Se produção já foi iniciada: overflow real, inclui em qualquer semana futura
       if(totalProd > 0) return true;
+      // Sem produção iniciada: só inclui se não há registro futuro para o mesmo produto+máquina
+      // E apenas na semana IMEDIATAMENTE seguinte à semana original do registro
+      // (impede que apareça em S3, S4, S5... indefinidamente)
+      const recMonday = getWeekMonday(new Date(startDate + 'T12:00:00'));
+      const recMondayStr = dateStr(recMonday);
+      const nextWeekStr = dateStr(new Date(recMonday.getTime() + 7*24*60*60*1000));
+      // Só aparece como overflow nas semanas imediatamente após a semana original
+      // (mondayStr deve ser <= próxima semana do registro)
+      if(mondayStr > nextWeekStr) return false;
       const hasFutureRecord = records.some(other =>
         other.id !== r.id &&
         other.maquina === r.maquina &&
