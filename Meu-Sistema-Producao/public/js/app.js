@@ -746,7 +746,10 @@ function getSetupMin(maq, prodDescA, prodDescB) {
   if (prodDescA === prodDescB) return 0;
 
   // 1) Firestore (carregarSetupFirestore populou SETUP_FIRESTORE)
-  const fsMaq = SETUP_FIRESTORE[maq];
+  // Tentar com o nome original, uppercase e sem espaços extras (chaves podem variar)
+  const fsMaq = SETUP_FIRESTORE[maq]
+             || SETUP_FIRESTORE[maq.toUpperCase().trim()]
+             || SETUP_FIRESTORE[maq.trim()];
   if (fsMaq) {
     const normA = normProd(prodDescA);
     const normB = normProd(prodDescB);
@@ -990,6 +993,7 @@ window.criarLojaCfg = criarLojaCfg;
 let maqViewMode = 'grid'; // 'grid' or 'list'
 let maqSelectedCards = []; // nomes das máquinas selecionadas no painel de máquinas
 let maqWeekFilter = ''; // '' = all, or monday dateStr
+let maqCatFilter = '';  // '' = all, or category name
 
 function getRecordsWeekMondaysSet(){
   const s=new Set();
@@ -1039,6 +1043,10 @@ function setMaqView(mode){
 
 function filterMaqWeek(val){
   maqWeekFilter=val;
+  renderMaquinas();
+}
+function filterMaqCat(val){
+  maqCatFilter=val;
   renderMaquinas();
 }
 
@@ -2014,8 +2022,16 @@ function renderMaquinas(){
     WEEK_AVAIL_HRS=DAY_HRS.reduce((a,b)=>a+b,0);
   }
 
+  // Filtrar máquinas por categoria
+  const maqsFiltradas = maqCatFilter
+    ? MAQUINAS.filter(m => {
+        const d = getMaquinaData(m);
+        return d && (d.categoria||'').trim() === maqCatFilter.trim();
+      })
+    : MAQUINAS;
+
   const map={};
-  MAQUINAS.forEach(m=>map[m]={items:[],caixas:0,min:0});
+  maqsFiltradas.forEach(m=>map[m]={items:[],caixas:0,min:0});
   filteredRecs.forEach(r=>{
     if(!map[r.maquina]) map[r.maquina]={items:[],caixas:0,min:0};
     map[r.maquina].items.push(r);
@@ -2037,7 +2053,7 @@ function renderMaquinas(){
   // (distribui corretamente pelos blocos/turnos configurados)
   if(typeof buildSchedule==='function'){
     const {schedule:sched} = buildSchedule(refMon);
-    MAQUINAS.forEach(m=>{
+    maqsFiltradas.forEach(m=>{
       const entries=sched[m]||[];
       let minTot=0;
       entries.forEach(({segments,setupSegments})=>{
@@ -2067,6 +2083,14 @@ function renderMaquinas(){
   }
   function maqColor(pct){return pct>100?'var(--red)':pct>=80?'var(--warn)':'var(--cyan)';}
   function barColor(pct){return pct>100?'var(--red)':pct>=80?'var(--warn)':'var(--cyan)';}
+  // Preencher select de categoria com opções únicas das máquinas
+  const maqCatSel = document.getElementById('maq-cat-filter');
+  if(maqCatSel){
+    const cats = [...new Set(MAQUINAS.map(m=>(getMaquinaData(m)||{}).categoria||'').filter(Boolean))].sort();
+    const curCat = maqCatSel.value;
+    maqCatSel.innerHTML = '<option value="">Todas as categorias</option>'
+      + cats.map(c=>`<option value="${c}"${c===curCat?' selected':''}>${c}</option>`).join('');
+  }
   renderMaqSelectionSummary(map, refMon);
 
   if(maqViewMode==='list'){
@@ -2074,8 +2098,8 @@ function renderMaquinas(){
       <div class="maq-list-row" style="background:var(--s2);font-family:'JetBrains Mono',monospace;font-size:10px;text-transform:uppercase;letter-spacing:.8px;color:var(--text3)">
         <span>Máquina</span><span>Ocupação da Semana</span><span>Caixas</span><span>Prog. / Disp.</span><span>% Máquina</span>
       </div>`;
-    MAQUINAS.forEach(m=>{
-      const d=map[m];
+    maqsFiltradas.forEach(m=>{
+      const d=map[m]||{items:[],caixas:0,min:0};
       const usedHrs=d.min/60;
       const capHrs=maqWeekHrs(m);
       const pct=maqPct(usedHrs,m);
@@ -2102,7 +2126,7 @@ function renderMaquinas(){
     document.getElementById('maq-grid').innerHTML=html;
   } else {
     document.getElementById('maq-grid').className='maq-grid';
-    document.getElementById('maq-grid').innerHTML=MAQUINAS.map(m=>{
+    document.getElementById('maq-grid').innerHTML=maqsFiltradas.map(m=>{
       const d=map[m];
       const usedHrs=d.min/60;
       const capHrs=maqWeekHrs(m);
@@ -2123,7 +2147,7 @@ function renderMaquinas(){
       const selected = maqIsSelected(m);
       const safeId = _maqSafeId(m);
       return `<div class="maq-card" style="cursor:pointer;position:relative;${selected ? "border-color:var(--warn);box-shadow:0 0 0 1px rgba(255,184,0,.35), 0 8px 24px rgba(0,0,0,.22)" : ""}" onclick="toggleMaqCardDetail('${safeId}')">
-        <button onclick="toggleMaqCardSelected(${JSON.stringify(m)}, event)" style="position:absolute;top:10px;right:10px;background:${selected ? 'rgba(255,184,0,.18)' : 'var(--s2)'};border:1px solid ${selected ? 'rgba(255,184,0,.45)' : 'var(--border)'};border-radius:999px;padding:4px 10px;font-size:10px;color:${selected ? 'var(--warn)' : 'var(--text2)'};cursor:pointer;font-family:'JetBrains Mono',monospace">${selected ? 'Selecionado' : 'Selecionar'}</button>
+        <button onclick="toggleMaqCardSelected('${m.replace(/'/g,String.fromCharCode(92,39))}', event)" style="position:absolute;top:10px;right:10px;background:${selected ? 'rgba(255,184,0,.18)' : 'var(--s2)'};border:1px solid ${selected ? 'rgba(255,184,0,.45)' : 'var(--border)'};border-radius:999px;padding:4px 10px;font-size:10px;color:${selected ? 'var(--warn)' : 'var(--text2)'};cursor:pointer;font-family:'JetBrains Mono',monospace">${selected ? 'Selecionado' : 'Selecionar'}</button>
         <div class="maq-title" style="padding-right:98px">${m}</div>
         ${turnosSumario}
         <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text2);font-family:'JetBrains Mono',monospace;margin-top:4px">
@@ -2696,25 +2720,16 @@ function buildSchedule(monday){
     if(r.status==='Concluído') return false;
     const startDate=r.dtDesejada||r.dtSolicitacao;
     if(!startDate) return false;
+    // Registro da semana atual → sempre inclui
     if(startDate>=mondayStr && startDate<=sundayStr) return true;
+    // Registro de semana anterior → só overflow REAL (produção já iniciada)
+    // Pendente puro (totalProd===0) nunca vaza para outras semanas
     if(startDate<mondayStr){
-      // Verificar se ainda há produção restante (overflow real)
-      const totalProd = (typeof calcularTotalProduzido==='function')
-        ? calcularTotalProduzido(r.id) : 0;
-      const remaining = (r.qntCaixas||0) - totalProd;
-      if(remaining <= 0) return false;
-      // Só entra como overflow se produção foi iniciada OU não há registro
-      // futuro para o mesmo produto+máquina (evita que S1 apareça no Gantt de S2/S3/S4
-      // quando a programação automática já criou registros separados por semana)
-      if(totalProd > 0) return true;
-      const hasFutureRecord = records.some(other =>
-        other.id !== r.id &&
-        other.maquina === r.maquina &&
-        other.produto === r.produto &&
-        other.status !== 'Concluído' &&
-        (other.dtDesejada || other.dtSolicitacao || '') >= mondayStr
-      );
-      return !hasFutureRecord;
+      const totalProd=(typeof calcularTotalProduzido==='function')
+        ?calcularTotalProduzido(r.id):0;
+      if(totalProd<=0) return false;           // pendente puro — não repete
+      const remaining=(r.qntCaixas||0)-totalProd;
+      return remaining>0;                       // overflow real: iniciado, não concluído
     }
     return false;
   });
@@ -14983,6 +14998,7 @@ window.clearProd = clearProd;
 window.showProdStep = showProdStep;
 window.setMaqView = setMaqView;
 window.filterMaqWeek = filterMaqWeek;
+window.filterMaqCat = filterMaqCat;
 window.ganttSetWeek = ganttSetWeek;
 window.aponSaveFunc = aponSaveFunc;
 window.aponRecalcRow = aponRecalcRow;
