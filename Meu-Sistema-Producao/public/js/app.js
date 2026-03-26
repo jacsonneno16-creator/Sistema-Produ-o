@@ -832,6 +832,7 @@ window.criarLojaCfg = criarLojaCfg;
 // ===== WEEK FILTER HELPERS =====
 let maqViewMode = 'grid'; // 'grid' or 'list'
 let maqWeekFilter = ''; // '' = all, or monday dateStr
+let maqSelected = new Set();
 
 function getRecordsWeekMondaysSet(){
   const s=new Set();
@@ -895,6 +896,7 @@ async function appInit() {
   await carregarMaquinasCached();
   await carregarProdutosCached();
   await carregarFichaTecnicaCached();
+  ensureCategoriasUI();
   await carregarSetupCached();
   const sel = document.getElementById('s-maq');
   if(sel) {
@@ -1321,6 +1323,21 @@ function rptGetSlots(){
   }
 }
 
+function getCategoriaRegistro(r){
+  const recCat = (r && r.categoria ? String(r.categoria).trim() : '');
+  if(recCat) return recCat;
+  const all = (typeof getAllProdutos === 'function') ? getAllProdutos() : [];
+  const cod = r ? (r.prodCod || r.codProduto || r.cod) : null;
+  let prod = null;
+  if(cod != null) prod = all.find(p => String(p.cod) === String(cod) && (!r.maquina || p.maquina === r.maquina));
+  if(!prod && r && r.produto) prod = all.find(p => p.descricao === r.produto && (!r.maquina || p.maquina === r.maquina));
+  if(!prod && r && r.produto) prod = all.find(p => r.produto.includes(p.descricao) || p.descricao.includes(r.produto));
+  const prodCat = prod && prod.categoria ? String(prod.categoria).trim() : '';
+  if(prodCat) return prodCat;
+  const maq = r && r.maquina ? getMaquinaData(r.maquina) : null;
+  return maq && maq.categoria ? String(maq.categoria).trim() : '';
+}
+
 function rptAggregate(slot,maqFilter){
   const sStr=dateStr(slot.start);
   const eStr=dateStr(slot.end);
@@ -1348,10 +1365,15 @@ function rptAggregate(slot,maqFilter){
   });
   const byMaq={};
   recs.forEach(r=>{
-    if(!byMaq[r.maquina]) byMaq[r.maquina]={caixas:0,unids:0,qtd:0};
+    if(!byMaq[r.maquina]) byMaq[r.maquina]={caixas:0,unids:0,qtd:0,categorias:new Set()};
     byMaq[r.maquina].caixas+=r.qntCaixas||0;
     byMaq[r.maquina].unids +=r.qntUnid||0;
     byMaq[r.maquina].qtd++;
+    const cat = getCategoriaRegistro(r);
+    if(cat) byMaq[r.maquina].categorias.add(cat);
+  });
+  Object.keys(byMaq).forEach(maq=>{
+    byMaq[maq].categorias=[...byMaq[maq].categorias].sort();
   });
   return{recs:recs.length,caixas,unids,realCaixas,byMaq};
 }
@@ -1414,9 +1436,10 @@ function renderRelatorio(){
     body.innerHTML=html; return;
   }
 
-  html+=`<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px;min-width:480px">
+  html+=`<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px;min-width:640px">
     <thead style="background:var(--s2);border-bottom:1px solid var(--border)"><tr>
-      <th style="padding:9px 12px;text-align:left;font-family:'JetBrains Mono',monospace;font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--text3)">Máquina</th>`;
+      <th style="padding:9px 12px;text-align:left;font-family:'JetBrains Mono',monospace;font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--text3)">Máquina</th>
+      <th style="padding:9px 12px;text-align:left;font-family:'JetBrains Mono',monospace;font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--text3)">Categoria(s)</th>`;
   aggs.forEach(({slot})=>{
     const s=slot.start.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'});
     const e=slot.end.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'});
@@ -1426,7 +1449,9 @@ function renderRelatorio(){
 
   allMaqs.forEach((maq,mi)=>{
     const rowBg=mi%2===1?'background:rgba(255,255,255,.01)':'';
-    html+=`<tr style="${rowBg}"><td style="padding:9px 12px;color:var(--purple);font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:700">${maq}</td>`;
+    const cats=[...new Set(aggs.flatMap(({data})=>((data.byMaq[maq]||{}).categorias||[])))];
+    const catsHtml=cats.length?cats.map(cat=>`<span style="display:inline-block;margin:2px 4px 2px 0;padding:2px 7px;border-radius:12px;background:rgba(0,212,255,.08);border:1px solid rgba(0,212,255,.18);color:var(--cyan);font-size:10px">${cat}</span>`).join(''):`<span style="color:var(--text3);font-size:10px">—</span>`;
+    html+=`<tr style="${rowBg}"><td style="padding:9px 12px;color:var(--purple);font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:700">${maq}</td><td style="padding:9px 12px">${catsHtml}</td>`;
     let tot=0;
     aggs.forEach(({data})=>{
       const m=data.byMaq[maq]||{caixas:0,qtd:0};
@@ -1438,7 +1463,8 @@ function renderRelatorio(){
 
   let gTotal=0; aggs.forEach(({data})=>gTotal+=data.caixas);
   html+=`<tr style="background:rgba(0,229,204,.04);border-top:1px solid rgba(0,229,204,.2)">
-    <td style="padding:10px 12px;font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--text3)">TOTAL</td>`;
+    <td style="padding:10px 12px;font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--text3)">TOTAL</td>
+    <td style="padding:10px 12px;color:var(--text3);font-size:10px">—</td>`;
   aggs.forEach(({data})=>{
     html+=`<td style="padding:10px 12px;text-align:center;color:var(--cyan);font-family:'JetBrains Mono',monospace;font-size:14px;font-weight:700">${data.caixas.toLocaleString('pt-BR')}</td>`;
   });
@@ -1657,10 +1683,14 @@ async function confirmClearAll(){
 }
 
 function calcTempoStr(maq,caixas,unid,pcMinRec,unidRec,produtoNome){
-  let pcMin = 0;
+  let pcMin = pcMinRec;
   
-  // Priority 1: Use machine-specific product velocity
-  if (maq && produtoNome && window.MAQUINAS_DATA) {
+  // Priority 1: Use stored pcMin from record
+  if (pcMin && pcMin > 0) {
+    // usar valor já armazenado
+  }
+  // Priority 2: Look for specific product velocity in machine's produtosCompativeis
+  else if (!pcMin && maq && produtoNome && window.MAQUINAS_DATA) {
     const maqData = window.MAQUINAS_DATA[maq];
     if (maqData && Array.isArray(maqData.produtosCompativeis)) {
       const produtoEntry = maqData.produtosCompativeis.find(p => 
@@ -1669,28 +1699,21 @@ function calcTempoStr(maq,caixas,unid,pcMinRec,unidRec,produtoNome){
         p.produto.includes(produtoNome)
       );
       if (produtoEntry && produtoEntry.velocidade && produtoEntry.velocidade > 0) {
-        pcMin = parseFloat(produtoEntry.velocidade) || 0;
+        pcMin = produtoEntry.velocidade;
       }
     }
   }
-
-  // Priority 2: Use machine default velocity
+  // Priority 3: Use machine default velocity
   if (!pcMin && maq && window.MAQUINAS_DATA) {
     const maqData = window.MAQUINAS_DATA[maq];
-    if (maqData && maqData.pcMin) pcMin = parseFloat(maqData.pcMin) || 0;
+    if (maqData && maqData.pcMin) pcMin = maqData.pcMin;
   }
-
-  // Priority 3: Use stored pcMin from record
-  if (!pcMin && pcMinRec && pcMinRec > 0) {
-    pcMin = parseFloat(pcMinRec) || 0;
-  }
-
   // Priority 4: Use product catalog velocity
   if (!pcMin) {
     const produto = getAllProdutos().find(x => x.maquina === maq && 
       (produtoNome ? (x.descricao === produtoNome || produtoNome.includes(x.descricao)) : true)
     );
-    pcMin = produto ? (parseFloat(produto.pc_min) || 1) : 1;
+    pcMin = produto ? produto.pc_min : 1;
   }
   
   const unidCx = unidRec || (getAllProdutos().find(x=>x.maquina===maq)||{unid:1}).unid;
@@ -1711,7 +1734,7 @@ function sBadge(s){
 // Zero-pads minutes < 10 as requested (e.g. "10h08min")
 function fmtHrs(h){
   if(!h||h<=0) return '—';
-  const totalMin=Math.round(h*60);
+  const totalMin=(h*60);
   if(totalMin<60){
     const m=String(totalMin).padStart(2,'0');
     return m+'min';
@@ -1758,6 +1781,45 @@ function getProdInfo(rec){
 }
 
 // ===== MÁQUINAS =====
+
+function toggleMaqSelection(nome){
+  if(maqSelected.has(nome)) maqSelected.delete(nome);
+  else maqSelected.add(nome);
+  renderMaquinas();
+}
+function clearMaqSelection(){
+  maqSelected.clear();
+  renderMaquinas();
+}
+function getMaqSelectionSummary(map, maqWeekHrs){
+  const nomes = Object.keys(map || {});
+  nomes.forEach(n=>{ if(!MAQUINAS.includes(n)) maqSelected.delete(n); });
+  const totalUsed = nomes.reduce((a,n)=>a+((map[n]?.min||0)/60),0);
+  const totalCap = nomes.reduce((a,n)=>a+(maqWeekHrs(n)||0),0);
+  const totalPct = totalCap ? (totalUsed/totalCap*100) : 0;
+  const selNomes = nomes.filter(n => maqSelected.has(n));
+  const selUsed = selNomes.reduce((a,n)=>a+((map[n]?.min||0)/60),0);
+  const selCap = selNomes.reduce((a,n)=>a+(maqWeekHrs(n)||0),0);
+  const selPct = selCap ? (selUsed/selCap*100) : 0;
+  const selInfo = selNomes.length
+    ? `<div style="background:var(--s1);border:1px solid var(--border);border-radius:12px;padding:12px 14px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px">
+         <div>
+           <div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.8px">Selecionadas</div>
+           <div style="font-family:'JetBrains Mono',monospace;font-size:20px;color:var(--purple);font-weight:700">${selNomes.length} máquina(s)</div>
+           <div style="font-size:11px;color:var(--text2)">${fmtHrs(selUsed)} / ${selCap.toFixed(1).replace('.',',')}h · ${selPct.toFixed(1).replace('.',',')}%</div>
+         </div>
+         <button class="btn btn-ghost" onclick="clearMaqSelection()" style="padding:6px 10px;font-size:11px">Limpar seleção</button>
+       </div>`
+    : '';
+  return `
+    <div style="background:var(--s1);border:1px solid var(--border);border-radius:12px;padding:12px 14px;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-bottom:12px">
+      <div><div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.8px">Ocupação total</div><div style="font-family:'JetBrains Mono',monospace;font-size:22px;color:var(--cyan);font-weight:700">${totalPct.toFixed(1).replace('.',',')}%</div></div>
+      <div><div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.8px">Programado total</div><div style="font-family:'JetBrains Mono',monospace;font-size:18px;color:var(--text);font-weight:700">${fmtHrs(totalUsed)}</div></div>
+      <div><div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.8px">Capacidade total</div><div style="font-family:'JetBrains Mono',monospace;font-size:18px;color:var(--text);font-weight:700">${totalCap.toFixed(1).replace('.',',')}h</div></div>
+    </div>
+    ${selInfo}`;
+}
+
 function renderMaquinas(){
   const grid = document.getElementById('maq-grid');
   // Mostra aviso se nenhuma máquina cadastrada no Firestore
@@ -1846,9 +1908,10 @@ function renderMaquinas(){
   }
   function maqColor(pct){return pct>100?'var(--red)':pct>=80?'var(--warn)':'var(--cyan)';}
   function barColor(pct){return pct>100?'var(--red)':pct>=80?'var(--warn)':'var(--cyan)';}
+  const summaryHtml = getMaqSelectionSummary(map, maqWeekHrs);
 
   if(maqViewMode==='list'){
-    let html=`<div class="maq-list-view">
+    let html=`${summaryHtml}<div class="maq-list-view">
       <div class="maq-list-row" style="background:var(--s2);font-family:'JetBrains Mono',monospace;font-size:10px;text-transform:uppercase;letter-spacing:.8px;color:var(--text3)">
         <span>Máquina</span><span>Ocupação da Semana</span><span>Caixas</span><span>Prog. / Disp.</span><span>% Máquina</span>
       </div>`;
@@ -1861,8 +1924,10 @@ function renderMaquinas(){
       const hrs=fmtHrs(usedHrs);
       const col=maqColor(pct);
       const overPct=pct>100?`<span style="color:var(--red);font-size:9px;margin-left:4px">+${(pct-100).toFixed(0)}% over</span>`:'';
-      html+=`<div class="maq-list-row">
-        <div style="font-family:'JetBrains Mono',monospace;font-weight:500;font-size:13px;color:var(--purple)">${m}</div>
+      const isSel = maqSelected.has(m);
+      const maqCatTxt = ((getMaquinaData(m)||{}).categoria || '').trim();
+      html+=`<div class="maq-list-row" onclick="toggleMaqSelection('${m.replace("'","\\'")}')" style="cursor:pointer;${isSel?'background:rgba(139,92,246,.08);outline:1px solid rgba(139,92,246,.25);border-radius:10px;':''}">
+        <div style="font-family:'JetBrains Mono',monospace;font-weight:500;font-size:13px;color:var(--purple)">${isSel?'✅ ':''}${m}${maqCatTxt?`<div style="font-size:10px;color:var(--text3);margin-top:3px">${maqCatTxt}</div>`:''}</div>
         <div>
           <div class="maq-bar-bg" style="margin:0"><div class="maq-bar" style="width:${displayPct}%;background:${col}"></div></div>
           <div style="font-size:10px;color:var(--text3);margin-top:3px;font-family:'JetBrains Mono',monospace">${d.items.length} solicit.</div>
@@ -1880,7 +1945,7 @@ function renderMaquinas(){
     document.getElementById('maq-grid').innerHTML=html;
   } else {
     document.getElementById('maq-grid').className='maq-grid';
-    document.getElementById('maq-grid').innerHTML=MAQUINAS.map(m=>{
+    document.getElementById('maq-grid').innerHTML=summaryHtml + MAQUINAS.map(m=>{
       const d=map[m];
       const usedHrs=d.min/60;
       const capHrs=maqWeekHrs(m);
@@ -1898,8 +1963,11 @@ function renderMaquinas(){
         const ativos=['T1','T2','T3'].filter((_,i)=>t[i]);
         turnosSumario=ativos.length?`<div style="font-size:9px;color:var(--text3);font-family:'JetBrains Mono',monospace;margin-top:2px">Turnos Seg: ${ativos.join(' + ')}</div>`:'';
       }
-      return `<div class="maq-card" style="cursor:pointer" onclick="toggleMaqCardDetail('maqcard-${m.replace(/[^a-zA-Z0-9]/g,'_')}')">
-        <div class="maq-title">${m}</div>
+      const isSel = maqSelected.has(m);
+      const maqCat = (getMaquinaData(m)?.categoria || '').trim();
+      return `<div class="maq-card" style="cursor:pointer;${isSel?'outline:2px solid rgba(139,92,246,.45);box-shadow:0 0 0 1px rgba(139,92,246,.2) inset;':''}" onclick="toggleMaqSelection('${m.replace("'","\\'")}')">
+        <div class="maq-title">${isSel?'✅ ':''}${m}</div>
+        ${maqCat ? `<div style="font-size:10px;color:var(--text3);margin-top:2px">${maqCat}</div>` : ''}
         ${turnosSumario}
         <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text2);font-family:'JetBrains Mono',monospace;margin-top:4px">
           <span>${d.items.length} solicit.</span>
@@ -1914,8 +1982,9 @@ function renderMaquinas(){
         </div>
         ${overFlag}
         ${d.items.length?`<div class="maq-list">${items}${more}</div>`:''}
+        <button class="btn btn-ghost" onclick="event.stopPropagation();toggleMaqCardDetail('maqcard-${m.replace(/[^a-zA-Z0-9]/g,'_')}')" style="margin-top:8px;padding:5px 8px;font-size:10px">▾ detalhes</button>
         <div id="maqcard-${m.replace(/[^a-zA-Z0-9]/g,'_')}" style="display:none;margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">${buildMaqCardDetail(m)}</div>
-        <div style="text-align:center;margin-top:6px;font-size:10px;color:var(--text3)">▾ detalhes</div>
+        <div style="text-align:center;margin-top:6px;font-size:10px;color:var(--text3)">clique no card para selecionar</div>
       </div>`;
     }).join('');
   }
@@ -2672,23 +2741,6 @@ function buildSchedule(monday){
         if(snap.usedMin>=blkTotalMin-0.001){snap.blkIdx++;snap.usedMin=0;}
       }
 
-      // Regra visual do Gantt: se sobrar só um pedaço muito pequeno no dia seguinte
-      // (até 15 min), mantém esse restante no dia anterior para não poluir a grade.
-      // Se passar de 15 min, continua no dia seguinte normalmente.
-      for(let si=1; si<segments.length; si++){
-        const prev=segments[si-1];
-        const cur=segments[si];
-        if(!prev || !cur) continue;
-        if(cur.dayIdx!==prev.dayIdx && (cur.useMin||0)<=15.0001){
-          prev.caixasNoDia += cur.caixasNoDia || 0;
-          prev.hrsNoDia += cur.hrsNoDia || 0;
-          prev.useMin = (prev.useMin||0) + (cur.useMin||0);
-          prev.endPct = Math.max(prev.endPct||0, 100);
-          segments.splice(si,1);
-          si--;
-        }
-      }
-
       // Advance global cursor to where this record ended
       cursor.dayIdx=snap.dayIdx;
       cursor.blkIdx=snap.blkIdx;
@@ -3070,13 +3122,12 @@ function renderGanttSemanal(){
             const leftPct  = Math.max(0, seg.startPct).toFixed(1);
             const widthPct = Math.max(0.5, seg.endPct - seg.startPct).toFixed(1);
             const cx=seg.caixasNoDia;
-            const cxLabel=fmtCx(cx);
             const hrsLabel=fmtHrs(seg.hrsNoDia);
             const turnoTip=seg.turnoLabel?` · ${seg.turnoLabel}`:'';
             const obsTip=obs?` — ${obs}`:'';
             html+=`<div class="g-bar" style="left:${leftPct}%;width:${widthPct}%;background:${color};opacity:0.9;position:absolute;top:15%;height:70%"
-              title="${produto}${obsTip}${turnoTip} · ${cxLabel} cx · ${hrsLabel}">
-              <div class="g-bar-tip">${produto.substring(0,40)}${obs?'<br><span style=\"font-size:9px;opacity:.8\">'+obs+'</span>':''}<br>${cxLabel} cx · ${hrsLabel}${seg.turnoLabel?' · '+seg.turnoLabel:''}</div>
+              title="${produto}${obsTip}${turnoTip} · ${cx} cx · ${hrsLabel}">
+              <div class="g-bar-tip">${produto.substring(0,40)}${obs?'<br><span style=\"font-size:9px;opacity:.8\">'+obs+'</span>':''}<br>${cx} cx · ${hrsLabel}${seg.turnoLabel?' · '+seg.turnoLabel:''}</div>
             </div>`;
           });
           html+=`</div>`;
@@ -3090,7 +3141,7 @@ function renderGanttSemanal(){
       days.forEach((day,di)=>{
         const isWknd=hoursOnDay(day)===0;
         const cxDia=segments.filter(s=>s.dayIdx===di).reduce((a,s)=>a+s.caixasNoDia,0);
-        html+=`<div style="display:flex;align-items:center;justify-content:center;border-left:1px solid rgba(31,45,61,.4);background:var(--s1);font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:600;color:${cxDia>0?(isWknd?'var(--text2)':'var(--cyan)'):'var(--text4)'};">${cxDia>0?fmtCx(cxDia):'—'}</div>`;
+        html+=`<div style="display:flex;align-items:center;justify-content:center;border-left:1px solid rgba(31,45,61,.4);background:var(--s1);font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:600;color:${cxDia>0?(isWknd?'var(--text2)':'var(--cyan)'):'var(--text4)'};">${cxDia>0?cxDia:'—'}</div>`;
       });
 
       html+=`</div>`;
@@ -3644,11 +3695,6 @@ function getUnit(nome,cat){
 function fmtQty(v){
   if(!v||v<0.001) return '—';
   return v>=1000?(v).toLocaleString('pt-BR'):v>=100?v.toFixed(1):v>=10?v.toFixed(2):v.toFixed(3).replace(/\.?0+$/,'');
-}
-
-function fmtCx(v){
-  if(v==null || !isFinite(v) || Math.abs(v)<0.001) return '—';
-  return Math.round(v).toLocaleString('pt-BR');
 }
 
 // ===== INSUMOS POR MÁQUINA =====
@@ -6623,8 +6669,10 @@ function openSettings(){
   if(tm) tm.classList.remove('on');
   const sp=document.getElementById('settings-page');
   sp.style.display='flex';
+  ensureCategoriasUI();
   renderCadastroMaquinas();
   renderProdutosCfg();
+  renderCategoriasCfg();
   renderFuncionariosProducao();
   renderJornadaDays();
   // Renderiza config de turnos por máquina
@@ -6709,7 +6757,7 @@ function settingsNav(section){
   }
 
   // ── Grupo Produtos ──
-  const prodGroupSections=['produtos','ficha-tecnica-cfg'];
+  const prodGroupSections=['produtos','ficha-tecnica-cfg','categorias'];
   const prodGroupBtn=document.getElementById('snav-produtos-group-btn');
   const prodSubmenu=document.getElementById('snav-produtos-submenu');
   const prodChevron=document.getElementById('snav-produtos-chevron');
@@ -6738,6 +6786,7 @@ function settingsNav(section){
   if(section==='gestao-lojas') setTimeout(()=>renderGestaoLojas(), 50);
   if(section==='ficha-tecnica-cfg') setTimeout(()=>renderFichaTecnicaCfg(), 50);
   if(section==='produtos') setTimeout(()=>renderProdutosCfg(), 50);
+  if(section==='categorias') setTimeout(()=>renderCategoriasCfg(), 50);
 }
 
 function handleImportZip(file){
@@ -6850,6 +6899,8 @@ async function salvarMaquinaFirestore(dados) {
     codigo: (dados.codigo||'').trim(),
     tipo: (dados.tipo||'').trim(),
     setor: (dados.setor||'').trim(),
+    categoria: (dados.categoria||'').trim(),
+    classificacao: (dados.classificacao||'').trim(),
     status: dados.status || 'ativa',
     pcMin: parseFloat(dados.pcMin) || 0,
     eficiencia: parseFloat(dados.eficiencia) || 100,
@@ -6906,7 +6957,7 @@ function renderCadastroMaquinas() {
       : '<span style="background:rgba(0,212,100,.12);color:#00d46a;border:1px solid rgba(0,212,100,.3);border-radius:4px;padding:2px 7px;font-size:10px;font-weight:700">ATIVA</span>';
     const capHora = cap ? cap.porHora.toLocaleString('pt-BR') + ' saq' : '<span style="color:var(--text3)">—</span>';
     const capDia = cap ? cap.porDia.toLocaleString('pt-BR') + ' saq' : '<span style="color:var(--text3)">—</span>';
-    const tipoSetor = [d.tipo, d.setor].filter(Boolean).join(' / ') || '<span style="color:var(--text3)">—</span>';
+    const tipoSetor = [d.tipo, d.setor, d.categoria].filter(Boolean).join(' / ') || '<span style="color:var(--text3)">—</span>';
     const nProds = Array.isArray(d.produtosCompativeis) ? d.produtosCompativeis.length : 0;
     const prodsBadge = nProds > 0
       ? `<span style="background:rgba(139,92,246,.15);color:var(--purple);border:1px solid rgba(139,92,246,.3);border-radius:4px;padding:2px 6px;font-size:10px;font-weight:700">${nProds} prod.</span>`
@@ -6986,7 +7037,10 @@ function openAddMaquina() {
   document.getElementById('maq-cod-inp').value = '';
   document.getElementById('maq-tipo-inp').value = '';
   document.getElementById('maq-setor-inp').value = '';
+  fillCategoriaSelect('maq-categoria-inp');
   document.getElementById('maq-status-inp').value = 'ativa';
+  const maqCat = document.getElementById('maq-categoria-inp'); if(maqCat) maqCat.value = '';
+  const maqClass = document.getElementById('maq-classificacao-inp'); if(maqClass) maqClass.value = '';
   document.getElementById('maq-pcmin-inp').value = '';
   document.getElementById('maq-efic-inp').value = '';
   document.getElementById('maq-hturno-inp').value = '';
@@ -7012,6 +7066,8 @@ function openEditMaquina(nome) {
   document.getElementById('maq-cod-inp').value = d.codigo || '';
   document.getElementById('maq-tipo-inp').value = d.tipo || '';
   document.getElementById('maq-setor-inp').value = d.setor || '';
+  fillCategoriaSelect('maq-categoria-inp', d.categoria || '');
+  const maqClass2 = document.getElementById('maq-classificacao-inp'); if(maqClass2) maqClass2.value = d.classificacao || '';
   document.getElementById('maq-status-inp').value = d.status || 'ativa';
   // Usar != null para não confundir 0 com vazio
   document.getElementById('maq-pcmin-inp').value = (d.pcMin != null && d.pcMin !== '') ? d.pcMin : '';
@@ -7143,6 +7199,8 @@ async function saveMaquinaModal() {
     codigo: document.getElementById('maq-cod-inp').value || '',
     tipo: document.getElementById('maq-tipo-inp').value || '',
     setor: document.getElementById('maq-setor-inp').value || '',
+    categoria: document.getElementById('maq-categoria-inp')?.value || '',
+    classificacao: document.getElementById('maq-classificacao-inp')?.value || '',
     status: document.getElementById('maq-status-inp').value || 'ativa',
     pcMin: pcMinVal || 0,
     eficiencia: parseFloat(document.getElementById('maq-efic-inp').value) || 100,
@@ -7358,6 +7416,130 @@ function ftCfgToggle(header) {
 }
 
 
+
+// ── Categorias (Configurações) ────────────────────────────────────────
+let CATEGORIAS_CFG = JSON.parse(localStorage.getItem('cfg_categorias') || '[]');
+
+function saveCategoriasCfgStorage(){
+  localStorage.setItem('cfg_categorias', JSON.stringify(CATEGORIAS_CFG));
+}
+function getCategoriasCfg(){
+  const fromProdutos = ((typeof getAllProdutos === 'function' ? getAllProdutos() : []) || [])
+    .map(p => (p.categoria || '').toString().trim()).filter(Boolean);
+  const fromMaquinas = Object.values(window.MAQUINAS_DATA || {})
+    .map(m => (m.categoria || '').toString().trim()).filter(Boolean);
+  const fromCfg = CATEGORIAS_CFG.map(c => (c.nome || '').toString().trim()).filter(Boolean);
+  return [...new Set([...fromCfg, ...fromProdutos, ...fromMaquinas])].sort((a,b)=>a.localeCompare(b,'pt-BR'));
+}
+function fillCategoriaSelect(selectId, selectedValue=''){
+  const el = document.getElementById(selectId);
+  if(!el) return;
+  const atual = selectedValue || el.value || '';
+  const opts = ['<option value="">Selecione</option>']
+    .concat(getCategoriasCfg().map(cat => `<option value="${cat.replace(/"/g,'&quot;')}"${cat===atual?' selected':''}>${cat}</option>`));
+  el.innerHTML = opts.join('');
+  el.value = atual;
+}
+function ensureCategoriasUI(){
+  const submenu = document.getElementById('snav-produtos-submenu');
+  if(submenu && !document.getElementById('snav-categorias')){
+    const btn = document.createElement('button');
+    btn.id = 'snav-categorias';
+    btn.className = 'snav-btn';
+    btn.setAttribute('onclick',"settingsNav('categorias')");
+    btn.style.cssText = "width:100%;text-align:left;background:none;border:1px solid transparent;border-radius:6px;padding:6px 10px;color:var(--text2);font-family:'Space Grotesk',sans-serif;font-size:11px;cursor:pointer;display:flex;align-items:center;gap:7px;transition:all .15s";
+    btn.innerHTML = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21V8a2 2 0 0 0-2-2h-4l-2-3H6a2 2 0 0 0-2 2v16"/><path d="M8 10h8"/><path d="M8 14h8"/><path d="M8 18h5"/></svg>Cadastro de Categorias`;
+    submenu.appendChild(btn);
+  }
+  const prodSec = document.getElementById('scontent-produtos');
+  const catBlock = prodSec ? Array.from(prodSec.children).find(ch => ch.querySelector && ch.querySelector('#cat-list')) : null;
+  if(catBlock && !document.getElementById('scontent-categorias')){
+    const sec = document.createElement('div');
+    sec.id = 'scontent-categorias';
+    sec.className = 'scontent';
+    sec.style.display = 'none';
+    sec.style.flexDirection = 'column';
+    sec.style.gap = '14px';
+    sec.appendChild(catBlock);
+    prodSec.insertAdjacentElement('afterend', sec);
+  }
+  fillCategoriaSelect('maq-categoria-inp');
+  fillCategoriaSelect('prod-categoria-inp');
+}
+function resetCategoriaForm(){
+  const id = document.getElementById('cat-edit-id'); if(id) id.value = '';
+  const nome = document.getElementById('cat-nome-inp'); if(nome) nome.value = '';
+  const ordem = document.getElementById('cat-ordem-inp'); if(ordem) ordem.value = '';
+  const ativo = document.getElementById('cat-ativo-inp'); if(ativo) ativo.value = 'true';
+}
+function renderCategoriasCfg(){
+  ensureCategoriasUI();
+  const list = document.getElementById('cat-list');
+  const count = document.getElementById('cat-count');
+  if(!list) return;
+  const filtro = ((document.getElementById('cat-search-inp')||{}).value || '').toLowerCase().trim();
+  const categorias = [...CATEGORIAS_CFG].sort((a,b)=>(parseInt(a.ordem)||0)-(parseInt(b.ordem)||0) || (a.nome||'').localeCompare(b.nome||'','pt-BR'));
+  if(count) count.textContent = categorias.length;
+  const rows = categorias.filter(c => !filtro || (c.nome||'').toLowerCase().includes(filtro));
+  if(!rows.length){
+    list.innerHTML = '<div style="padding:18px;color:var(--text3);font-size:12px">Nenhuma categoria cadastrada.</div>';
+    fillCategoriaSelect('maq-categoria-inp');
+    fillCategoriaSelect('prod-categoria-inp');
+    return;
+  }
+  list.innerHTML = rows.map(c => `
+    <div style="padding:9px 12px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:10px">
+      <div>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <span style="font-size:12px;color:var(--text);font-weight:700">${c.nome}</span>
+          <span style="font-size:10px;color:${c.ativo===false?'var(--red)':'var(--green)'}">${c.ativo===false?'INATIVA':'ATIVA'}</span>
+        </div>
+        <div style="font-size:10px;color:var(--text3);font-family:'JetBrains Mono',monospace;margin-top:4px">Ordem: ${parseInt(c.ordem)||0}</div>
+      </div>
+      <div style="display:flex;gap:6px">
+        <button onclick="editCategoriaCfg('${(c.id||'').replace(/'/g,"\\'")}')" style="background:none;border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:11px;color:var(--cyan);cursor:pointer">✏️</button>
+        <button onclick="deleteCategoriaCfg('${(c.id||'').replace(/'/g,"\\'")}')" style="background:none;border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:11px;color:var(--red);cursor:pointer">🗑️</button>
+      </div>
+    </div>`).join('');
+  fillCategoriaSelect('maq-categoria-inp');
+  fillCategoriaSelect('prod-categoria-inp');
+}
+function editCategoriaCfg(id){
+  const cat = CATEGORIAS_CFG.find(c => c.id === id);
+  if(!cat) return;
+  const elId = document.getElementById('cat-edit-id'); if(elId) elId.value = cat.id || '';
+  const nome = document.getElementById('cat-nome-inp'); if(nome) nome.value = cat.nome || '';
+  const ordem = document.getElementById('cat-ordem-inp'); if(ordem) ordem.value = cat.ordem || '';
+  const ativo = document.getElementById('cat-ativo-inp'); if(ativo) ativo.value = cat.ativo === false ? 'false' : 'true';
+}
+function deleteCategoriaCfg(id){
+  const cat = CATEGORIAS_CFG.find(c => c.id === id);
+  if(!cat) return;
+  if(!confirm(`Excluir a categoria "${cat.nome}"?`)) return;
+  CATEGORIAS_CFG = CATEGORIAS_CFG.filter(c => c.id !== id);
+  saveCategoriasCfgStorage();
+  renderCategoriasCfg();
+}
+function saveCategoriaCfg(){
+  const nome = (document.getElementById('cat-nome-inp')?.value || '').trim();
+  if(!nome){ toast('Informe o nome da categoria','err'); return; }
+  const id = document.getElementById('cat-edit-id')?.value || '';
+  const ordem = parseInt(document.getElementById('cat-ordem-inp')?.value) || 0;
+  const ativo = document.getElementById('cat-ativo-inp')?.value !== 'false';
+  const dup = CATEGORIAS_CFG.find(c => (c.nome||'').toLowerCase() === nome.toLowerCase() && c.id !== id);
+  if(dup){ toast('Já existe uma categoria com esse nome','err'); return; }
+  if(id){
+    const idx = CATEGORIAS_CFG.findIndex(c => c.id === id);
+    if(idx >= 0) CATEGORIAS_CFG[idx] = { ...CATEGORIAS_CFG[idx], nome, ordem, ativo };
+  } else {
+    CATEGORIAS_CFG.push({ id: 'cat_' + Date.now(), nome, ordem, ativo });
+  }
+  saveCategoriasCfgStorage();
+  resetCategoriaForm();
+  renderCategoriasCfg();
+  toast('Categoria salva com sucesso','ok');
+}
+
 // ── Cadastro: Produtos (Firestore + localStorage) ──
 let PRODUTOS_EXTRA = JSON.parse(localStorage.getItem('cfg_produtos') || '[]');
 function saveExtraProdutos() { localStorage.setItem('cfg_produtos', JSON.stringify(PRODUTOS_EXTRA)); }
@@ -7375,6 +7557,7 @@ function normalizeProdutoFirestore(data) {
     maquina: data.maquinaPadrao || data.maquina || '',
     kg_fd: data.kg_fd || 0,
     categoria: data.categoria || '',
+    classificacao: data.classificacao || '',
     coberturaDias: data.coberturaDias || 0,
     estoqueMinimo: data.estoqueMinimo || 0,
     ativo: data.ativo !== false,
@@ -7445,6 +7628,7 @@ async function salvarProdutoFirestore(dados) {
     maquinaPadrao: dados.maquina || '',
     kg_fd: 0,
     categoria: dados.categoria || '',
+    classificacao: dados.classificacao || '',
     coberturaDias: parseInt(dados.coberturaDias) || 0,
     estoqueMinimo: parseFloat(dados.estoqueMinimo) || 0,
     ativo: dados.ativo !== false,
@@ -7556,6 +7740,7 @@ function renderProdutosCfg() {
         <div style="display:flex;align-items:center;gap:6px;margin-top:5px;flex-wrap:wrap">
           <span style="font-size:10px;color:${desativado?'var(--text4)':'var(--warn)'};font-family:'JetBrains Mono',monospace">${p.pc_min} und/min</span>
           <span style="font-size:10px;color:var(--text3);font-family:'JetBrains Mono',monospace">${p.unid}un/cx</span>
+          ${p.categoria ? `<span style="font-size:10px;background:rgba(139,92,246,.12);border:1px solid rgba(139,92,246,.25);color:${desativado?'var(--text4)':'var(--purple)'};padding:2px 8px;border-radius:20px">${p.categoria}</span>` : ''}
           <span style="color:var(--text3);font-size:10px">·</span>
           ${maqTags}
         </div>
@@ -7639,6 +7824,9 @@ function openAddProduto() {
   const pmAtivo = document.getElementById('pm-ativo'); if(pmAtivo) pmAtivo.value = 'true';
   const pmAlerg = document.getElementById('pm-alergenico'); if(pmAlerg) pmAlerg.value = 'false';
   const pmInsumos = document.getElementById('pm-insumos-list'); if(pmInsumos) pmInsumos.innerHTML = '';
+  fillCategoriaSelect('prod-categoria-inp');
+  const prodCat = document.getElementById('prod-categoria-inp'); if(prodCat) prodCat.value = '';
+  const prodClass = document.getElementById('prod-classificacao-inp'); if(prodClass) prodClass.value = '';
   const titleEl = document.getElementById('prod-modal-title') || document.getElementById('maq-modal-title');
   if(titleEl) titleEl.textContent = 'Novo Produto';
   document.getElementById('prod-modal').style.display = 'flex';
@@ -7670,6 +7858,8 @@ function editarProduto(cod, maquina, descricao) {
   const elPrio = document.getElementById('pm-prioridade'); if(elPrio) elPrio.value  = produto.prioridadeProducao  || '';
   const elAtivo= document.getElementById('pm-ativo');      if(elAtivo) elAtivo.value = (produto.produtoAtivo !== false) ? 'true' : 'false';
   const elAlerg= document.getElementById('pm-alergenico'); if(elAlerg) elAlerg.value = produto.alergenico ? 'true' : 'false';
+  fillCategoriaSelect('prod-categoria-inp', produto.categoria || '');
+  const prodClassEd = document.getElementById('prod-classificacao-inp'); if(prodClassEd) prodClassEd.value = produto.classificacao || '';
   
   // Popular máquinas no select
   const sel = document.getElementById('pm-maq');
@@ -7796,9 +7986,11 @@ async function saveProdModal() {
   const prioridadeProducao = parseInt(document.getElementById('pm-prioridade')?.value) || 2;
   const produtoAtivo       = document.getElementById('pm-ativo')?.value !== 'false';
   const alergenico         = document.getElementById('pm-alergenico')?.value === 'true';
+  const categoria          = document.getElementById('prod-categoria-inp')?.value || '';
+  const classificacao      = document.getElementById('prod-classificacao-inp')?.value || '';
 
   const dados = {
-    cod, descricao: desc, unid, kg_fd: 0, pc_min: pcmin, maquina: maq,
+    cod, descricao: desc, unid, kg_fd: 0, pc_min: pcmin, maquina: maq, categoria, classificacao,
     metaCoberturaDias, producaoMinima, multiploProducao, tipoMinimo, prioridadeProducao, produtoAtivo, alergenico
   };
 
@@ -12791,6 +12983,13 @@ window.recarregarSetup = recarregarSetup;
 
 window.renderCadastroMaquinas = renderCadastroMaquinas;
 window.openAddMaquina = openAddMaquina;
+window.renderCategoriasCfg = renderCategoriasCfg;
+window.saveCategoriaCfg = saveCategoriaCfg;
+window.resetCategoriaForm = resetCategoriaForm;
+window.editCategoriaCfg = editCategoriaCfg;
+window.deleteCategoriaCfg = deleteCategoriaCfg;
+window.toggleMaqSelection = toggleMaqSelection;
+window.clearMaqSelection = clearMaqSelection;
 window.openEditMaquina = openEditMaquina;
 window.closeMaqModal = closeMaqModal;
 window.switchMaqTab = switchMaqTab;
