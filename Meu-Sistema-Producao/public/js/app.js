@@ -752,7 +752,13 @@ async function salvarSetupFirestore(maquina, prodOrigem, prodDestino, tempoMinut
 
 // Normaliza nome de produto para chave de lookup
 function normProd(s){
-  return (s||'').toUpperCase().trim()
+  let v=(s||'').toUpperCase().trim();
+  // Remove código numérico inicial (ex: "00932 COCO..." → "COCO...")
+  v=v.replace(/^\d{4,}\s+/,'');
+  // Remove embalagem do final (ex: "... 100G CX 24" → "... 100G", "... FD 12" → "...")
+  v=v.replace(/\s+(CX|FD|PCT|PC|KG|SC|BD|BL|UN|VD|LT|GF|TB|TP|FR|BJ|PL|CT|FD|SC|BAG)\s+\d+\s*$/i,'');
+  // Normalização padrão
+  return v
     .replace(/\s+/g,' ')
     .replace(/[_\-]+/g,' ')
     .replace(/\bDA\s+TERRINHA\b/g,'TERRINHA')
@@ -761,7 +767,8 @@ function normProd(s){
     .replace(/\bDO\s+RANCHO\b/g,'RANCHO')
     .replace(/\bCOOP\b/g,'COOP')
     .replace(/\bMERCADAO\b/g,'MERCADAO')
-    .replace(/\bOBA\b/g,'OBA');
+    .replace(/\bOBA\b/g,'OBA')
+    .trim();
 }
 
 // Matriz de setup: agora vem exclusivamente do Firestore (coleção setup_maquinas).
@@ -793,10 +800,50 @@ function getSetupMin(maq, prodDescA, prodDescB) {
     const keysA = [...new Set([normA, prodDescA.trim(), prodDescA.trim().toUpperCase()])];
     const keysB = [...new Set([normB, prodDescB.trim(), prodDescB.trim().toUpperCase()])];
 
+    // 1) Busca exata (normalizada + original)
     for(const kA of keysA){
       for(const kB of keysB){
         if (fsMaq[kA] && fsMaq[kA][kB] != null) return fsMaq[kA][kB];
         if (fsMaq[kB] && fsMaq[kB][kA] != null) return fsMaq[kB][kA];
+      }
+    }
+
+    // 2) Busca por similaridade: verifica se chave cadastrada está contida no nome
+    //    do produto ou vice-versa (cobre casos onde o cadastro usa nome curto
+    //    e o registro usa nome completo com código/embalagem)
+    const fsMaqKeys = Object.keys(fsMaq);
+    let matchA = null, matchB = null;
+    for(const fsKey of fsMaqKeys){
+      const fsNorm = normProd(fsKey);
+      if(!matchA && (normA.includes(fsNorm) || fsNorm.includes(normA))) matchA = fsKey;
+      if(!matchB && (normB.includes(fsNorm) || fsNorm.includes(normB))) matchB = fsKey;
+      if(matchA && matchB) break;
+    }
+    if(matchA && matchB && fsMaq[matchA] && fsMaq[matchA][matchB] != null) return fsMaq[matchA][matchB];
+    if(matchA && matchB && fsMaq[matchB] && fsMaq[matchB][matchA] != null) return fsMaq[matchB][matchA];
+    // Se achou só um lado, tenta com todas as chaves do outro
+    if(matchA){
+      for(const fsKey of fsMaqKeys){
+        if(fsMaq[matchA] && fsMaq[matchA][fsKey] != null){
+          const fsNormK = normProd(fsKey);
+          if(normB.includes(fsNormK) || fsNormK.includes(normB)) return fsMaq[matchA][fsKey];
+        }
+        if(fsMaq[fsKey] && fsMaq[fsKey][matchA] != null){
+          const fsNormK = normProd(fsKey);
+          if(normB.includes(fsNormK) || fsNormK.includes(normB)) return fsMaq[fsKey][matchA];
+        }
+      }
+    }
+    if(matchB){
+      for(const fsKey of fsMaqKeys){
+        if(fsMaq[matchB] && fsMaq[matchB][fsKey] != null){
+          const fsNormK = normProd(fsKey);
+          if(normA.includes(fsNormK) || fsNormK.includes(normA)) return fsMaq[matchB][fsKey];
+        }
+        if(fsMaq[fsKey] && fsMaq[fsKey][matchB] != null){
+          const fsNormK = normProd(fsKey);
+          if(normA.includes(fsNormK) || fsNormK.includes(normA)) return fsMaq[fsKey][matchB];
+        }
       }
     }
 
