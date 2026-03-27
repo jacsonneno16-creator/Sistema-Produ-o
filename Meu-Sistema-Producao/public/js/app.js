@@ -2903,6 +2903,9 @@ function buildSchedule(monday){
       let setupMin=0;
       if(ri>0){
         setupMin = getSetupMin(maq, recs[ri-1].produto, rec.produto);
+        console.log('[SETUP-DIAG] maq='+maq+' | de="'+recs[ri-1].produto+'" para="'+rec.produto+'" | setupMin='+setupMin);
+      } else {
+        console.log('[SETUP-DIAG] maq='+maq+' | rec[0]="'+rec.produto+'" — primeiro da fila, sem setup');
       }
 
       const totalUnid=rec.qntUnid||(rec.qntCaixas*unidPorCx);
@@ -2930,6 +2933,7 @@ function buildSchedule(monday){
       let remainProdMin = unidRestante / pcMin;
       // For overflow records: no setup is charged again (it was already paid in the original week)
       let remainSetupMin = isOverflowRecord ? 0 : setupMin;
+      console.log('[SETUP-DIAG] maq='+maq+' | prod="'+rec.produto+'" | isOverflow='+isOverflowRecord+' | remainSetupMin='+remainSetupMin+' | cursor=dia'+cursor.dayIdx+'/blk'+cursor.blkIdx+'/used'+cursor.usedMin);
       const cxPerMin = cxRestanteRec / remainProdMin;
 
       const segments=[];
@@ -3031,6 +3035,7 @@ function buildSchedule(monday){
         const _setupAbsStart=calcBlockOffset(_setupAllBlocks,snap.blkIdx,snap.usedMin);
         const _setupStartPct=_setupDayCapMin>0?(_setupAbsStart/_setupDayCapMin)*100:0;
         const _setupEndPct=_setupDayCapMin>0?((_setupAbsStart+useMin)/_setupDayCapMin)*100:0;
+        console.log('[SETUP-DIAG] SEGMENT PUSH | dayIdx='+snap.dayIdx+' | startPct='+_setupStartPct.toFixed(1)+'% | endPct='+_setupEndPct.toFixed(1)+'% | setupMin='+useMin+' | dayCapMin='+_setupDayCapMin+' | absStart='+_setupAbsStart+' | blkIdx='+snap.blkIdx+' | usedMin='+snap.usedMin+' | blocks[0].inicioMin='+(getBlocks(days[snap.dayIdx],maq)[0]||{inicioMin:'?'}).inicioMin);
         setupSegments.push({date:dateStr(days[snap.dayIdx]),dayIdx:snap.dayIdx,
           turnoIdx:blk.turnoIdx,turnoLabel:blk.label,setupMin:useMin,
           startPct:_setupStartPct,endPct:_setupEndPct});
