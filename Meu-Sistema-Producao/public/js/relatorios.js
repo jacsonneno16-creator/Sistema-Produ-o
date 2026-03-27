@@ -76,8 +76,9 @@ async function initRelatorios() {
     if (typeof window.carregarCategoriasCached === 'function') {
       promises.push(window.carregarCategoriasCached());
     }
-    if (typeof window.getAllProdutos === 'function' && !window.getAllProdutos().length
-        && typeof window.carregarProdutosFirestore === 'function') {
+    // Verifica especificamente PRODUTOS do Firestore (não PRODUTOS_EXTRA do localStorage)
+    const produtosFirestore = Array.isArray(window.PRODUTOS) ? window.PRODUTOS : [];
+    if (!produtosFirestore.length && typeof window.carregarProdutosFirestore === 'function') {
       promises.push(window.carregarProdutosFirestore());
     }
     if (typeof window.carregarMaquinasFirestore === 'function' && !window.MAQUINAS_DATA) {

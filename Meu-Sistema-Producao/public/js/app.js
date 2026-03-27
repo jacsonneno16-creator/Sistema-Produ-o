@@ -9941,7 +9941,15 @@ function switchTabSidebar(name) {
           painelGerencial.insertAdjacentElement('afterend', painelCat);
         }
       }
-      grpRender();
+      // Garantir que PRODUTOS esteja carregado antes de renderizar categorias
+      (async () => {
+        try {
+          if (typeof carregarProdutosCached === 'function') {
+            await carregarProdutosCached();
+          }
+        } catch(e) { console.warn('[grpRender] Erro ao carregar produtos:', e.message); }
+        grpRender();
+      })();
     }, 80);
   }
   if(name==='usuarios') { openSettings(); setTimeout(()=>settingsNav('usuarios'), 80); }
