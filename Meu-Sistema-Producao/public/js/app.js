@@ -15877,3 +15877,162 @@ window.preencherSelectCategorias = preencherSelectCategorias;
 
 // ── Card de Categorias agora está em scontent-categorias-cfg no HTML (não injetado dinamicamente) ──
 
+// ═══════════════════════════════════════════════════════════════════
+// IMPORTAÇÃO DE PROGRAMAÇÃO (aba Programação → botão Importar Excel)
+// ═══════════════════════════════════════════════════════════════════
+
+/**
+ * Baixa uma planilha modelo (.xlsx) com as colunas esperadas na importação.
+ * Colunas: Produto | Máquina | Quantidade (cx) | Data (AAAA-MM-DD) | Status | Observação
+ */
+function importarProgramacaoTemplate() {
+  try {
+    const hoje = new Date().toISOString().slice(0, 10);
+    const wb = XLSX.utils.book_new();
+    const dados = [
+      ['Produto', 'Máquina', 'Quantidade (cx)', 'Data (AAAA-MM-DD)', 'Status', 'Observação'],
+      ['PRODUTO EXEMPLO A', 'MAQ-01', 100, hoje, 'Pendente', ''],
+      ['PRODUTO EXEMPLO B', 'MAQ-02', 200, hoje, 'Pendente', 'obs opcional'],
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(dados);
+    ws['!cols'] = [{ wch: 30 }, { wch: 14 }, { wch: 16 }, { wch: 18 }, { wch: 14 }, { wch: 24 }];
+    XLSX.utils.book_append_sheet(wb, ws, 'Programação');
+    XLSX.writeFile(wb, 'template_programacao.xlsx');
+    toast('Template baixado!', 'ok');
+  } catch (e) {
+    toast('Erro ao gerar template: ' + e.message, 'err');
+  }
+}
+
+/**
+ * Lê o Excel selecionado e cria os registros de programação no Firestore.
+ * Colunas esperadas (case-insensitive, ordem flexível):
+ *   Produto | Máquina | Quantidade | Data | Status | Observação
+ */
+async function importarProgramacaoExcel(file) {
+  if (!file) return;
+
+  const btn = document.getElementById('btn-imp-prog');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Importando...'; }
+
+  const reader = new FileReader();
+  reader.onload = async function (e) {
+    try {
+      toast('Lendo arquivo...', 'ok');
+      const wb = XLSX.read(e.target.result, { type: 'binary' });
+      const sheetName = wb.SheetNames[0];
+      if (!sheetName) { toast('Planilha vazia ou inválida.', 'err'); return; }
+
+      const rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header: 1, defval: '' });
+      if (rows.length < 2) { toast('Nenhum dado encontrado na planilha.', 'err'); return; }
+
+      // Mapear colunas pelo cabeçalho (linha 0)
+      const header = rows[0].map(h => String(h).trim().toLowerCase());
+      function col(aliases) {
+        for (const a of aliases) {
+          const idx = header.findIndex(h => h.includes(a));
+          if (idx >= 0) return idx;
+        }
+        return -1;
+      }
+      const iNome  = col(['produto', 'descricao', 'descrição', 'nome']);
+      const iMaq   = col(['máquina', 'maquina', 'machine']);
+      const iQnt   = col(['quantidade', 'qtd', 'caixas', 'qnt', 'qty']);
+      const iData  = col(['data', 'date', 'dt']);
+      const iStat  = col(['status']);
+      const iObs   = col(['observa', 'obs', 'nota']);
+
+      if (iNome < 0 || iQnt < 0 || iData < 0) {
+        toast('Colunas obrigatórias não encontradas. Use o Template para ver o formato correto.', 'err');
+        return;
+      }
+
+      // Garantir que PRODUTOS esteja carregado para buscar cod/maquina/pcMin
+      if (typeof carregarProdutosCached === 'function') {
+        try { await carregarProdutosCached(); } catch (_) {}
+      }
+      const todosProdutos = (typeof getAllProdutos === 'function' ? getAllProdutos() : window.PRODUTOS) || [];
+
+      let criados = 0, erros = 0;
+      const dataLinhas = rows.slice(1).filter(r => r.some(c => c !== ''));
+
+      toast('Importando ' + dataLinhas.length + ' linha(s)...', 'ok');
+
+      for (const row of dataLinhas) {
+        const nomeProduto = String(row[iNome] || '').trim();
+        if (!nomeProduto) continue;
+
+        const qnt = parseInt(row[iQnt]) || 0;
+        if (qnt < 1) { erros++; continue; }
+
+        // Data: aceita AAAA-MM-DD ou número serial do Excel
+        let dtStr = String(row[iData] || '').trim();
+        if (!dtStr) { erros++; continue; }
+        // Se for número serial do Excel, converter
+        if (/^\d{4,6}$/.test(dtStr)) {
+          const d = XLSX.SSF.parse_date_code(parseInt(dtStr));
+          dtStr = `${d.y}-${String(d.m).padStart(2,'0')}-${String(d.d).padStart(2,'0')}`;
+        }
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(dtStr)) { erros++; continue; }
+
+        // Buscar produto cadastrado para obter cod, maquina, pcMin, unid
+        const prodCad = todosProdutos.find(p =>
+          (p.descricao || '').trim().toLowerCase() === nomeProduto.toLowerCase() ||
+          String(p.cod || '').trim() === nomeProduto
+        ) || {};
+
+        const maquina = String(iMaq >= 0 ? row[iMaq] : '').trim().toUpperCase()
+          || (prodCad.maquina || '').toUpperCase()
+          || 'MANUAL';
+
+        const status = iStat >= 0 ? String(row[iStat] || 'Pendente').trim() : 'Pendente';
+        const obs    = iObs  >= 0 ? String(row[iObs]  || '').trim()       : '';
+        const pcMin  = parseFloat(prodCad.pc_min) || 0;
+        const unid   = parseInt(prodCad.unid) || 1;
+
+        const obj = {
+          produto:      prodCad.descricao || nomeProduto,
+          prodCod:      parseInt(prodCad.cod) || 0,
+          maquina,
+          pcMin,
+          unidPorCx:    unid,
+          qntCaixas:    qnt,
+          qntUnid:      qnt * unid,
+          status:       ['Pendente','Em Andamento','Concluído'].includes(status) ? status : 'Pendente',
+          dtSolicitacao: dtStr,
+          dtDesejada:    dtStr,
+          obs,
+          sortOrder:    Date.now() + criados,
+          updatedAt:    new Date().toISOString(),
+        };
+
+        try {
+          await dbPut(obj);
+          criados++;
+        } catch (err) {
+          console.warn('[importarProgramacaoExcel] Erro ao salvar linha:', err.message, row);
+          erros++;
+        }
+      }
+
+      // Recarregar tela
+      await reloadFresh();
+
+      const msg = criados + ' ordem(ns) importada(s)' + (erros > 0 ? ' · ' + erros + ' linha(s) ignorada(s)' : '');
+      toast(msg, criados > 0 ? 'ok' : 'err');
+
+    } catch (err) {
+      toast('Erro ao importar: ' + err.message, 'err');
+      console.error('[importarProgramacaoExcel]', err);
+    } finally {
+      const inp = document.getElementById('inp-imp-prog');
+      if (inp) inp.value = '';
+      if (btn) { btn.disabled = false; btn.textContent = '📥 Importar Excel'; }
+    }
+  };
+  reader.readAsBinaryString(file);
+}
+
+window.importarProgramacaoExcel    = importarProgramacaoExcel;
+window.importarProgramacaoTemplate = importarProgramacaoTemplate;
+
