@@ -12936,6 +12936,7 @@ window.getPcMinMaquinaProduto = getPcMinMaquinaProduto;
 window.carregarProdutosFirestore = carregarProdutosFirestore;
 window.carregarFichaTecnicaFirestore = carregarFichaTecnicaFirestore;
 window.carregarFichaTecnicaCached = carregarFichaTecnicaCached;
+window.carregarCategoriasCached = carregarCategoriasCached;
 window.salvarProdutoFirestore = salvarProdutoFirestore;
 window.getAllProdutos = getAllProdutos;
 

@@ -34,7 +34,7 @@ const APON_H = [7,8,9,10,11,12,13,14,15,16,17];
 // ─────────────────────────────────────────────────────────────────
 // INICIALIZAÇÃO
 // ─────────────────────────────────────────────────────────────────
-function initRelatorios() {
+async function initRelatorios() {
   // Verificar permissão de visualizar
   if (typeof window.canAccess === 'function' && !window.canAccess('relatorios')) {
     const panel = document.getElementById('panel-relatorios');
@@ -69,6 +69,24 @@ function initRelatorios() {
   const primeiroDia = new Date(hoje.getFullYear(), hoje.getMonth(), 1);
   document.getElementById('rel2-data-inicio').value = _fmtDateInput(primeiroDia);
   document.getElementById('rel2-data-fim').value    = _fmtDateInput(hoje);
+
+  // Garantir que categorias, produtos e máquinas estejam carregados antes de renderizar
+  try {
+    const promises = [];
+    if (typeof window.carregarCategoriasCached === 'function') {
+      promises.push(window.carregarCategoriasCached());
+    }
+    if (typeof window.getAllProdutos === 'function' && !window.getAllProdutos().length
+        && typeof window.carregarProdutosFirestore === 'function') {
+      promises.push(window.carregarProdutosFirestore());
+    }
+    if (typeof window.carregarMaquinasFirestore === 'function' && !window.MAQUINAS_DATA) {
+      promises.push(window.carregarMaquinasFirestore());
+    }
+    await Promise.all(promises);
+  } catch(e) {
+    console.warn('[Relatorios] Erro ao pré-carregar dados:', e.message);
+  }
 
   // Preencher filtros com dados do sistema
   _popularFiltros();
