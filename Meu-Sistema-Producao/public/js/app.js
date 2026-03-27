@@ -2282,6 +2282,18 @@ function openForm(rec){
   if(rec && !can('programacao','editar')){ toast('Sem permissão para editar solicitações.','err'); return; }
   if(!rec && !can('programacao','criar')){ toast('Sem permissão para criar solicitações.','err'); return; }
   populateMaqSelect();
+  // Inject horaInicio field next to date field if not yet present
+  if(!document.getElementById('f-hora-inicio')){
+    const dtEl=document.getElementById('f-dtsolicit');
+    if(dtEl){
+      const wrap=document.createElement('div');
+      wrap.id='f-hora-inicio-wrap';
+      wrap.style.cssText='display:flex;align-items:center;gap:6px;margin-top:6px';
+      wrap.innerHTML=`<label style="font-size:11px;color:var(--text3);white-space:nowrap;font-family:'Space Grotesk',sans-serif">Horário início</label>`+
+        `<input id="f-hora-inicio" type="time" style="background:var(--s2);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-size:13px;font-family:'JetBrains Mono',monospace;outline:none;width:120px" placeholder="08:00">`;
+      dtEl.parentNode.insertBefore(wrap, dtEl.nextSibling);
+    }
+  }
   document.getElementById('edit-id').value=rec?rec.id:'';
   document.getElementById('form-title').textContent=rec?'Editar Solicitação':'Nova Solicitação';
   document.getElementById('p-cod').value=rec?rec.prodCod:'';
@@ -2295,6 +2307,8 @@ function openForm(rec){
     ? (rec.dtDesejada||rec.dtSolicitacao)
     : (ganttBaseMonday ? dateStr(ganttBaseMonday) : new Date().toISOString().slice(0,10));
   document.getElementById('f-dtsolicit').value=defaultDate;
+  const horaInicioEl=document.getElementById('f-hora-inicio');
+  if(horaInicioEl) horaInicioEl.value=rec?(rec.horaInicio||''):'';
   document.getElementById('f-obs').value=rec?(rec.obs||''):'';
   document.getElementById('calc-panel').classList.remove('on');
 
@@ -2421,6 +2435,7 @@ async function saveForm(){
   const pNome=document.getElementById('sel-nome').textContent;
   const qnt=parseInt(document.getElementById('f-qnt').value);
   const dtS=document.getElementById('f-dtsolicit').value;
+  const horaInicio=(document.getElementById('f-hora-inicio')?.value||'').trim();
   const selMaq=document.getElementById('f-maq-form').value;
 
   if(!selMaq){toast('Selecione a máquina','err');return;}
@@ -2439,6 +2454,7 @@ async function saveForm(){
     status:document.getElementById('f-status').value,
     dtSolicitacao:dtFinal,
     dtDesejada:dtFinal,
+    horaInicio:horaInicio||null,
     obs:document.getElementById('f-obs').value.trim(),
     updatedAt:new Date().toISOString()
   };
@@ -2913,6 +2929,33 @@ function buildSchedule(monday){
             cursor.blkIdx=0;
             cursor.usedMin=0;
           }
+        }
+      }
+
+      // Respect horaInicio: if set and cursor is at the start of dtDesejada day, offset usedMin
+      if(rec.horaInicio && rec.dtDesejada){
+        const desejadaIdx=days.findIndex(d=>dateStr(d)===rec.dtDesejada);
+        if(desejadaIdx>=0 && cursor.dayIdx===desejadaIdx && cursor.blkIdx===0 && cursor.usedMin===0){
+          const [hh,mm]=(rec.horaInicio||'00:00').split(':').map(Number);
+          const horaInicioMin=(hh||0)*60+(mm||0);
+          // Find which block+usedMin corresponds to horaInicioMin in this day
+          const blocksHI=getBlocks(days[desejadaIdx],maq);
+          let accumulated=0;
+          let foundBlk=false;
+          for(let _bi=0;_bi<blocksHI.length;_bi++){
+            const blk=blocksHI[_bi];
+            const blkDur=blk.fimMin-blk.inicioMin;
+            // horaInicioMin is relative to start of jornada (accumulated minutes)
+            if(horaInicioMin<=accumulated+blkDur){
+              cursor.blkIdx=_bi;
+              cursor.usedMin=Math.max(0,horaInicioMin-accumulated);
+              foundBlk=true;
+              break;
+            }
+            accumulated+=blkDur;
+          }
+          // If horaInicio is beyond all blocks, leave cursor where it is (will find next valid block)
+          if(!foundBlk){ cursor.blkIdx=0; cursor.usedMin=0; }
         }
       }
 
