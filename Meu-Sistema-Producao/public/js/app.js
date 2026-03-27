@@ -10397,34 +10397,55 @@ function importEstoque(input){
       const wb = XLSX.read(e.target.result, {type:'array'});
       const ws = wb.Sheets[wb.SheetNames[0]];
       const rows = XLSX.utils.sheet_to_json(ws, {header:1, defval:''}).slice(1);
-      const novos = rows.filter(r => r[0]||r[1]).map(r => ({
-        cod: String(r[0]).trim(),
+
+      const norm  = s => String(s||'').trim().toLowerCase();
+      const normN = s => String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim().toLowerCase();
+
+      // Monta set de produtos cadastrados (por código e por nome normalizado)
+      const prodsCod  = new Set(PRODUTOS.map(p => norm(String(p.cod||''))).filter(Boolean));
+      const prodsNome = new Set(PRODUTOS.map(p => normN(p.nome||p.descricao||'')).filter(Boolean));
+
+      const lojaAtiva = getLojaAtiva() || 'sem_loja';
+
+      const todos = rows.filter(r => r[0]||r[1]).map(r => ({
+        cod:     String(r[0]||'').trim(),
         produto: String(r[1]||'').trim(),
-        estoque: parseFloat(r[2])||0
+        estoque: parseFloat(String(r[2]||'').replace(',','.'))||0,
+        lojaId:  lojaAtiva
       })).filter(x => x.produto || x.cod);
 
-      // Upsert: substitui o registro do produto se já existir, senão adiciona
-      const norm = s => String(s||'').trim().toLowerCase();
-      novos.forEach(novo => {
-        const idx = estoqueData.findIndex(x =>
-          (novo.cod && x.cod && norm(x.cod) === norm(novo.cod)) ||
-          (novo.produto && x.produto && norm(x.produto) === norm(novo.produto))
-        );
-        if(idx >= 0) estoqueData[idx] = novo;
-        else estoqueData.push(novo);
-      });
+      // Filtra só produtos cadastrados
+      const novos    = todos.filter(x =>
+        prodsCod.has(norm(x.cod)) || prodsNome.has(normN(x.produto))
+      );
+      const ignorados = todos.length - novos.length;
+
+      // Upsert por loja: mantém dados de outras lojas, substitui só da loja ativa
+      estoqueData = estoqueData.filter(x => (x.lojaId||'sem_loja') !== lojaAtiva);
+      novos.forEach(novo => estoqueData.push(novo));
 
       impSaveEstoque();
       impAddHistorico('estoque', estoqueData.length, file.name);
+
+      // Resumo por loja
+      const porLoja = {};
+      estoqueData.forEach(x => {
+        const l = x.lojaId || 'sem_loja';
+        porLoja[l] = (porLoja[l]||0) + 1;
+      });
+      const resumoLojas = Object.entries(porLoja)
+        .map(([l,n]) => `<span style="background:rgba(255,255,255,.06);border-radius:3px;padding:1px 6px;margin-right:4px"><b>${l}</b>: ${n}</span>`).join('');
+
       const prev = document.getElementById('imp-estoque-preview');
-      prev.innerHTML = `<div style="margin-bottom:6px;font-size:11px;color:var(--green)">✅ ${novos.length} registros importados · ${estoqueData.length} total no sistema</div>`
+      prev.innerHTML = `<div style="margin-bottom:6px;font-size:11px;color:var(--green)">✅ ${novos.length} importados para <b>${lojaAtiva}</b>${ignorados>0?` · <span style="color:var(--yellow)">⚠️ ${ignorados} ignorados (sem cadastro)</span>`:''}</div>`
+        + `<div style="margin-bottom:8px;font-size:11px">${resumoLojas}</div>`
         + `<table style="width:100%;border-collapse:collapse;font-size:11px">`
         + `<thead><tr><th style="text-align:left;padding:3px 6px;color:var(--text3)">Código</th><th style="text-align:left;padding:3px 6px;color:var(--text3)">Produto</th><th style="text-align:right;padding:3px 6px;color:var(--text3)">Estoque</th></tr></thead>`
-        + `<tbody>${estoqueData.slice(0,8).map(r=>`<tr><td style="padding:3px 6px;color:var(--text2)">${r.cod}</td><td style="padding:3px 6px;color:var(--text)">${r.produto.substring(0,35)}</td><td style="padding:3px 6px;text-align:right;color:var(--cyan)">${r.estoque}</td></tr>`).join('')}</tbody>`
-        + (estoqueData.length>8?`<tfoot><tr><td colspan="3" style="padding:3px 6px;color:var(--text3);font-style:italic">... e mais ${estoqueData.length-8} itens</td></tr></tfoot>`:'')
+        + `<tbody>${novos.slice(0,8).map(r=>`<tr><td style="padding:3px 6px;color:var(--text2)">${r.cod}</td><td style="padding:3px 6px;color:var(--text)">${r.produto.substring(0,35)}</td><td style="padding:3px 6px;text-align:right;color:var(--cyan)">${r.estoque}</td></tr>`).join('')}</tbody>`
+        + (novos.length>8?`<tfoot><tr><td colspan="3" style="padding:3px 6px;color:var(--text3);font-style:italic">... e mais ${novos.length-8} itens</td></tr></tfoot>`:'')
         + `</table>`;
       renderImportacao();
-      toast(`Estoque importado: ${novos.length} produtos (total: ${estoqueData.length})`, 'ok');
+      toast(`Estoque [${lojaAtiva}]: ${novos.length} produtos${ignorados>0?' · '+ignorados+' ignorados':''}`, 'ok');
     }catch(err){ toast('Erro ao importar estoque: '+err.message,'err'); }
   };
   reader.readAsArrayBuffer(file);
@@ -10500,14 +10521,42 @@ function importEstoqueInsumos(input){
       });
 
       const dataRows = rows.slice(1).filter(r => r[colInsumo]);
-      const norm = s => (s||'').toUpperCase().trim().replace(/\s+/g,' ');
+      const norm  = s => (s||'').toUpperCase().trim().replace(/\s+/g,' ');
+      const normN = s => String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase().trim().replace(/\s+/g,' ');
+
+      // Monta set de insumos usados em produtos cadastrados (via FICHA_TECNICA)
+      const insumosCadastrados = new Set();
+      FICHA_TECNICA.forEach(ft => {
+        (ft.insumos||[]).forEach(i => {
+          if(i.insumo) {
+            insumosCadastrados.add(norm(i.insumo));
+            insumosCadastrados.add(normN(i.insumo));
+          }
+        });
+      });
+      const temFichaTecnica = insumosCadastrados.size > 0;
+
+      let importados = 0, ignorados = 0;
 
       // Merge: se insumo já existe, atualiza; senão adiciona
       dataRows.forEach(r => {
         const insumoNome = String(r[colInsumo]||'').trim();
-        const qtd = parseFloat(String(r[colQtd]||'').replace(',','.'))||0;
+        const qtd  = parseFloat(String(r[colQtd]||'').replace(',','.'))||0;
         const unid = String(r[colUnid]||'').trim() || 'UN';
         if(!insumoNome) return;
+
+        // Filtro: só aceita insumos que existem na ficha técnica de algum produto
+        // Se não há ficha técnica carregada, importa tudo (fallback seguro)
+        if(temFichaTecnica) {
+          const nInsumo = norm(insumoNome);
+          const nInsumoN = normN(insumoNome);
+          if(!insumosCadastrados.has(nInsumo) && !insumosCadastrados.has(nInsumoN)){
+            ignorados++;
+            return;
+          }
+        }
+
+        importados++;
         const idx = insumosEstoqueData.findIndex(x => norm(x.insumo) === norm(insumoNome));
         if(idx >= 0){
           insumosEstoqueData[idx].quantidade = qtd;
@@ -10522,7 +10571,12 @@ function importEstoqueInsumos(input){
 
       const prev = document.getElementById('imp-insumos-preview');
       if(prev){
-        prev.innerHTML = `<div style="margin-bottom:6px;font-size:11px;color:var(--green)">✅ ${dataRows.length} registros processados · ${insumosEstoqueData.length} insumos no estoque</div>`
+        const avisoFiltro = temFichaTecnica
+          ? (ignorados > 0 ? `<div style="margin-bottom:5px;font-size:11px;color:var(--yellow)">⚠️ ${ignorados} insumos ignorados — sem produto cadastrado que os use</div>` : '')
+          : `<div style="margin-bottom:5px;font-size:11px;color:var(--text3)">ℹ️ Ficha técnica não carregada — filtro de insumos desativado</div>`;
+
+        prev.innerHTML = avisoFiltro
+          + `<div style="margin-bottom:6px;font-size:11px;color:var(--green)">✅ ${importados} insumos importados · ${insumosEstoqueData.length} total no sistema</div>`
           + `<table style="width:100%;border-collapse:collapse;font-size:11px">`
           + `<thead><tr><th style="text-align:left;padding:3px 6px;color:var(--text3)">Insumo</th><th style="text-align:right;padding:3px 6px;color:var(--text3)">Quantidade</th><th style="text-align:right;padding:3px 6px;color:var(--text3)">Un.</th></tr></thead>`
           + `<tbody>${insumosEstoqueData.slice(0,8).map(r=>`<tr><td style="padding:3px 6px;color:var(--text)">${r.insumo.substring(0,40)}</td><td style="padding:3px 6px;text-align:right;color:var(--green);font-family:'JetBrains Mono',monospace">${r.quantidade.toLocaleString('pt-BR',{maximumFractionDigits:3})}</td><td style="padding:3px 6px;text-align:right;color:var(--text3)">${r.unidade}</td></tr>`).join('')}</tbody>`
@@ -10531,7 +10585,7 @@ function importEstoqueInsumos(input){
       }
       renderImportacao();
       renderSaldoInsumos();
-      toast(`Insumos importados: ${insumosEstoqueData.length} itens`, 'ok');
+      toast(`Insumos: ${importados} importados${ignorados>0?' · '+ignorados+' ignorados':''}`, 'ok');
     }catch(err){ toast('Erro ao importar insumos: '+err.message,'err'); }
   };
   reader.readAsArrayBuffer(file);

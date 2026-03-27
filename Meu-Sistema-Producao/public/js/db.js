@@ -99,6 +99,20 @@ export async function getAllMaquinas() {
   const snap = await getDocs(query(lojaCol("maquinas"), orderBy("nome")));
   return snap.docs.map(d => ({ id: d.id, ...d.data() }));
 }
+
+// Retorna todos os produtos cadastrados (coleção global 'produtos')
+// Usado para filtrar importações — só aceita produtos que existem aqui.
+export async function getProdutos() {
+  try {
+    const snap = await getDocs(collection(db, 'produtos'));
+    if (!snap.empty) return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  } catch(e) { /* ignore, tenta loja */ }
+  try {
+    const snap = await getDocs(lojaCol('produtos'));
+    return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  } catch(e2) { return []; }
+}
+
 export async function addMaquina(data) {
   return await addDoc(lojaCol("maquinas"), { ...data, criadoEm: serverTimestamp() });
 }

@@ -143,8 +143,10 @@ export async function importarBaseMaquinaProduto(file) {
 }
 /* =========================================================
    ESTOQUE
+   - Filtra apenas produtos com cadastro em 'produtos'
+   - Separa automaticamente por loja ativa
 ========================================================= */
-export async function importarEstoque(file) {
+export async function importarEstoque(file, lojaId = null) {
   const wb = await lerWorkbook(file);
 
   const ws = wb.Sheets[wb.SheetNames[0]];
@@ -166,20 +168,34 @@ export async function importarEstoque(file) {
     )
   })).filter(r => r.produto);
 
+  // Carrega produtos cadastrados para filtrar
+  const produtosCadastrados = await db.getProdutos();
+  const normP = s => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
+  const nomesValidos  = new Set(produtosCadastrados.map(p => normP(p.nome || p.descricao || '')));
+  const lojaAtiva = lojaId || (typeof getLojaAtiva === 'function' ? getLojaAtiva() : null) || 'sem_loja';
+
   const agrupado = agruparSomandoPorProduto(linhas, 'produto', 'estoque')
-    .map(x => ({
-      produto: x.produto,
-      estoque: x.valor
-    }));
+    .map(x => ({ produto: x.produto, estoque: x.valor }));
+
+  // Filtra só produtos cadastrados
+  const filtrado  = agrupado.filter(x => nomesValidos.has(normP(x.produto)));
+  const ignorados = agrupado.length - filtrado.length;
+
+  // Adiciona lojaId em cada linha
+  const linhasComLoja = filtrado.map(x => ({ ...x, lojaId: lojaAtiva }));
 
   await db.setConfig('estoqueImportado', {
-    linhas: agrupado,
-    totalLinhas: agrupado.length,
+    linhas:          linhasComLoja,
+    totalLinhas:     linhasComLoja.length,
+    totalIgnorados:  ignorados,
+    lojaId:          lojaAtiva,
     atualizadoEmTexto: new Date().toISOString()
   });
 
   return {
-    totalLinhas: agrupado.length
+    totalLinhas:    linhasComLoja.length,
+    totalIgnorados: ignorados,
+    lojaId:         lojaAtiva
   };
 }
 
@@ -207,12 +223,14 @@ export async function importarPedidos(file) {
 
 /* =========================================================
    ESCADINHA
+   - Filtra apenas produtos com cadastro em 'produtos'
+   - Separa automaticamente por loja ativa
 ========================================================= */
-export async function importarEscadinha(file) {
+export async function importarEscadinha(file, lojaId = null) {
   const wb = await lerWorkbook(file);
   const rows = sheetJson(wb);
 
-  const dados = rows.map(r => ({
+  const todos = rows.map(r => ({
     produto: String(pick(r, ['Produto', 'PRODUTO', 'Descrição']) || '').trim(),
     jan: num(pick(r, ['JAN'])),
     fev: num(pick(r, ['FEV'])),
@@ -221,11 +239,30 @@ export async function importarEscadinha(file) {
     bruto: r
   })).filter(r => r.produto);
 
+  // Carrega produtos cadastrados para filtrar
+  const produtosCadastrados = await db.getProdutos();
+  const normP = s => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
+  const nomesValidos  = new Set(produtosCadastrados.map(p => normP(p.nome || p.descricao || '')));
+  const lojaAtiva = lojaId || (typeof getLojaAtiva === 'function' ? getLojaAtiva() : null) || 'sem_loja';
+
+  // Filtra só produtos cadastrados
+  const dados     = todos.filter(x => nomesValidos.has(normP(x.produto)));
+  const ignorados = todos.length - dados.length;
+
+  // Adiciona lojaId em cada linha
+  const dadosComLoja = dados.map(x => ({ ...x, lojaId: lojaAtiva }));
+
   await db.setConfig('escadinha', {
-    linhas: dados,
-    totalLinhas: dados.length,
+    linhas:          dadosComLoja,
+    totalLinhas:     dadosComLoja.length,
+    totalIgnorados:  ignorados,
+    lojaId:          lojaAtiva,
     atualizadoEmTexto: new Date().toISOString()
   });
 
-  return { totalLinhas: dados.length };
+  return {
+    totalLinhas:    dadosComLoja.length,
+    totalIgnorados: ignorados,
+    lojaId:         lojaAtiva
+  };
 }
