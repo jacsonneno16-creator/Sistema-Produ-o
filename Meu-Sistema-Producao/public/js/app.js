@@ -2854,6 +2854,23 @@ function buildSchedule(monday){
     return [{turnoIdx:0, label:'T1', inicioMin:0, fimMin:hrs*60}];
   }
 
+  // Helper: calculate absolute offset (minutes from start of first block) for blkIdx+usedMin.
+  // Works for both absolute block times (inicioMin = minutes-since-midnight)
+  // and relative block times (inicioMin = accumulated offset within jornada).
+  function calcBlockOffset(allBlocks, blkIdx, usedMin){
+    if(!allBlocks.length) return 0;
+    const looksAbsolute = allBlocks[0].inicioMin > 0;
+    if(looksAbsolute){
+      const dayStart = allBlocks[0].inicioMin;
+      const blkStart = allBlocks[blkIdx].inicioMin;
+      return Math.max(0, (blkStart - dayStart) + usedMin);
+    } else {
+      let acc = 0;
+      for(let bi = 0; bi < blkIdx; bi++) acc += (allBlocks[bi].fimMin - allBlocks[bi].inicioMin);
+      return Math.max(0, acc + usedMin);
+    }
+  }
+
   // Advance cursor to next valid block (skipping days/blocks with no availability)
   function advanceCursor(cursor, days, maq){
     while(cursor.dayIdx<7){
@@ -3011,9 +3028,7 @@ function buildSchedule(monday){
         // Calcular posição percentual no dia (para renderização no Gantt)
         const _setupDayCapMin=(hoursOnDayMaq(days[snap.dayIdx],maq))*60;
         const _setupAllBlocks=getBlocks(days[snap.dayIdx],maq);
-        let _setupBlkOffset=0;
-        for(let _bi=0;_bi<snap.blkIdx;_bi++) _setupBlkOffset+=(_setupAllBlocks[_bi].fimMin-_setupAllBlocks[_bi].inicioMin);
-        const _setupAbsStart=_setupBlkOffset+snap.usedMin;
+        const _setupAbsStart=calcBlockOffset(_setupAllBlocks,snap.blkIdx,snap.usedMin);
         const _setupStartPct=_setupDayCapMin>0?(_setupAbsStart/_setupDayCapMin)*100:0;
         const _setupEndPct=_setupDayCapMin>0?((_setupAbsStart+useMin)/_setupDayCapMin)*100:0;
         setupSegments.push({date:dateStr(days[snap.dayIdx]),dayIdx:snap.dayIdx,
@@ -3041,9 +3056,7 @@ function buildSchedule(monday){
         const dayCapMin=dayAvailHrs*60;
         // position of block start within day capacity (blocks are ordered T1<T2<T3)
         const allBlocks=getBlocks(days[snap.dayIdx],maq);
-        let blkOffsetMin=0;
-        for(let bi=0;bi<snap.blkIdx;bi++) blkOffsetMin+=(allBlocks[bi].fimMin-allBlocks[bi].inicioMin);
-        const absStartMin=blkOffsetMin+snap.usedMin;
+        const absStartMin=calcBlockOffset(allBlocks,snap.blkIdx,snap.usedMin);
         const startPct=dayCapMin>0?(absStartMin/dayCapMin)*100:0;
         const endPct=dayCapMin>0?((absStartMin+useMin)/dayCapMin)*100:0;
 
