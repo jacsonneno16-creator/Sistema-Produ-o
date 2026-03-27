@@ -2938,21 +2938,46 @@ function buildSchedule(monday){
         if(desejadaIdx>=0 && cursor.dayIdx===desejadaIdx && cursor.blkIdx===0 && cursor.usedMin===0){
           const [hh,mm]=(rec.horaInicio||'00:00').split(':').map(Number);
           const horaInicioMin=(hh||0)*60+(mm||0);
-          // Find which block+usedMin corresponds to horaInicioMin in this day
+          // Find which block+usedMin corresponds to horaInicioMin in this day.
+          // inicioMin/fimMin may be absolute (minutes since midnight) or relative (accumulated).
+          // Strategy: first try absolute match (horaInicioMin falls within blk.inicioMin..blk.fimMin).
+          // If no block matches absolutely, fall back to accumulated (relative) mode.
           const blocksHI=getBlocks(days[desejadaIdx],maq);
-          let accumulated=0;
           let foundBlk=false;
-          for(let _bi=0;_bi<blocksHI.length;_bi++){
-            const blk=blocksHI[_bi];
-            const blkDur=blk.fimMin-blk.inicioMin;
-            // horaInicioMin is relative to start of jornada (accumulated minutes)
-            if(horaInicioMin<=accumulated+blkDur){
-              cursor.blkIdx=_bi;
-              cursor.usedMin=Math.max(0,horaInicioMin-accumulated);
-              foundBlk=true;
-              break;
+          // --- Try absolute mode: inicioMin/fimMin are minutes-since-midnight ---
+          const firstBlkStart=blocksHI.length>0?blocksHI[0].inicioMin:0;
+          const looksAbsolute=firstBlkStart>0; // heuristic: if first block starts after 0, times are absolute
+          if(looksAbsolute){
+            for(let _bi=0;_bi<blocksHI.length;_bi++){
+              const blk=blocksHI[_bi];
+              if(horaInicioMin>=blk.inicioMin && horaInicioMin<blk.fimMin){
+                cursor.blkIdx=_bi;
+                cursor.usedMin=horaInicioMin-blk.inicioMin;
+                foundBlk=true;
+                break;
+              }
+              // horaInicio is before this block starts — begin at start of this block
+              if(horaInicioMin<blk.inicioMin){
+                cursor.blkIdx=_bi;
+                cursor.usedMin=0;
+                foundBlk=true;
+                break;
+              }
             }
-            accumulated+=blkDur;
+          } else {
+            // --- Relative/accumulated mode: inicioMin is offset within block, accumulated across blocks ---
+            let accumulated=0;
+            for(let _bi=0;_bi<blocksHI.length;_bi++){
+              const blk=blocksHI[_bi];
+              const blkDur=blk.fimMin-blk.inicioMin;
+              if(horaInicioMin<=accumulated+blkDur){
+                cursor.blkIdx=_bi;
+                cursor.usedMin=Math.max(0,horaInicioMin-accumulated);
+                foundBlk=true;
+                break;
+              }
+              accumulated+=blkDur;
+            }
           }
           // If horaInicio is beyond all blocks, leave cursor where it is (will find next valid block)
           if(!foundBlk){ cursor.blkIdx=0; cursor.usedMin=0; }
