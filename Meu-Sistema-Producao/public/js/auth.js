@@ -52,6 +52,7 @@ export const MODULOS = [
   { key:"funcionarios",  label:"Funcionários" },
   { key:"usuarios",      label:"Usuários do Sistema" },
   { key:"relatorios",    label:"Relatórios" },
+  { key:"processos",      label:"Processos Produtivos" },
 ];
 
 // Estado global

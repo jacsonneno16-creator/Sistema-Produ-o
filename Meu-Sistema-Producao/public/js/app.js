@@ -9404,6 +9404,7 @@ const MODULO_ACOES = {
   funcionarios : ['visualizar','editar','criar','excluir'],
   usuarios     : ['visualizar','editar','criar','excluir','administrar'],
   relatorios   : ['visualizar','exportar'],
+  processos     : ['visualizar','criar','editar','excluir'],
 };
 
 // Descrição detalhada do que cada ação libera em cada módulo
@@ -9480,6 +9481,12 @@ const MODULO_ACOES_DESC = {
   relatorios   : {
     visualizar : 'Ver a aba de relatórios',
     exportar   : 'Exportar relatórios em Excel, PDF e Imagem',
+  },
+  processos    : {
+    visualizar : 'Ver a aba de processos produtivos (Realizados)',
+    criar      : 'Criar novos processos produtivos',
+    editar     : 'Editar processos existentes',
+    excluir    : 'Excluir processos produtivos',
   },
 };
 
@@ -16160,6 +16167,10 @@ function getTipoProcesso(id) {
 
 // ── Sub-tab switcher ──────────────────────────────────────────────────────
 function realizadoSubTab(aba) {
+  if (aba === 'processos' && typeof canAccess === 'function' && !canAccess('processos')) {
+    toast('Sem permissão para acessar processos produtivos.', 'err');
+    return;
+  }
   _realizadoSubTabAtiva = aba;
   const pApon = document.getElementById('real-panel-apontamentos');
   const pProc = document.getElementById('real-panel-processos');
@@ -16289,10 +16300,11 @@ async function renderProcessos() {
         style="font-size:12px;padding:6px 12px;background:var(--s1);border:1px solid var(--border);border-radius:7px;color:var(--text);min-width:220px">
       ${(filtroData||filtroTipo||filtroBusca)?`<button onclick="procLimparFiltros()" style="background:none;border:1px solid var(--border);color:var(--text3);border-radius:6px;padding:4px 10px;font-size:11px;cursor:pointer">✕ Limpar</button>`:''}
     </div>
+    ${(typeof can !== "function" || can("processos","criar")) ? `
     <button onclick="abrirModalProcesso()"
       style="background:var(--cyan);color:#000;border:none;border-radius:8px;padding:9px 18px;font-size:13px;font-weight:700;font-family:'Space Grotesk',sans-serif;cursor:pointer;display:flex;align-items:center;gap:6px">
       ＋ Novo Processo
-    </button>
+    </button>` : ""}
   </div>
 
   ${Object.keys(totaisFuncs).length ? `
@@ -16338,7 +16350,9 @@ function _fmtDataBR(dateStr) {
 
 function _renderCardProcesso(p) {
   const tipo = getTipoProcesso(p.tipo);
-  const tempoLabel = p.diaInteiro ? 'Dia inteiro' : _fmtTempo(p.tempoMinutos);
+  const tempoLabel = p.diaInteiro
+    ? ('Dia inteiro' + (p.tempoMinutos ? ' (' + _fmtTempo(p.tempoMinutos) + ')' : ''))
+    : _fmtTempo(p.tempoMinutos);
   const funcs = p.funcionarios || [];
   const status = p.status || 'finalizado';
   const statusCor = status === 'em_andamento' ? 'var(--warn)' : 'var(--green)';
@@ -16356,7 +16370,7 @@ function _renderCardProcesso(p) {
           <span style="font-size:10px;font-weight:600;padding:2px 8px;border-radius:10px;background:${statusCor}22;color:${statusCor};border:1px solid ${statusCor}44">${statusLabel}</span>
         </div>
         <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--text3)">
-          ${p.produto?`<span>📦 ${p.produto}</span>`:''}
+          ${(p.produtos&&p.produtos.length?p.produtos:(p.produto?[p.produto]:[])).map(pd=>`<span>📦 ${pd}</span>`).join(' ')||''}
           <span>📅 ${_fmtDataBR(p.data)}</span>
           <span>⏱️ ${tempoLabel}</span>
           ${p.horaInicio&&p.horaFim?`<span>🕐 ${p.horaInicio} – ${p.horaFim}</span>`:''}
@@ -16414,6 +16428,7 @@ async function procFinalizarProcesso(id) {
 }
 
 async function procExcluir(id) {
+  if (typeof can === 'function' && !can('processos','excluir')) { toast('Sem permissão para excluir processos.','err'); return; }
   if (!confirm('Excluir este processo? Esta ação não pode ser desfeita.')) return;
   try {
     await _excluirProcesso(id);
@@ -16426,6 +16441,11 @@ async function procExcluir(id) {
 let _procFuncRows = []; // funcionários no modal
 
 function abrirModalProcesso(id) {
+  if (id) {
+    if (typeof can === 'function' && !can('processos','editar')) { toast('Sem permissão para editar processos.','err'); return; }
+  } else {
+    if (typeof can === 'function' && !can('processos','criar')) { toast('Sem permissão para criar processos.','err'); return; }
+  }
   const old = document.getElementById('modal-processo');
   if (old) old.remove();
 
@@ -16472,12 +16492,24 @@ function abrirModalProcesso(id) {
       <!-- Linha 2: Produto + Data -->
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
         <div>
-          <label style="font-size:11px;font-weight:600;color:var(--text3);display:block;margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Produto Vinculado</label>
-          <select id="proc-inp-produto"
-            style="width:100%;box-sizing:border-box;background:var(--bg);border:1px solid var(--border);border-radius:7px;padding:8px 10px;color:var(--text);font-size:13px">
-            <option value="">— Sem produto específico —</option>
-            ${prodOpts}
-          </select>
+          <label style="font-size:11px;font-weight:600;color:var(--text3);display:block;margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Produtos Vinculados</label>
+          <div style="display:flex;gap:6px;margin-bottom:6px">
+            <select id="proc-inp-produto-sel"
+              style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:7px;padding:7px 10px;color:var(--text);font-size:13px">
+              <option value="">— Selecionar produto —</option>
+              ${prodOpts}
+            </select>
+            <button type="button" onclick="procAdicionarProduto()"
+              style="background:rgba(0,212,255,.1);border:1px solid rgba(0,212,255,.3);color:var(--cyan);border-radius:7px;padding:7px 12px;font-size:12px;cursor:pointer;white-space:nowrap">+ Adicionar</button>
+          </div>
+          <div id="proc-produtos-lista" style="display:flex;flex-wrap:wrap;gap:6px">
+            ${(proc.produtos||[proc.produto].filter(Boolean)).map(pd=>`
+              <div style="background:var(--s2);border:1px solid var(--border);border-radius:20px;padding:3px 10px;font-size:11px;color:var(--text2);display:flex;align-items:center;gap:6px">
+                <span>📦 \${pd}</span>
+                <button onclick="procRemoverProduto(this)" data-prod="\${pd.replace(/'/g,\'\')}"
+                  style="background:none;border:none;color:var(--text4);cursor:pointer;font-size:13px;line-height:1;padding:0">×</button>
+              </div>`).join('')}
+          </div>
         </div>
         <div>
           <label style="font-size:11px;font-weight:600;color:var(--text3);display:block;margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Data *</label>
@@ -16637,6 +16669,33 @@ function _coletarFuncRows() {
   }).filter(Boolean);
 }
 
+function procAdicionarProduto() {
+  const sel = document.getElementById('proc-inp-produto-sel');
+  if (!sel || !sel.value) return;
+  const val = sel.value;
+  const lista = document.getElementById('proc-produtos-lista');
+  if (!lista) return;
+  // Evitar duplicatas
+  const jaExiste = [...lista.querySelectorAll('[data-prod]')].some(el => el.dataset.prod === val);
+  if (jaExiste) { toast('Produto já adicionado', 'warn'); return; }
+  const div = document.createElement('div');
+  div.style.cssText = 'background:var(--s2);border:1px solid var(--border);border-radius:20px;padding:3px 10px;font-size:11px;color:var(--text2);display:flex;align-items:center;gap:6px';
+  div.innerHTML = `<span>📦 ${val}</span><button onclick="procRemoverProduto(this)" data-prod="${val.replace(/'/g,"\'")}"`
+    + ` style="background:none;border:none;color:var(--text4);cursor:pointer;font-size:13px;line-height:1;padding:0">×</button>`;
+  lista.appendChild(div);
+  sel.value = '';
+}
+
+function procRemoverProduto(btn) {
+  btn.closest('div').remove();
+}
+
+function _coletarProdutos() {
+  const lista = document.getElementById('proc-produtos-lista');
+  if (!lista) return [];
+  return [...lista.querySelectorAll('[data-prod]')].map(el => el.dataset.prod).filter(Boolean);
+}
+
 async function procSalvar() {
   const nome = document.getElementById('proc-inp-nome')?.value?.trim();
   if (!nome) { toast('Informe o nome do processo', 'err'); return; }
@@ -16646,12 +16705,21 @@ async function procSalvar() {
   const diaInteiro = document.getElementById('proc-tempo-dia')?.checked || false;
   const horas = parseInt(document.getElementById('proc-inp-horas')?.value) || 0;
   const mins  = parseInt(document.getElementById('proc-inp-mins')?.value) || 0;
-  const tempoMinutos = diaInteiro ? 480 : (horas*60 + mins) || null;
+  // Calcular minutos do dia inteiro baseado na jornada configurada para a data
+  let minutosDiaInteiro = 480; // fallback 8h
+  if (diaInteiro && data) {
+    try {
+      const dateObj = new Date(data + 'T12:00:00');
+      const hrsConfig = (typeof hoursOnDay === 'function') ? hoursOnDay(dateObj) : 0;
+      if (hrsConfig > 0) minutosDiaInteiro = hrsConfig * 60;
+    } catch(e) {}
+  }
+  const tempoMinutos = diaInteiro ? minutosDiaInteiro : (horas*60 + mins) || null;
 
   const payload = {
     nome,
     tipo:       document.getElementById('proc-inp-tipo')?.value || 'outro',
-    produto:    document.getElementById('proc-inp-produto')?.value || '',
+    produtos:   _coletarProdutos(),
     data,
     diaInteiro,
     tempoMinutos,
@@ -16686,3 +16754,5 @@ window.procToggleTempoCampos = procToggleTempoCampos;
 window.procLimparFiltros     = procLimparFiltros;
 window.procExcluir           = procExcluir;
 window.procFinalizarProcesso = procFinalizarProcesso;
+window.procAdicionarProduto  = procAdicionarProduto;
+window.procRemoverProduto    = procRemoverProduto;

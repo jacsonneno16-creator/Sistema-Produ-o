@@ -74,7 +74,7 @@ async function initRelatorios() {
   try {
     const promises = [];
     if (typeof window.carregarCategoriasCached === 'function') {
-      promises.push(window.carregarCategoriasCached());
+      promises.push(window.carregarCategoriasCached(true)); // forceReload para garantir window.CATEGORIAS
     }
     // Verifica especificamente PRODUTOS do Firestore (não PRODUTOS_EXTRA do localStorage)
     const produtosFirestore = Array.isArray(window.PRODUTOS) ? window.PRODUTOS : [];
@@ -1106,7 +1106,7 @@ function _renderCategorias(d) {
 // EXPORTAÇÕES
 // ─────────────────────────────────────────────────────────────────
 function exportXLSX() {
-  if (typeof window.can === 'function' && !window.can('relatorios', 'exportar')) {
+  if (typeof window.can === 'function' && !window.can('relatorios', 'visualizar')) {
     _toast('Acesso negado: sem permissão para exportar relatórios.', 'err');
     return;
   }
@@ -1181,7 +1181,7 @@ function exportXLSX() {
 }
 
 function exportPDF() {
-  if (typeof window.can === 'function' && !window.can('relatorios', 'exportar')) {
+  if (typeof window.can === 'function' && !window.can('relatorios', 'visualizar')) {
     _toast('Acesso negado: sem permissão para exportar relatórios.', 'err');
     return;
   }
@@ -1254,7 +1254,7 @@ function exportPDF() {
 }
 
 async function exportImagem() {
-  if (typeof window.can === 'function' && !window.can('relatorios', 'exportar')) {
+  if (typeof window.can === 'function' && !window.can('relatorios', 'visualizar')) {
     _toast('Acesso negado: sem permissão para exportar relatórios.', 'err');
     return;
   }
