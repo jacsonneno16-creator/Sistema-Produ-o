@@ -3449,7 +3449,12 @@ function renderGanttSemanal(){
       html+=`<div class="g-label"><strong title="${produto}${obs?' — '+obs:''}">${produto}</strong></div>`;
 
       // Qtd cx col — soma de todos os registros
-      html+=`<div class="g-col-qty"><div class="g-col-qty-txt">${qntCaixas}<br><span style="font-size:9px;color:var(--text3);font-weight:400">cx</span></div></div>`;
+      const recIdsQty = recs.map(r=>r.id).join(',');
+      const canEditQty = typeof can==='function' && can('gantt','editar');
+      html+=`<div class="g-col-qty" ${canEditQty ? `onclick="ganttEditarQtd('${recIdsQty}','${produto.replace(/'/g,"\'").replace(/"/g,'&quot;')}','${recMaq.replace(/'/g,"\'")}',${qntCaixas})" style="cursor:pointer" title="Clique para editar quantidade"` : ''}>
+        <div class="g-col-qty-txt">${qntCaixas}<br><span style="font-size:9px;color:var(--text3);font-weight:400">cx</span></div>
+        ${canEditQty ? `<div style="font-size:8px;color:var(--text4);margin-top:1px">✏️</div>` : ''}
+      </div>`;
 
       // Tempo col — só produção; tooltip mostra total com setup
       const totalHrsComSetup = prodHrs + setupMin/60;
@@ -16854,3 +16859,102 @@ window.ganttBarDragEnd   = ganttBarDragEnd;
 window.ganttDayDragOver  = ganttDayDragOver;
 window.ganttDayDragLeave = ganttDayDragLeave;
 window.ganttDayDrop      = ganttDayDrop;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// GANTT — Editar quantidade de produto direto no Prog. Visual
+// ═══════════════════════════════════════════════════════════════════════════
+
+function ganttEditarQtd(recIdsStr, produto, maquina, qtdAtual) {
+  if (!can('gantt', 'editar')) { toast('Sem permissão para editar.', 'err'); return; }
+
+  const recIds = recIdsStr.split(',').filter(Boolean);
+  const old = document.getElementById('modal-gantt-qtd');
+  if (old) old.remove();
+
+  const modal = document.createElement('div');
+  modal.id = 'modal-gantt-qtd';
+  modal.style.cssText = 'position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.6)';
+  modal.innerHTML = `
+    <div style="background:var(--s1);border:1px solid var(--border);border-radius:12px;width:360px;max-width:92vw;box-shadow:0 12px 50px rgba(0,0,0,.5)">
+      <div style="padding:14px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between">
+        <div style="font-size:14px;font-weight:700;color:var(--text)">✏️ Editar Quantidade</div>
+        <button onclick="document.getElementById('modal-gantt-qtd').remove()" style="background:none;border:none;color:var(--text3);font-size:20px;cursor:pointer">×</button>
+      </div>
+      <div style="padding:18px">
+        <div style="font-size:12px;color:var(--text2);margin-bottom:4px;font-weight:600">${produto}</div>
+        <div style="font-size:11px;color:var(--text3);margin-bottom:16px">Máquina: ${maquina}</div>
+        <label style="font-size:11px;font-weight:600;color:var(--text3);display:block;margin-bottom:6px;text-transform:uppercase;letter-spacing:.5px">Nova quantidade (caixas)</label>
+        <input id="gantt-qtd-inp" type="number" min="1" step="1" value="${qtdAtual}"
+          style="width:100%;box-sizing:border-box;background:var(--bg);border:1px solid var(--cyan);border-radius:7px;padding:10px 12px;color:var(--text);font-size:16px;font-family:'JetBrains Mono',monospace;font-weight:700;text-align:center"
+          onkeydown="if(event.key==='Enter') ganttSalvarQtd('${recIdsStr}',${qtdAtual})">
+        <div style="font-size:10px;color:var(--text3);margin-top:6px;text-align:center">Quantidade atual: <strong>${qtdAtual} cx</strong></div>
+      </div>
+      <div style="padding:12px 18px;border-top:1px solid var(--border);display:flex;gap:8px;justify-content:flex-end">
+        <button onclick="document.getElementById('modal-gantt-qtd').remove()"
+          style="background:var(--s2);border:1px solid var(--border);border-radius:7px;padding:7px 16px;font-size:12px;color:var(--text);cursor:pointer">Cancelar</button>
+        <button onclick="ganttSalvarQtd('${recIdsStr}',${qtdAtual})"
+          style="background:var(--cyan);border:none;border-radius:7px;padding:7px 20px;font-size:12px;font-weight:700;color:#000;cursor:pointer">💾 Salvar</button>
+      </div>
+    </div>`;
+
+  document.body.appendChild(modal);
+  modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
+  setTimeout(() => {
+    const inp = document.getElementById('gantt-qtd-inp');
+    if (inp) { inp.focus(); inp.select(); }
+  }, 60);
+}
+
+async function ganttSalvarQtd(recIdsStr, qtdOriginal) {
+  if (!can('gantt', 'editar')) { toast('Sem permissão.', 'err'); return; }
+  const inp = document.getElementById('gantt-qtd-inp');
+  if (!inp) return;
+  const novaQtd = parseInt(inp.value);
+  if (!novaQtd || novaQtd < 1) { toast('Informe uma quantidade válida.', 'err'); inp.focus(); return; }
+  if (novaQtd === qtdOriginal) { document.getElementById('modal-gantt-qtd')?.remove(); return; }
+
+  const recIds = recIdsStr.split(',').filter(Boolean);
+  const btn = document.querySelector('#modal-gantt-qtd button[onclick*="ganttSalvarQtd"]');
+  if (btn) { btn.disabled = true; btn.textContent = 'Salvando...'; }
+
+  try {
+    // Se há múltiplos registros (produto agrupado), distribuir proporcionalmente
+    if (recIds.length === 1) {
+      const r = records.find(x => String(x.id) === recIds[0]);
+      if (r) {
+        r.qntCaixas = novaQtd;
+        await dbPut({ ...r, qntCaixas: novaQtd });
+      }
+    } else {
+      // Distribuir nova quantidade proporcionalmente entre os registros
+      const total = recIds.reduce((s, id) => {
+        const r = records.find(x => String(x.id) === id);
+        return s + (r?.qntCaixas || 0);
+      }, 0);
+      for (const id of recIds) {
+        const r = records.find(x => String(x.id) === id);
+        if (!r) continue;
+        const proporcao = total > 0 ? (r.qntCaixas / total) : (1 / recIds.length);
+        const qtdParte = Math.max(1, Math.round(novaQtd * proporcao));
+        r.qntCaixas = qtdParte;
+        await dbPut({ ...r, qntCaixas: qtdParte });
+      }
+    }
+
+    document.getElementById('modal-gantt-qtd')?.remove();
+    toast(`Quantidade atualizada para ${novaQtd} cx`, 'ok');
+    registrarAuditoria('GANTT_EDITAR_QTD', { recIds, qtdOriginal, novaQtd });
+
+    // Recarregar Gantt
+    if (ganttBaseMonday) {
+      await pdLoadWeek(ganttBaseMonday);
+      renderGantt();
+    }
+  } catch(e) {
+    toast('Erro ao salvar: ' + e.message, 'err');
+    if (btn) { btn.disabled = false; btn.textContent = '💾 Salvar'; }
+  }
+}
+
+window.ganttEditarQtd = ganttEditarQtd;
+window.ganttSalvarQtd = ganttSalvarQtd;

@@ -1113,17 +1113,17 @@ function _renderCategorias(d) {
 // ─────────────────────────────────────────────────────────────────
 function exportXLSX() {
   if (typeof window.can === 'function' && !window.can('relatorios', 'visualizar')) {
-    _toast('Acesso negado: sem permissão para exportar relatórios.', 'err');
+    _toast('Acesso negado: sem permissão para exportar.', 'err');
     return;
   }
   try {
-  // Sincronizar filtros do DOM antes de exportar
-  _relFiltros.dataInicio = document.getElementById('rel2-data-inicio')?.value || '';
+      _relFiltros.dataInicio = document.getElementById('rel2-data-inicio')?.value || '';
   _relFiltros.dataFim    = document.getElementById('rel2-data-fim')?.value    || '';
   _relFiltros.maquina    = document.getElementById('rel2-maquina')?.value     || '';
   _relFiltros.produto    = document.getElementById('rel2-produto')?.value     || '';
   _relFiltros.categoria  = document.getElementById('rel2-categoria')?.value   || '';
-  _dadosCache = null; // forçar recálculo com filtros atuais
+  _dadosCache = null;
+    const dados = _calcularDados();
     const wb = XLSX.utils.book_new();
 
     // Aba 1: Resumo KPIs
@@ -1133,12 +1133,12 @@ function exportXLSX() {
       [],
       ['INDICADOR', 'VALOR'],
       ['Produção Total Realizada (cx)', dados.totalRealizado],
-      ['Produção Programada (cx)',       dados.totalProgramado],
-      ['Eficiência Média (%)',           dados.eficienciaMedia],
-      ['Ocupação de Máquinas (%)',       dados.pctOcupado],
-      ['Tempo Ocioso (%)',               dados.pctOcioso],
-      ['Setup (%)',                      dados.pctSetup],
-      ['Produtos com Risco de Ruptura',  dados.rupturas],
+      ['Produção Programada (cx)',      dados.totalProgramado],
+      ['Eficiência Média (%)',          dados.eficienciaMedia],
+      ['Ocupação de Máquinas (%)',      dados.pctOcupado],
+      ['Tempo Ocioso (%)',              dados.pctOcioso],
+      ['Setup (%)',                     dados.pctSetup],
+      ['Produtos com Risco de Ruptura', dados.rupturas],
     ];
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(resumo), 'Resumo');
 
@@ -1157,29 +1157,31 @@ function exportXLSX() {
     });
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(prodRows), 'Por Produto');
 
+    // Aba 4: Por categoria de produto
     const catProdRows = [['Categoria','Programado (cx)','Realizado (cx)','Produção (min)','Setup (min)','Total (min)']];
-    Object.entries(dados.porCategoriaProduto || {}).forEach(([cat, v]) => { catProdRows.push([cat, v.programado || 0, v.realizado || 0, Math.round(v.producaoMin || 0), Math.round(v.setupMin || 0), Math.round(v.totalMin || 0)]); });
+    Object.entries(dados.porCategoriaProduto || {}).forEach(([cat, v]) => {
+      catProdRows.push([cat, v.programado||0, v.realizado||0, Math.round(v.producaoMin||0), Math.round(v.setupMin||0), Math.round(v.totalMin||0)]);
+    });
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(catProdRows), 'Cat Produto');
 
+    // Aba 5: Por categoria de máquina
     const catMaqRows = [['Categoria','Máquinas','Horas Disponíveis','Horas Usadas','Setup (min)','Total (min)','Ocupação (%)']];
-    Object.entries(dados.porCategoriaMaquina || {}).forEach(([cat, v]) => { catMaqRows.push([cat, (v.maquinas || []).join(', '), v.horasDisponiveis || 0, v.horasUsadas || 0, Math.round(v.setupMin || 0), Math.round(v.totalMin || 0), v.ocupacaoPct || 0]); });
+    Object.entries(dados.porCategoriaMaquina || {}).forEach(([cat, v]) => {
+      catMaqRows.push([cat, (v.maquinas||[]).join(', '), v.horasDisponiveis||0, v.horasUsadas||0, Math.round(v.setupMin||0), Math.round(v.totalMin||0), v.ocupacaoPct||0]);
+    });
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(catMaqRows), 'Cat Máquina');
 
-    // Aba 4: Produção por dia
+    // Aba 6: Produção por dia
     const diaRows = [['Data','Caixas Realizadas']];
-    Object.entries(dados.producaoPorDia).sort().forEach(([dia, qt]) => {
-      diaRows.push([dia, qt]);
-    });
+    Object.entries(dados.producaoPorDia).sort().forEach(([dia, qt]) => diaRows.push([dia, qt]));
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(diaRows), 'Por Dia');
 
-    // Aba 5: Cobertura
+    // Aba 7: Cobertura (se disponível)
     try {
       const pc = window.projecaoCalculada || [];
       if (pc.length) {
         const cobRows = [['Produto','Máquina','Cobertura (dias)','Risco','Demanda Diária','Estoque']];
-        pc.forEach(p => {
-          cobRows.push([p.produto, p.maquina||'', p.coberturaAtual??'', p.risco, p.demandaDiaria??'', p.estoque??'']);
-        });
+        pc.forEach(p => cobRows.push([p.produto, p.maquina||'', p.coberturaAtual??'', p.risco, p.demandaDiaria??'', p.estoque??'']));
         XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(cobRows), 'Cobertura');
       }
     } catch(e) {}
@@ -1189,24 +1191,25 @@ function exportXLSX() {
     _toast('Relatório Excel exportado!', 'ok');
   } catch(e) {
     _toast('Erro ao exportar Excel: ' + e.message, 'err');
+    console.error('[exportXLSX]', e);
   }
 }
 
 function exportPDF() {
   if (typeof window.can === 'function' && !window.can('relatorios', 'visualizar')) {
-    _toast('Acesso negado: sem permissão para exportar relatórios.', 'err');
+    _toast('Acesso negado: sem permissão para exportar.', 'err');
     return;
   }
   try {
-  // Sincronizar filtros do DOM antes de exportar
-  _relFiltros.dataInicio = document.getElementById('rel2-data-inicio')?.value || '';
+      _relFiltros.dataInicio = document.getElementById('rel2-data-inicio')?.value || '';
   _relFiltros.dataFim    = document.getElementById('rel2-data-fim')?.value    || '';
   _relFiltros.maquina    = document.getElementById('rel2-maquina')?.value     || '';
   _relFiltros.produto    = document.getElementById('rel2-produto')?.value     || '';
   _relFiltros.categoria  = document.getElementById('rel2-categoria')?.value   || '';
-  _dadosCache = null; // forçar recálculo com filtros atuais
-    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+  _dadosCache = null;
     const dados = _calcularDados();
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
 
     // Cabeçalho
     doc.setFillColor(10, 11, 13);
@@ -1221,7 +1224,7 @@ function exportPDF() {
     doc.setFont('helvetica', 'normal');
     doc.text(`Período: ${_relFiltros.dataInicio} a ${_relFiltros.dataFim} · Gerado em ${new Date().toLocaleString('pt-BR')}`, 14, 19);
 
-    // KPIs em caixinhas
+    // KPIs
     const kpis = [
       { label: 'Produção Total', val: _fmtNum(dados.totalRealizado) + ' cx' },
       { label: 'Programado',     val: _fmtNum(dados.totalProgramado) + ' cx' },
@@ -1229,11 +1232,10 @@ function exportPDF() {
       { label: 'Ocupação',       val: dados.pctOcupado + '%' },
       { label: 'Ocioso',         val: dados.pctOcioso + '%' },
     ];
-    const kpiW = 50; const kpiH = 16;
     kpis.forEach((k, i) => {
-      const x = 14 + i * (kpiW + 4);
+      const x = 14 + i * 54;
       doc.setFillColor(21, 23, 28);
-      doc.roundedRect(x, 24, kpiW, kpiH, 2, 2, 'F');
+      doc.roundedRect(x, 24, 50, 16, 2, 2, 'F');
       doc.setTextColor(140, 144, 153);
       doc.setFontSize(7); doc.setFont('helvetica', 'normal');
       doc.text(k.label.toUpperCase(), x + 3, 29);
@@ -1242,13 +1244,12 @@ function exportPDF() {
       doc.text(k.val, x + 3, 37);
     });
 
-    // Tabela
+    // Tabela por máquina
     const tableData = dados.tabelaRows.map(r => [
       r.maquina, r.produto || '—',
       _fmtNum(r.programado), _fmtNum(r.realizado),
       r.eficiencia + '%', r.setup > 0 ? r.setup + ' min' : '—', r.pctOcioso + '%'
     ]);
-
     doc.autoTable({
       head: [['Máquina', 'Produto', 'Programado', 'Realizado', 'Eficiência', 'Setup', 'Ocioso']],
       body: tableData,
@@ -1256,10 +1257,7 @@ function exportPDF() {
       styles: { fontSize: 9, cellPadding: 3, fillColor: [21,23,28], textColor: [180,184,192] },
       headStyles: { fillColor: [242,101,34], textColor: 255, fontStyle: 'bold', fontSize: 9 },
       alternateRowStyles: { fillColor: [24,26,30] },
-      columnStyles: {
-        0: { fontStyle: 'bold', textColor: [242,101,34] },
-        4: { halign: 'center' }, 5: { halign: 'center' }, 6: { halign: 'center' }
-      },
+      columnStyles: { 0: { fontStyle: 'bold', textColor: [242,101,34] }, 4: { halign: 'center' }, 5: { halign: 'center' }, 6: { halign: 'center' } },
       margin: { left: 14, right: 14 }
     });
 
@@ -1268,24 +1266,25 @@ function exportPDF() {
     _toast('Relatório PDF exportado!', 'ok');
   } catch(e) {
     _toast('Erro ao exportar PDF: ' + e.message, 'err');
+    console.error('[exportPDF]', e);
   }
 }
 
 async function exportImagem() {
   if (typeof window.can === 'function' && !window.can('relatorios', 'visualizar')) {
-    _toast('Acesso negado: sem permissão para exportar relatórios.', 'err');
+    _toast('Acesso negado: sem permissão para exportar.', 'err');
     return;
   }
   try {
-  // Sincronizar filtros do DOM antes de exportar
-  _relFiltros.dataInicio = document.getElementById('rel2-data-inicio')?.value || '';
+      _relFiltros.dataInicio = document.getElementById('rel2-data-inicio')?.value || '';
   _relFiltros.dataFim    = document.getElementById('rel2-data-fim')?.value    || '';
   _relFiltros.maquina    = document.getElementById('rel2-maquina')?.value     || '';
   _relFiltros.produto    = document.getElementById('rel2-produto')?.value     || '';
   _relFiltros.categoria  = document.getElementById('rel2-categoria')?.value   || '';
-  _dadosCache = null; // forçar recálculo com filtros atuais
-    if (!el) return;
-    _toast('Gerando imagem...', 'info');
+  _dadosCache = null;
+    const el = document.getElementById('rel2-root');
+    if (!el) { _toast('Painel de relatórios não encontrado.', 'err'); return; }
+    _toast('Gerando imagem...', 'ok');
     const canvas = await html2canvas(el, {
       backgroundColor: '#0a0b0d',
       scale: 1.5,
@@ -1300,6 +1299,7 @@ async function exportImagem() {
     _toast('Imagem exportada!', 'ok');
   } catch(e) {
     _toast('Erro ao exportar imagem: ' + e.message, 'err');
+    console.error('[exportImagem]', e);
   }
 }
 
