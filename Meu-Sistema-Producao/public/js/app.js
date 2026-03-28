@@ -464,6 +464,7 @@ async function dbDel(id) {
 // ===== DADOS =====
 // Array de produtos: populado do Firestore via carregarProdutosFirestore()
 let PRODUTOS = [];
+window.PRODUTOS = PRODUTOS;
 // Ficha técnica: populada do Firestore ou importação Excel
 let FICHA_TECNICA = [];
 // Flag de cache independente para ficha técnica
@@ -477,6 +478,7 @@ let MAQUINAS = [];
 // Populado por carregarSetupFirestore(). Fallback: SETUP_DATA estático abaixo.
 let SETUP_FIRESTORE = {};
 let CATEGORIAS = [];
+window.CATEGORIAS = CATEGORIAS;
 
 // ===================================================================
 // ===== CAMADA DE CACHE — evita leituras repetidas ao Firestore =====
@@ -7857,6 +7859,7 @@ function normalizeProdutoFirestore(data) {
     tipoMinimo:          data.tipoMinimo          || '',
     prioridadeProducao:  parseInt(data.prioridadeProducao) || 2,
     produtoAtivo:        data.produtoAtivo !== false,  // default true
+    alergenico:          data.alergenico === true,
     _id:                 data._id || null
   };
 }
@@ -7869,8 +7872,11 @@ async function carregarProdutosFirestore() {
       PRODUTOS = snap.docs
         .map(d => normalizeProdutoFirestore({ ...d.data(), _id: d.id }))
         .filter(p => p.descricao);
+      window.PRODUTOS = PRODUTOS;
       console.log('[PRODUTOS] Carregados do Firestore:', PRODUTOS.length);
     } else {
+      PRODUTOS = [];
+      window.PRODUTOS = PRODUTOS;
       console.log('[PRODUTOS] Nenhum produto no Firestore. Use Configurações → Produtos para importar.');
     }
   } catch(e) {
@@ -7927,6 +7933,7 @@ async function salvarProdutoFirestore(dados) {
     tipoMinimo:         dados.tipoMinimo          || '',
     prioridadeProducao: parseInt(dados.prioridadeProducao) || 2,
     produtoAtivo:       dados.produtoAtivo !== false,
+    alergenico:         dados.alergenico === true,
     atualizadoEm: new Date().toISOString()
   };
   try {
@@ -8895,7 +8902,8 @@ async function importarArquivoPadrao(input) {
       if (maquinasEntries.length > 0) await limparCol('maquinas');
 
       // Limpar memória
-      if (Array.isArray(window.PRODUTOS)) window.PRODUTOS.splice(0, window.PRODUTOS.length);
+      PRODUTOS.splice(0, PRODUTOS.length);
+      window.PRODUTOS = PRODUTOS;
       if (typeof PRODUTOS_EXTRA !== 'undefined' && Array.isArray(PRODUTOS_EXTRA)) { PRODUTOS_EXTRA.splice(0, PRODUTOS_EXTRA.length); localStorage.removeItem('cfg_produtos'); }
       if (typeof fichaTecnicaData !== 'undefined' && Array.isArray(fichaTecnicaData)) fichaTecnicaData.splice(0, fichaTecnicaData.length);
       if (typeof FICHA_TECNICA !== 'undefined' && Array.isArray(FICHA_TECNICA)) FICHA_TECNICA.splice(0, FICHA_TECNICA.length);
@@ -15058,7 +15066,8 @@ async function confirmarExclusaoEmMassa() {
     if (delProdutos) {
       setStatus('Excluindo produtos...');
       total += await limparColecao('produtos');
-      if (Array.isArray(window.PRODUTOS)) window.PRODUTOS.splice(0, window.PRODUTOS.length);
+      PRODUTOS.splice(0, PRODUTOS.length);
+      window.PRODUTOS = PRODUTOS;
       if (typeof PRODUTOS_EXTRA !== 'undefined' && Array.isArray(PRODUTOS_EXTRA)) {
         PRODUTOS_EXTRA.splice(0, PRODUTOS_EXTRA.length);
         localStorage.removeItem('cfg_produtos');
@@ -15086,6 +15095,9 @@ async function confirmarExclusaoEmMassa() {
 
     setStatus('Atualizando tela...');
     invalidateCache('produtos', 'maquinas');
+    // Força limpeza da ficha técnica em memória
+    if (typeof fichaTecnicaData !== 'undefined' && Array.isArray(fichaTecnicaData)) fichaTecnicaData.splice(0, fichaTecnicaData.length);
+    if (typeof FICHA_TECNICA !== 'undefined' && Array.isArray(FICHA_TECNICA)) FICHA_TECNICA.splice(0, FICHA_TECNICA.length);
     if (typeof renderProdutosCfg === 'function') renderProdutosCfg();
     if (typeof renderCadastroMaquinas === 'function') renderCadastroMaquinas();
     if (typeof renderFichaTecnicaCfg === 'function') renderFichaTecnicaCfg();
