@@ -1745,7 +1745,8 @@ function grpExport() {
 window.grpRender    = grpRender;
 window.grpSwitchTab = grpSwitchTab;
 window.grpClear     = grpClear;
-window.grpExport    = grpExport;
+window.grpExport     = grpExport;
+window.grpExportXLSX = grpExport; // alias usado em index.html
 
 // Expor globalmente
 window.relatorios = relatorios;
