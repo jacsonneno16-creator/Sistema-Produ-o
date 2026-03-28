@@ -570,10 +570,11 @@ async function carregarCategoriasFirestore() {
   }
 }
 
-function preencherSelectCategorias(selectId, valorAtual = '') {
+function preencherSelectCategorias(selectId, valorAtual) {
   const el = document.getElementById(selectId);
   if (!el) return;
-  const atual = valorAtual || el.value || '';
+  // Captura o valor ANTES de resetar o innerHTML (innerHTML = '' limpa el.value)
+  const atual = (valorAtual !== undefined && valorAtual !== null) ? valorAtual : el.value || '';
   el.innerHTML = '<option value="">Selecione</option>';
   (CATEGORIAS || []).filter(c => c.ativo !== false).forEach(c => {
     const opt = document.createElement('option');
@@ -611,8 +612,8 @@ async function saveCategoriaCfg() {
     invalidateCache('categorias');
     await carregarCategoriasCached(true);
     renderCategoriasCfg();
-    preencherSelectCategorias('maq-categoria-inp');
-    preencherSelectCategorias('prod-categoria-inp');
+    preencherSelectCategorias('maq-categoria-inp', document.getElementById('maq-categoria-inp')?.value || '');
+    preencherSelectCategorias('prod-categoria-inp', document.getElementById('prod-categoria-inp')?.value || '');
     resetCategoriaForm();
     toast(editId ? 'Categoria atualizada com sucesso' : 'Categoria salva com sucesso', 'ok');
   } catch(e) { toast('Erro ao salvar categoria: ' + e.message, 'err'); }
@@ -639,8 +640,8 @@ async function excluirCategoriaCfg(id) {
     invalidateCache('categorias');
     await carregarCategoriasCached(true);
     renderCategoriasCfg();
-    preencherSelectCategorias('maq-categoria-inp');
-    preencherSelectCategorias('prod-categoria-inp');
+    preencherSelectCategorias('maq-categoria-inp', document.getElementById('maq-categoria-inp')?.value || '');
+    preencherSelectCategorias('prod-categoria-inp', document.getElementById('prod-categoria-inp')?.value || '');
     toast('Categoria excluída', 'ok');
   } catch(e) { toast('Erro ao excluir categoria: ' + e.message, 'err'); }
 }
@@ -7456,7 +7457,6 @@ function openAddMaquina() {
   document.getElementById('maq-pcturno-inp').value = '';
   document.getElementById('maq-pcdia-inp').value = '';
   switchMaqTab('dados');
-  carregarCategoriasCached().then(()=>preencherSelectCategorias('maq-categoria-inp',''));
   populateMaqProdSel();
   renderMaqProdsLista();
   document.getElementById('maq-modal').style.display = 'flex';
@@ -8161,7 +8161,6 @@ function editarProduto(cod, maquina, descricao) {
   }
 
   // Mudar título do modal
-  carregarCategoriasCached().then(()=>preencherSelectCategorias('prod-categoria-inp',''));
   const titleEl = document.getElementById('prod-modal-title') || document.getElementById('maq-modal-title');
   if (titleEl) titleEl.textContent = 'Editar Produto';
 
@@ -8487,14 +8486,9 @@ async function importProdutosExcel(input) {
         const pcmin = parseFloat(row['pc_min'] || row['velocidadePadrao'] || row['PcMin'] || row['PC_MIN'] || 0);
         const unid = parseInt(row['unid'] || row['Unid'] || row['UNID'] || 0);
         const categoria = (row['categoria'] || row['Categoria'] || '').toString().trim();
-        const classificacao = (row['classificacao'] || row['Classificacao'] || row['Classificação'] || '').toString().trim();
+
         const coberturaDias = parseInt(row['coberturaDias'] || row['CobDias'] || 0);
-        const estoqueMinimo = parseFloat(row['estoqueMinimo'] || row['EstMin'] || 0);
-        const graoVal = String(row['grao'] || row['grão'] || row['Grao'] || row['Grão'] || 'NÃO').trim().toUpperCase();
-        const grao = graoVal === 'SIM' || graoVal === 'S' || graoVal === '1' || graoVal === 'TRUE';
-        const alergVal = String(row['alergênico'] || row['alergenico'] || row['Alergênico'] || row['Alergenico'] || 'NÃO').trim().toUpperCase();
-        const alergenico = alergVal === 'SIM' || alergVal === 'S' || alergVal === '1' || alergVal === 'TRUE';
-        
+        const estoqueMinimo = parseFloat(row['producaoMinima'] || row['estoqueMinimo'] || row['EstMin'] || 0);
         if (!cod || !desc || !unid || !maq) { erros++; return; }
         
         const maqUpper = maq.toUpperCase();
@@ -8507,8 +8501,8 @@ async function importProdutosExcel(input) {
         }
         
         maquinasMap.get(maqUpper).produtos.push({
-          cod, descricao: desc, unid, pc_min: pcmin, maquina: maq, 
-          categoria, classificacao, coberturaDias, estoqueMinimo, grao, alergenico, ativo: true
+          cod, descricao: desc, unid, pc_min: pcmin, maquina: maqUpper,
+          categoria, coberturaDias, producaoMinima: estoqueMinimo, ativo: true
         });
         
         if (pcmin > 0) {
@@ -8551,10 +8545,13 @@ async function importProdutosExcel(input) {
         };
         
         if (maquinasExistentes.has(nomeMaq)) {
-          // Atualizar máquina existente
+          // Atualizar máquina existente — preserva campos já configurados (categoria, hTurno, etc)
           const existing = maquinasExistentes.get(nomeMaq);
           await setDoc(lojaDoc('maquinas', existing.id), {
-            ...maqData,
+            ...existing.data,
+            produtosCompativeis: produtosCompativeis,
+            pcMin: velMedia || existing.data.pcMin || 0,
+            atualizadoEm: new Date().toISOString(),
             criadoEm: existing.data.criadoEm || new Date().toISOString()
           });
           updatedMaqs++;
@@ -8578,15 +8575,12 @@ async function importProdutosExcel(input) {
           if (existente) {
             // Verificar se algum campo relevante mudou
             const mudou =
-              existente.descricao   !== produto.descricao   ||
-              existente.unid        !== produto.unid         ||
-              existente.pc_min      !== produto.pc_min       ||
-              existente.categoria   !== (produto.categoria || '') ||
-              (existente.classificacao || '') !== (produto.classificacao || '') ||
-              (existente.coberturaDias  || 0) !== (produto.coberturaDias || 0) ||
-              (existente.estoqueMinimo  || 0) !== (produto.estoqueMinimo || 0) ||
-              (!!existente.grao) !== (!!produto.grao) ||
-              (!!existente.alergenico) !== (!!produto.alergenico);
+              (existente.descricao   || '') !== (produto.descricao   || '') ||
+              (existente.unid        || 0)  !== (produto.unid        || 0)  ||
+              (existente.pc_min      || 0)  !== (produto.pc_min      || 0)  ||
+              (existente.categoria   || '') !== (produto.categoria   || '') ||
+              (existente.coberturaDias  || 0) !== (produto.coberturaDias  || 0) ||
+              (existente.producaoMinima || 0) !== (produto.producaoMinima || 0);
 
             if (mudou) {
               // Preservar campos que não vêm na importação
@@ -8629,11 +8623,11 @@ async function importProdutosExcel(input) {
 function downloadProdTemplate(e) {
   e.preventDefault();
   const ws = XLSX.utils.aoa_to_sheet([
-    ['cod','descricao','maquina','pc_min','unid','categoria','classificacao','coberturaDias','estoqueMinimo','grao','alergênico'],
-    [12345,'POLVILHO AZEDO 500G - CX 12','SELGRON 01',46.75,12,'ESPECIARIA','PÓ',15,100,'NÃO','SIM'],
-    [12346,'COCO RALADO 100G - CX 24','SELGRON 01',52.30,24,'ESPECIARIA','RALADOS',10,50,'NÃO','NÃO'],
-    [12347,'FARINHA MILHO 1KG - CX 10','ALFATECK 14',28.05,10,'FARINHA','FARINÁCEOS',20,75,'SIM','NÃO'],
-    [12348,'BICARBONATO 250G - CX 20','ALFATECK 14',31.80,20,'ESPECIARIA','PÓ',12,40,'NÃO','NÃO']
+    ['cod','descricao','maquina','pc_min','unid','categoria','coberturaDias','producaoMinima'],
+    [12345,'POLVILHO AZEDO 500G - CX 12','SELGRON 01',46.75,12,'ESPECIARIA',15,100],
+    [12346,'COCO RALADO 100G - CX 24','SELGRON 01',52.30,24,'ESPECIARIA',10,50],
+    [12347,'FARINHA MILHO 1KG - CX 10','ALFATECK 14',28.05,10,'FARINHA',20,75],
+    [12348,'BICARBONATO 250G - CX 20','ALFATECK 14',31.80,20,'ESPECIARIA',12,40]
   ]);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Produtos');
@@ -8683,23 +8677,21 @@ async function _baixarTemplateCompleto() {
 
     // ── Aba Produtos ──────────────────────────────────────────────
     const produtos = getAllProdutos ? getAllProdutos() : (window.PRODUTOS || []);
-    const hdrProd = ['cod','descricao','unid','pc_min','maquina','categoria','classificacao','coberturaDias','estoqueMinimo','grao','alergênico','status'];
+    const hdrProd = ['cod','descricao','unid','pc_min','maquina','categoria','coberturaDias','producaoMinima','status'];
     const rowsProd = produtos.map(p => [
       p.cod, p.descricao, p.unid, p.pc_min, p.maquina,
-      p.categoria || '', p.classificacao || '',
+      p.categoria || '',
       p.metaCoberturaDias || p.coberturaDias || 0,
-      p.producaoMinima || p.estoqueMinimo || 0,
-      p.grao ? 'SIM' : 'NÃO',
-      p.alergenico ? 'SIM' : 'NÃO',
+      p.producaoMinima || 0,
       p.produtoAtivo !== false ? 'ATIVO' : 'DESATIVADO'
     ]);
     const wsProd = XLSX.utils.aoa_to_sheet([
       ...cabecalho('PRODUTOS — Base Máquina x Tempo',
-        'Preencha cod, descricao, unid, pc_min e maquina. grao e alergênico: SIM ou NÃO. Status: ATIVO ou DESATIVADO.',
+        'Preencha cod, descricao, unid, pc_min e maquina. Status: ATIVO ou DESATIVADO.',
         hdrProd),
       ...rowsProd
     ]);
-    wsProd['!cols'] = [{wch:10},{wch:62},{wch:10},{wch:12},{wch:26},{wch:14},{wch:16},{wch:14},{wch:14},{wch:8},{wch:12},{wch:12}];
+    wsProd['!cols'] = [{wch:10},{wch:62},{wch:10},{wch:12},{wch:26},{wch:14},{wch:14},{wch:14},{wch:12}];
 
     // ── Aba Insumos ───────────────────────────────────────────────
     const fichas = (typeof fichaTecnicaData !== 'undefined' ? fichaTecnicaData : null) || (typeof FICHA_TECNICA !== 'undefined' ? FICHA_TECNICA : []);
