@@ -8486,9 +8486,11 @@ async function importProdutosExcel(input) {
         const pcmin = parseFloat(row['pc_min'] || row['velocidadePadrao'] || row['PcMin'] || row['PC_MIN'] || 0);
         const unid = parseInt(row['unid'] || row['Unid'] || row['UNID'] || 0);
         const categoria = (row['categoria'] || row['Categoria'] || '').toString().trim();
-
         const coberturaDias = parseInt(row['coberturaDias'] || row['CobDias'] || 0);
-        const estoqueMinimo = parseFloat(row['producaoMinima'] || row['estoqueMinimo'] || row['EstMin'] || 0);
+        const producaoMinima = parseFloat(row['producaoMinima'] || row['estoqueMinimo'] || row['EstMin'] || 0);
+        const statusVal = (row['status'] || row['Status'] || row['STATUS'] || 'ATIVO').toString().trim().toUpperCase();
+        const produtoAtivo = statusVal !== 'DESATIVADO' && statusVal !== 'INATIVO' && statusVal !== 'NAO' && statusVal !== 'NÃO';
+
         if (!cod || !desc || !unid || !maq) { erros++; return; }
         
         const maqUpper = maq.toUpperCase();
@@ -8502,7 +8504,7 @@ async function importProdutosExcel(input) {
         
         maquinasMap.get(maqUpper).produtos.push({
           cod, descricao: desc, unid, pc_min: pcmin, maquina: maqUpper,
-          categoria, coberturaDias, producaoMinima: estoqueMinimo, ativo: true
+          categoria, coberturaDias, producaoMinima, produtoAtivo, ativo: produtoAtivo
         });
         
         if (pcmin > 0) {
@@ -8511,8 +8513,9 @@ async function importProdutosExcel(input) {
       });
       
       // Segunda passa: criar/atualizar máquinas com produtos vinculados
-      // Usar cache MAQUINAS_DATA em vez de nova leitura ao Firestore
-      await carregarMaquinasCached(); // garante que o cache está populado
+      // Garantir que ambos os caches estão populados antes de comparar
+      await carregarMaquinasCached();
+      await carregarProdutosCached();
       const maquinasExistentes = new Map();
       Object.values(window.MAQUINAS_DATA || {}).forEach(d => {
         if (d.nome) maquinasExistentes.set(d.nome.toUpperCase(), { id: d._id, data: d });
@@ -8573,27 +8576,15 @@ async function importProdutosExcel(input) {
           );
 
           if (existente) {
-            // Verificar se algum campo relevante mudou
-            const mudou =
-              (existente.descricao   || '') !== (produto.descricao   || '') ||
-              (existente.unid        || 0)  !== (produto.unid        || 0)  ||
-              (existente.pc_min      || 0)  !== (produto.pc_min      || 0)  ||
-              (existente.categoria   || '') !== (produto.categoria   || '') ||
-              (existente.coberturaDias  || 0) !== (produto.coberturaDias  || 0) ||
-              (existente.producaoMinima || 0) !== (produto.producaoMinima || 0);
-
-            if (mudou) {
-              // Preservar campos que não vêm na importação
-              const produtoAtualizado = {
-                ...existente,
-                ...produto,
-                _id: existente._id, // manter o _id do Firestore
-                produtoAtivo: existente.produtoAtivo !== false // manter status ativo
-              };
-              await salvarProdutoFirestore(produtoAtualizado);
-              addedProds++; // conta como atualizado
-            }
-            // se igual, não faz nada
+            // Sempre atualiza — o usuário importou explicitamente para aplicar mudanças
+            const produtoAtualizado = {
+              ...existente,
+              ...produto,
+              _id: existente._id,           // manter o _id do Firestore
+              produtoAtivo: produto.produtoAtivo // usar status que veio do Excel
+            };
+            await salvarProdutoFirestore(produtoAtualizado);
+            addedProds++;
           } else {
             // Produto novo: criar
             await salvarProdutoFirestore(produto);
@@ -8604,7 +8595,7 @@ async function importProdutosExcel(input) {
       
       invalidateCache('maquinas', 'produtos');
       await carregarMaquinasCached(true);
-      await carregarProdutosCached(true);
+      await carregarProdutosCached(true); // reload final para refletir tudo no UI
       renderProdutosCfg();
       renderCadastroMaquinas();
       
@@ -8623,11 +8614,11 @@ async function importProdutosExcel(input) {
 function downloadProdTemplate(e) {
   e.preventDefault();
   const ws = XLSX.utils.aoa_to_sheet([
-    ['cod','descricao','maquina','pc_min','unid','categoria','coberturaDias','producaoMinima'],
-    [12345,'POLVILHO AZEDO 500G - CX 12','SELGRON 01',46.75,12,'ESPECIARIA',15,100],
-    [12346,'COCO RALADO 100G - CX 24','SELGRON 01',52.30,24,'ESPECIARIA',10,50],
-    [12347,'FARINHA MILHO 1KG - CX 10','ALFATECK 14',28.05,10,'FARINHA',20,75],
-    [12348,'BICARBONATO 250G - CX 20','ALFATECK 14',31.80,20,'ESPECIARIA',12,40]
+    ['cod','descricao','maquina','pc_min','unid','categoria','coberturaDias','producaoMinima','status'],
+    [12345,'POLVILHO AZEDO 500G - CX 12','SELGRON 01',46.75,12,'ESPECIARIA',15,100,'ATIVO'],
+    [12346,'COCO RALADO 100G - CX 24','SELGRON 01',52.30,24,'ESPECIARIA',10,50,'ATIVO'],
+    [12347,'FARINHA MILHO 1KG - CX 10','ALFATECK 14',28.05,10,'FARINHA',20,75,'ATIVO'],
+    [12348,'BICARBONATO 250G - CX 20','ALFATECK 14',31.80,20,'ESPECIARIA',12,40,'DESATIVADO']
   ]);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Produtos');
