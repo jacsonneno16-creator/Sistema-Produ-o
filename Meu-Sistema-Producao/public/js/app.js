@@ -16241,3 +16241,556 @@ async function importarProgramacaoExcel(file) {
 window.importarProgramacaoExcel    = importarProgramacaoExcel;
 window.importarProgramacaoTemplate = importarProgramacaoTemplate;
 
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PROCESSOS PRODUTIVOS — Controle de etapas manuais na aba Realizados
+// ═══════════════════════════════════════════════════════════════════════════
+
+let _processosCache = [];
+let _processoEditId = null;
+let _realizadoSubTabAtiva = 'apontamentos';
+
+const TIPOS_PROCESSO = [
+  { id: 'mistura',      label: 'Mistura',       icon: '🥣', cor: '#4ecdc4' },
+  { id: 'descanso',     label: 'Descanso',      icon: '⏸️', cor: '#a29bfe' },
+  { id: 'envase',       label: 'Envase',        icon: '🫙', cor: '#fd79a8' },
+  { id: 'etiquetagem',  label: 'Etiquetagem',   icon: '🏷️', cor: '#fdcb6e' },
+  { id: 'embalagem',    label: 'Embalagem',     icon: '📦', cor: '#e17055' },
+  { id: 'pesagem',      label: 'Pesagem',       icon: '⚖️', cor: '#00b894' },
+  { id: 'limpeza',      label: 'Limpeza',       icon: '🧹', cor: '#74b9ff' },
+  { id: 'inspecao',     label: 'Inspeção',      icon: '🔍', cor: '#55efc4' },
+  { id: 'outro',        label: 'Outro',         icon: '⚙️', cor: '#b2bec3' },
+];
+
+function getTipoProcesso(id) {
+  return TIPOS_PROCESSO.find(t => t.id === id) || TIPOS_PROCESSO[TIPOS_PROCESSO.length - 1];
+}
+
+// ── Sub-tab switcher ──────────────────────────────────────────────────────
+function realizadoSubTab(aba) {
+  _realizadoSubTabAtiva = aba;
+  const pApon = document.getElementById('real-panel-apontamentos');
+  const pProc = document.getElementById('real-panel-processos');
+  const btnA  = document.getElementById('real-subtab-apontamentos');
+  const btnP  = document.getElementById('real-subtab-processos');
+  if (!pApon || !pProc) return;
+
+  if (aba === 'apontamentos') {
+    pApon.style.display = '';
+    pProc.style.display = 'none';
+    btnA.style.borderBottomColor = 'var(--cyan)';
+    btnA.style.color = 'var(--cyan)';
+    btnP.style.borderBottomColor = 'transparent';
+    btnP.style.color = 'var(--text3)';
+  } else {
+    pApon.style.display = 'none';
+    pProc.style.display = '';
+    btnP.style.borderBottomColor = 'var(--cyan)';
+    btnP.style.color = 'var(--cyan)';
+    btnA.style.borderBottomColor = 'transparent';
+    btnA.style.color = 'var(--text3)';
+    renderProcessos();
+  }
+}
+
+// ── Firestore helpers ─────────────────────────────────────────────────────
+async function _salvarProcesso(dados) {
+  const payload = {
+    ...dados,
+    atualizadoEm: new Date().toISOString()
+  };
+  if (payload._id) {
+    const id = payload._id;
+    delete payload._id;
+    await setDoc(lojaDoc('processos_produtivos', id), payload);
+    return id;
+  } else {
+    payload.criadoEm = new Date().toISOString();
+    const ref = await addDoc(lojaCol('processos_produtivos'), payload);
+    return ref.id;
+  }
+}
+
+async function _carregarProcessos(filtroData) {
+  try {
+    let q;
+    if (filtroData) {
+      q = query(lojaCol('processos_produtivos'),
+        where('data', '==', filtroData),
+        orderBy('criadoEm', 'desc'));
+    } else {
+      q = query(lojaCol('processos_produtivos'), orderBy('criadoEm', 'desc'));
+    }
+    const snap = await getDocs(q);
+    _processosCache = snap.docs.map(d => ({ ...d.data(), _id: d.id }));
+    return _processosCache;
+  } catch(e) {
+    // fallback sem orderBy se índice não existir
+    try {
+      let q2;
+      if (filtroData) {
+        q2 = query(lojaCol('processos_produtivos'), where('data', '==', filtroData));
+      } else {
+        q2 = lojaCol('processos_produtivos');
+      }
+      const snap2 = await getDocs(q2);
+      _processosCache = snap2.docs.map(d => ({ ...d.data(), _id: d.id }))
+        .sort((a,b) => (b.criadoEm||'').localeCompare(a.criadoEm||''));
+      return _processosCache;
+    } catch(e2) {
+      console.warn('[processos] erro ao carregar:', e2.message);
+      return [];
+    }
+  }
+}
+
+async function _excluirProcesso(id) {
+  await deleteDoc(lojaDoc('processos_produtivos', id));
+  _processosCache = _processosCache.filter(p => p._id !== id);
+}
+
+// ── Render principal ──────────────────────────────────────────────────────
+async function renderProcessos() {
+  const el = document.getElementById('processos-body');
+  if (!el) return;
+  el.innerHTML = '<div style="padding:30px;text-align:center;color:var(--text3);font-size:13px">Carregando processos...</div>';
+
+  const hoje = new Date().toISOString().slice(0,10);
+  const filtroData = (document.getElementById('proc-filtro-data') || {}).value || '';
+  const filtroTipo = (document.getElementById('proc-filtro-tipo') || {}).value || '';
+  const filtroBusca = ((document.getElementById('proc-busca') || {}).value || '').trim().toLowerCase();
+
+  await _carregarProcessos(filtroData || null);
+
+  let lista = [..._processosCache];
+  if (filtroTipo) lista = lista.filter(p => p.tipo === filtroTipo);
+  if (filtroBusca) lista = lista.filter(p =>
+    (p.nome||'').toLowerCase().includes(filtroBusca) ||
+    (p.produto||'').toLowerCase().includes(filtroBusca)
+  );
+
+  // Calcular totais por funcionário
+  const totaisFuncs = {};
+  lista.forEach(p => {
+    (p.funcionarios||[]).forEach(f => {
+      if (!f.nome) return;
+      if (!totaisFuncs[f.nome]) totaisFuncs[f.nome] = 0;
+      const mins = f.tempoMin || p.tempoMinutos || 0;
+      totaisFuncs[f.nome] += mins;
+    });
+  });
+
+  el.innerHTML = `
+  <!-- TOOLBAR -->
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;flex-wrap:wrap;gap:10px">
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+      <input type="date" id="proc-filtro-data" value="${filtroData}"
+        oninput="renderProcessos()"
+        style="font-size:12px;padding:6px 10px;background:var(--s1);border:1px solid var(--border);border-radius:7px;color:var(--text)">
+      <select id="proc-filtro-tipo" onchange="renderProcessos()"
+        style="font-size:12px;padding:6px 10px;background:var(--s1);border:1px solid var(--border);border-radius:7px;color:var(--text);min-width:150px">
+        <option value="">Todos os tipos</option>
+        ${TIPOS_PROCESSO.map(t=>`<option value="${t.id}" ${filtroTipo===t.id?'selected':''}>${t.icon} ${t.label}</option>`).join('')}
+      </select>
+      <input type="text" id="proc-busca" placeholder="🔍 Buscar processo ou produto..." value="${filtroBusca}"
+        oninput="renderProcessos()"
+        style="font-size:12px;padding:6px 12px;background:var(--s1);border:1px solid var(--border);border-radius:7px;color:var(--text);min-width:220px">
+      ${(filtroData||filtroTipo||filtroBusca)?`<button onclick="procLimparFiltros()" style="background:none;border:1px solid var(--border);color:var(--text3);border-radius:6px;padding:4px 10px;font-size:11px;cursor:pointer">✕ Limpar</button>`:''}
+    </div>
+    <button onclick="abrirModalProcesso()"
+      style="background:var(--cyan);color:#000;border:none;border-radius:8px;padding:9px 18px;font-size:13px;font-weight:700;font-family:'Space Grotesk',sans-serif;cursor:pointer;display:flex;align-items:center;gap:6px">
+      ＋ Novo Processo
+    </button>
+  </div>
+
+  ${Object.keys(totaisFuncs).length ? `
+  <!-- CARGA DE TRABALHO DOS FUNCIONÁRIOS -->
+  <div style="background:var(--s1);border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-bottom:18px">
+    <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--text3);margin-bottom:10px;font-family:'JetBrains Mono',monospace">👷 Carga de Trabalho${filtroData?' — '+_fmtDataBR(filtroData):''}</div>
+    <div style="display:flex;flex-wrap:wrap;gap:8px">
+      ${Object.entries(totaisFuncs).map(([nome, mins]) => {
+        const horas = Math.floor(mins/60);
+        const minRest = mins % 60;
+        const label = horas > 0 ? `${horas}h${minRest>0?minRest+'min':''}` : `${minRest}min`;
+        const pct = Math.min(100, Math.round((mins/480)*100));
+        const cor = pct>100?'var(--red)':pct>75?'var(--warn)':'var(--cyan)';
+        return `<div style="background:var(--s2);border:1px solid var(--border);border-radius:8px;padding:8px 12px;min-width:140px">
+          <div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:4px">${nome}</div>
+          <div style="font-size:11px;color:${cor};font-family:'JetBrains Mono',monospace;font-weight:700">${label}</div>
+          <div style="height:3px;background:var(--border);border-radius:2px;margin-top:5px">
+            <div style="height:3px;width:${pct}%;background:${cor};border-radius:2px;transition:width .3s"></div>
+          </div>
+        </div>`;
+      }).join('')}
+    </div>
+  </div>` : ''}
+
+  <!-- LISTA DE PROCESSOS -->
+  ${lista.length === 0 ? `
+  <div style="text-align:center;padding:50px 20px;color:var(--text3)">
+    <div style="font-size:36px;margin-bottom:10px">⚙️</div>
+    <div style="font-size:14px;font-weight:600;color:var(--text2);margin-bottom:6px">Nenhum processo encontrado</div>
+    <div style="font-size:12px">Clique em <strong>＋ Novo Processo</strong> para registrar uma etapa produtiva</div>
+  </div>` : `
+  <div style="display:flex;flex-direction:column;gap:10px">
+    ${lista.map(p => _renderCardProcesso(p)).join('')}
+  </div>`}
+  `;
+}
+
+function _fmtDataBR(dateStr) {
+  if (!dateStr) return '';
+  const [y,m,d] = dateStr.split('-');
+  return `${d}/${m}/${y}`;
+}
+
+function _renderCardProcesso(p) {
+  const tipo = getTipoProcesso(p.tipo);
+  const tempoLabel = p.diaInteiro ? 'Dia inteiro' : _fmtTempo(p.tempoMinutos);
+  const funcs = p.funcionarios || [];
+  const status = p.status || 'finalizado';
+  const statusCor = status === 'em_andamento' ? 'var(--warn)' : 'var(--green)';
+  const statusLabel = status === 'em_andamento' ? 'Em andamento' : 'Finalizado';
+
+  return `
+  <div style="background:var(--s1);border:1px solid var(--border);border-left:3px solid ${tipo.cor};border-radius:10px;padding:14px 16px;transition:border-color .15s"
+    onmouseover="this.style.borderColor='${tipo.cor}'" onmouseout="this.style.borderColor='var(--border)'; this.style.borderLeftColor='${tipo.cor}'">
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap">
+      <div style="flex:1;min-width:0">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">
+          <span style="font-size:18px">${tipo.icon}</span>
+          <span style="font-size:14px;font-weight:700;color:var(--text)">${p.nome || 'Sem nome'}</span>
+          <span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:${tipo.cor}22;color:${tipo.cor};border:1px solid ${tipo.cor}44">${tipo.label}</span>
+          <span style="font-size:10px;font-weight:600;padding:2px 8px;border-radius:10px;background:${statusCor}22;color:${statusCor};border:1px solid ${statusCor}44">${statusLabel}</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--text3)">
+          ${p.produto?`<span>📦 ${p.produto}</span>`:''}
+          <span>📅 ${_fmtDataBR(p.data)}</span>
+          <span>⏱️ ${tempoLabel}</span>
+          ${p.horaInicio&&p.horaFim?`<span>🕐 ${p.horaInicio} – ${p.horaFim}</span>`:''}
+          ${funcs.length?`<span>👷 ${funcs.length} funcionário${funcs.length>1?'s':''}</span>`:''}
+        </div>
+        ${funcs.length ? `
+        <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px">
+          ${funcs.map(f => {
+            const tempoF = f.tempoMin ? _fmtTempo(f.tempoMin) : tempoLabel;
+            return `<div style="background:var(--s2);border:1px solid var(--border);border-radius:20px;padding:3px 10px;font-size:11px;color:var(--text2);display:flex;align-items:center;gap:5px">
+              <span>👤</span><span>${f.nome}</span>${f.funcao?`<span style="color:var(--text4);font-size:10px">· ${f.funcao}</span>`:''}
+              <span style="color:var(--cyan);font-family:'JetBrains Mono',monospace;font-size:10px">${tempoF}</span>
+            </div>`;
+          }).join('')}
+        </div>` : ''}
+        ${p.obs?`<div style="margin-top:8px;font-size:11px;color:var(--text3);font-style:italic">💬 ${p.obs}</div>`:''}
+      </div>
+      <div style="display:flex;gap:6px;align-items:center;flex-shrink:0">
+        ${p.status==='em_andamento'?`<button onclick="procFinalizarProcesso('${p._id}')" title="Finalizar"
+          style="background:rgba(0,184,148,.12);border:1px solid var(--green);border-radius:6px;padding:4px 10px;font-size:11px;color:var(--green);cursor:pointer">✔ Finalizar</button>`:''}
+        <button onclick="abrirModalProcesso('${p._id}')" title="Editar"
+          style="background:none;border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:11px;color:var(--cyan);cursor:pointer">✏️</button>
+        <button onclick="procExcluir('${p._id}')" title="Excluir"
+          style="background:none;border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:11px;color:var(--red);cursor:pointer">🗑️</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+function _fmtTempo(minutos) {
+  if (!minutos) return '—';
+  const h = Math.floor(minutos / 60);
+  const m = minutos % 60;
+  if (h > 0 && m > 0) return `${h}h ${m}min`;
+  if (h > 0) return `${h}h`;
+  return `${m}min`;
+}
+
+function procLimparFiltros() {
+  const d = document.getElementById('proc-filtro-data');
+  const t = document.getElementById('proc-filtro-tipo');
+  const b = document.getElementById('proc-busca');
+  if (d) d.value = '';
+  if (t) t.value = '';
+  if (b) b.value = '';
+  renderProcessos();
+}
+
+async function procFinalizarProcesso(id) {
+  try {
+    await setDoc(lojaDoc('processos_produtivos', id), { status: 'finalizado', atualizadoEm: new Date().toISOString() }, { merge: true });
+    toast('Processo finalizado!', 'ok');
+    renderProcessos();
+  } catch(e) { toast('Erro: ' + e.message, 'err'); }
+}
+
+async function procExcluir(id) {
+  if (!confirm('Excluir este processo? Esta ação não pode ser desfeita.')) return;
+  try {
+    await _excluirProcesso(id);
+    toast('Processo excluído', 'ok');
+    renderProcessos();
+  } catch(e) { toast('Erro ao excluir: ' + e.message, 'err'); }
+}
+
+// ── Modal de cadastro/edição ──────────────────────────────────────────────
+let _procFuncRows = []; // funcionários no modal
+
+function abrirModalProcesso(id) {
+  const old = document.getElementById('modal-processo');
+  if (old) old.remove();
+
+  _processoEditId = id || null;
+  const proc = id ? (_processosCache.find(p => p._id === id) || {}) : {};
+
+  _procFuncRows = (proc.funcionarios || []).map(f => ({ ...f }));
+  if (!_procFuncRows.length) _procFuncRows = [{ nome: '', funcao: '', tempoMin: null }];
+
+  const hoje = new Date().toISOString().slice(0,10);
+  const todos = getAllProdutos ? getAllProdutos() : (window.PRODUTOS || []);
+  const prodOpts = [...new Set(todos.map(p => p.descricao).filter(Boolean))].sort()
+    .map(d => `<option value="${d.replace(/"/g,'&quot;')}" ${proc.produto===d?'selected':''}>${d}</option>`).join('');
+
+  const modal = document.createElement('div');
+  modal.id = 'modal-processo';
+  modal.style.cssText = 'position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.6);padding:16px';
+
+  modal.innerHTML = `
+  <div style="background:var(--s1);border:1px solid var(--border);border-radius:14px;width:560px;max-width:100%;max-height:90vh;overflow-y:auto;box-shadow:0 12px 50px rgba(0,0,0,.5)">
+    <div style="padding:16px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;background:var(--s1);z-index:1">
+      <div style="font-size:15px;font-weight:700;color:var(--text)">${id ? '✏️ Editar Processo' : '➕ Novo Processo'}</div>
+      <button onclick="document.getElementById('modal-processo').remove()" style="background:none;border:none;color:var(--text3);font-size:20px;cursor:pointer;line-height:1">×</button>
+    </div>
+
+    <div style="padding:20px;display:flex;flex-direction:column;gap:14px">
+
+      <!-- Linha 1: Nome + Tipo -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div>
+          <label style="font-size:11px;font-weight:600;color:var(--text3);display:block;margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Nome do Processo *</label>
+          <input id="proc-inp-nome" type="text" placeholder="Ex: Mistura de Coco" value="${proc.nome||''}"
+            style="width:100%;box-sizing:border-box;background:var(--bg);border:1px solid var(--border);border-radius:7px;padding:8px 10px;color:var(--text);font-size:13px">
+        </div>
+        <div>
+          <label style="font-size:11px;font-weight:600;color:var(--text3);display:block;margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Tipo de Processo</label>
+          <select id="proc-inp-tipo"
+            style="width:100%;box-sizing:border-box;background:var(--bg);border:1px solid var(--border);border-radius:7px;padding:8px 10px;color:var(--text);font-size:13px">
+            ${TIPOS_PROCESSO.map(t=>`<option value="${t.id}" ${(proc.tipo||'outro')===t.id?'selected':''}>${t.icon} ${t.label}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+
+      <!-- Linha 2: Produto + Data -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div>
+          <label style="font-size:11px;font-weight:600;color:var(--text3);display:block;margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Produto Vinculado</label>
+          <select id="proc-inp-produto"
+            style="width:100%;box-sizing:border-box;background:var(--bg);border:1px solid var(--border);border-radius:7px;padding:8px 10px;color:var(--text);font-size:13px">
+            <option value="">— Sem produto específico —</option>
+            ${prodOpts}
+          </select>
+        </div>
+        <div>
+          <label style="font-size:11px;font-weight:600;color:var(--text3);display:block;margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Data *</label>
+          <input id="proc-inp-data" type="date" value="${proc.data||hoje}"
+            style="width:100%;box-sizing:border-box;background:var(--bg);border:1px solid var(--border);border-radius:7px;padding:8px 10px;color:var(--text);font-size:13px">
+        </div>
+      </div>
+
+      <!-- Linha 3: Tempo -->
+      <div>
+        <label style="font-size:11px;font-weight:600;color:var(--text3);display:block;margin-bottom:6px;text-transform:uppercase;letter-spacing:.5px">Duração</label>
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;color:var(--text)">
+            <input type="radio" name="proc-tempo-tipo" value="horas" id="proc-tempo-horas" ${!proc.diaInteiro?'checked':''}
+              onchange="procToggleTempoCampos()"
+              style="accent-color:var(--cyan)"> Informar horas
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;color:var(--text)">
+            <input type="radio" name="proc-tempo-tipo" value="dia" id="proc-tempo-dia" ${proc.diaInteiro?'checked':''}
+              onchange="procToggleTempoCampos()"
+              style="accent-color:var(--cyan)"> Dia inteiro
+          </label>
+        </div>
+        <div id="proc-tempo-campos" style="margin-top:8px;display:flex;gap:10px;flex-wrap:wrap;${proc.diaInteiro?'display:none!important':''}">
+          <div>
+            <label style="font-size:10px;color:var(--text3);display:block;margin-bottom:3px">Horas</label>
+            <input id="proc-inp-horas" type="number" min="0" max="24" placeholder="0"
+              value="${proc.tempoMinutos?Math.floor(proc.tempoMinutos/60):''}"
+              style="width:80px;background:var(--bg);border:1px solid var(--border);border-radius:7px;padding:7px 10px;color:var(--text);font-size:13px">
+          </div>
+          <div>
+            <label style="font-size:10px;color:var(--text3);display:block;margin-bottom:3px">Minutos</label>
+            <input id="proc-inp-mins" type="number" min="0" max="59" placeholder="0"
+              value="${proc.tempoMinutos?proc.tempoMinutos%60:''}"
+              style="width:80px;background:var(--bg);border:1px solid var(--border);border-radius:7px;padding:7px 10px;color:var(--text);font-size:13px">
+          </div>
+        </div>
+      </div>
+
+      <!-- Linha 4: Hora início / fim -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div>
+          <label style="font-size:11px;font-weight:600;color:var(--text3);display:block;margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Hora Início (opcional)</label>
+          <input id="proc-inp-inicio" type="time" value="${proc.horaInicio||''}"
+            style="width:100%;box-sizing:border-box;background:var(--bg);border:1px solid var(--border);border-radius:7px;padding:8px 10px;color:var(--text);font-size:13px">
+        </div>
+        <div>
+          <label style="font-size:11px;font-weight:600;color:var(--text3);display:block;margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Hora Fim (opcional)</label>
+          <input id="proc-inp-fim" type="time" value="${proc.horaFim||''}"
+            style="width:100%;box-sizing:border-box;background:var(--bg);border:1px solid var(--border);border-radius:7px;padding:8px 10px;color:var(--text);font-size:13px">
+        </div>
+      </div>
+
+      <!-- Linha 5: Status -->
+      <div>
+        <label style="font-size:11px;font-weight:600;color:var(--text3);display:block;margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Status</label>
+        <select id="proc-inp-status"
+          style="width:100%;box-sizing:border-box;background:var(--bg);border:1px solid var(--border);border-radius:7px;padding:8px 10px;color:var(--text);font-size:13px">
+          <option value="em_andamento" ${(proc.status||'finalizado')==='em_andamento'?'selected':''}>⏳ Em andamento</option>
+          <option value="finalizado" ${(proc.status||'finalizado')==='finalizado'?'selected':''}>✅ Finalizado</option>
+        </select>
+      </div>
+
+      <!-- Linha 6: Funcionários -->
+      <div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+          <label style="font-size:11px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.5px">👷 Funcionários</label>
+          <button type="button" onclick="procAdicionarFuncRow()"
+            style="background:rgba(0,212,255,.1);border:1px solid rgba(0,212,255,.3);color:var(--cyan);border-radius:6px;padding:3px 10px;font-size:11px;cursor:pointer">+ Adicionar</button>
+        </div>
+        <div id="proc-func-rows" style="display:flex;flex-direction:column;gap:8px">
+          ${_procFuncRows.map((f,i) => _renderFuncRow(f, i)).join('')}
+        </div>
+      </div>
+
+      <!-- Linha 7: Observação -->
+      <div>
+        <label style="font-size:11px;font-weight:600;color:var(--text3);display:block;margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Observação (opcional)</label>
+        <textarea id="proc-inp-obs" rows="2" placeholder="Anotações sobre este processo..."
+          style="width:100%;box-sizing:border-box;background:var(--bg);border:1px solid var(--border);border-radius:7px;padding:8px 10px;color:var(--text);font-size:13px;resize:vertical;font-family:inherit">${proc.obs||''}</textarea>
+      </div>
+
+    </div>
+
+    <div style="padding:14px 20px;border-top:1px solid var(--border);display:flex;gap:8px;justify-content:flex-end;position:sticky;bottom:0;background:var(--s1)">
+      <button onclick="document.getElementById('modal-processo').remove()"
+        style="background:var(--s2);border:1px solid var(--border);border-radius:7px;padding:8px 18px;font-size:13px;color:var(--text);cursor:pointer">Cancelar</button>
+      <button onclick="procSalvar()"
+        style="background:var(--cyan);border:none;border-radius:7px;padding:8px 22px;font-size:13px;font-weight:700;color:#000;cursor:pointer">💾 Salvar Processo</button>
+    </div>
+  </div>`;
+
+  document.body.appendChild(modal);
+  modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
+  procToggleTempoCampos();
+}
+
+function _renderFuncRow(f, i) {
+  const funcOpts = (_funcProd || []).map(fp =>
+    `<option value="${fp.nome.replace(/"/g,'&quot;')}" ${f.nome===fp.nome?'selected':''}>${fp.nome}</option>`
+  ).join('');
+  const horas = f.tempoMin ? Math.floor(f.tempoMin/60) : '';
+  const mins  = f.tempoMin ? f.tempoMin % 60 : '';
+  return `
+  <div id="proc-func-row-${i}" style="display:grid;grid-template-columns:1fr 110px 70px 60px 28px;gap:6px;align-items:center">
+    <select class="proc-func-nome" data-idx="${i}"
+      style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:6px 8px;color:var(--text);font-size:12px">
+      <option value="">— Selecionar —</option>
+      ${funcOpts}
+      <option value="__manual__" ${!funcOpts||(!f.nome)?'':''}> ✍️ Digitar nome...</option>
+    </select>
+    <input class="proc-func-funcao" data-idx="${i}" type="text" placeholder="Função" value="${f.funcao||''}"
+      style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:6px 8px;color:var(--text);font-size:12px">
+    <input class="proc-func-horas" data-idx="${i}" type="number" min="0" max="24" placeholder="Horas" value="${horas}"
+      style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:6px 8px;color:var(--text);font-size:12px">
+    <input class="proc-func-mins" data-idx="${i}" type="number" min="0" max="59" placeholder="Min" value="${mins}"
+      style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:6px 8px;color:var(--text);font-size:12px">
+    <button onclick="procRemoverFuncRow(${i})" style="background:none;border:none;color:var(--red);font-size:16px;cursor:pointer;padding:0;line-height:1">×</button>
+  </div>`;
+}
+
+function procToggleTempoCampos() {
+  const diaInteiro = document.getElementById('proc-tempo-dia')?.checked;
+  const campos = document.getElementById('proc-tempo-campos');
+  if (campos) campos.style.display = diaInteiro ? 'none' : 'flex';
+}
+
+function procAdicionarFuncRow() {
+  _procFuncRows.push({ nome: '', funcao: '', tempoMin: null });
+  const container = document.getElementById('proc-func-rows');
+  if (!container) return;
+  const i = _procFuncRows.length - 1;
+  container.insertAdjacentHTML('beforeend', _renderFuncRow(_procFuncRows[i], i));
+}
+
+function procRemoverFuncRow(i) {
+  _procFuncRows.splice(i, 1);
+  const container = document.getElementById('proc-func-rows');
+  if (!container) return;
+  container.innerHTML = _procFuncRows.map((f,idx) => _renderFuncRow(f, idx)).join('');
+}
+
+function _coletarFuncRows() {
+  const rows = document.querySelectorAll('#proc-func-rows [data-idx]');
+  const indices = [...new Set([...rows].map(el => el.dataset.idx))];
+  return indices.map(i => {
+    const nomeSel  = document.querySelector(`.proc-func-nome[data-idx="${i}"]`);
+    const funcaoEl = document.querySelector(`.proc-func-funcao[data-idx="${i}"]`);
+    const horasEl  = document.querySelector(`.proc-func-horas[data-idx="${i}"]`);
+    const minsEl   = document.querySelector(`.proc-func-mins[data-idx="${i}"]`);
+    const nome = nomeSel ? nomeSel.value : '';
+    if (!nome || nome === '__manual__') return null;
+    const h = parseInt(horasEl?.value) || 0;
+    const m = parseInt(minsEl?.value) || 0;
+    const tempoMin = h*60 + m || null;
+    return { nome, funcao: funcaoEl?.value?.trim() || '', tempoMin };
+  }).filter(Boolean);
+}
+
+async function procSalvar() {
+  const nome = document.getElementById('proc-inp-nome')?.value?.trim();
+  if (!nome) { toast('Informe o nome do processo', 'err'); return; }
+  const data = document.getElementById('proc-inp-data')?.value;
+  if (!data) { toast('Informe a data', 'err'); return; }
+
+  const diaInteiro = document.getElementById('proc-tempo-dia')?.checked || false;
+  const horas = parseInt(document.getElementById('proc-inp-horas')?.value) || 0;
+  const mins  = parseInt(document.getElementById('proc-inp-mins')?.value) || 0;
+  const tempoMinutos = diaInteiro ? 480 : (horas*60 + mins) || null;
+
+  const payload = {
+    nome,
+    tipo:       document.getElementById('proc-inp-tipo')?.value || 'outro',
+    produto:    document.getElementById('proc-inp-produto')?.value || '',
+    data,
+    diaInteiro,
+    tempoMinutos,
+    horaInicio: document.getElementById('proc-inp-inicio')?.value || '',
+    horaFim:    document.getElementById('proc-inp-fim')?.value || '',
+    status:     document.getElementById('proc-inp-status')?.value || 'finalizado',
+    obs:        document.getElementById('proc-inp-obs')?.value?.trim() || '',
+    funcionarios: _coletarFuncRows(),
+  };
+
+  if (_processoEditId) payload._id = _processoEditId;
+
+  try {
+    const btn = document.querySelector('#modal-processo button[onclick="procSalvar()"]');
+    if (btn) { btn.disabled = true; btn.textContent = 'Salvando...'; }
+    await _salvarProcesso(payload);
+    toast(_processoEditId ? 'Processo atualizado!' : 'Processo salvo!', 'ok');
+    document.getElementById('modal-processo')?.remove();
+    renderProcessos();
+  } catch(e) {
+    toast('Erro ao salvar: ' + e.message, 'err');
+  }
+}
+
+window.realizadoSubTab       = realizadoSubTab;
+window.renderProcessos       = renderProcessos;
+window.abrirModalProcesso    = abrirModalProcesso;
+window.procSalvar            = procSalvar;
+window.procAdicionarFuncRow  = procAdicionarFuncRow;
+window.procRemoverFuncRow    = procRemoverFuncRow;
+window.procToggleTempoCampos = procToggleTempoCampos;
+window.procLimparFiltros     = procLimparFiltros;
+window.procExcluir           = procExcluir;
+window.procFinalizarProcesso = procFinalizarProcesso;
