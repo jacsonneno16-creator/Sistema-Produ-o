@@ -551,6 +551,7 @@ async function carregarCategoriasFirestore() {
       return (a.nome||'').localeCompare(b.nome||'');
     });
     CATEGORIAS = cats;
+    window.CATEGORIAS = CATEGORIAS;
   } catch(e) {
     console.warn('[CATEGORIAS] Erro ao carregar:', e.message);
     // Tentar sem orderBy caso o índice não exista
@@ -563,9 +564,11 @@ async function carregarCategoriasFirestore() {
         return (a.nome||'').localeCompare(b.nome||'');
       });
       CATEGORIAS = cats2;
+      window.CATEGORIAS = CATEGORIAS;
     } catch(e2) {
       console.warn('[CATEGORIAS] Erro no fallback:', e2.message);
       CATEGORIAS = [];
+      window.CATEGORIAS = [];
     }
   }
 }
@@ -8027,6 +8030,7 @@ function renderProdutosCfg() {
           <span style="font-size:10px;color:var(--text3);font-family:'JetBrains Mono',monospace">${p.unid}un/cx</span>
           ${p.categoria ? `<span style="font-size:10px;color:var(--text3)">${p.categoria}</span>` : ''}
           ${p.classificacao ? `<span style="font-size:10px;color:var(--text3)">/ ${p.classificacao}</span>` : ''}
+          ${p.alergenico ? `<span style="font-size:9px;font-weight:700;color:#ff6b35;background:rgba(255,107,53,.12);border:1px solid rgba(255,107,53,.3);padding:1px 6px;border-radius:10px">⚠️ ALERG.</span>` : ''}
           <span style="color:var(--text3);font-size:10px">·</span>
           ${maqTags}
         </div>
@@ -8651,30 +8655,32 @@ async function _baixarTemplateCompleto() {
       m.hTurno || 8,
       m.nTurnos || 1,
       m.tempoSetupPadrao || 0,
-      Array.isArray(m.produtosCompativeis) ? m.produtosCompativeis.map(p => p.produto).join(', ') : ''
+      Array.isArray(m.produtosCompativeis) ? m.produtosCompativeis.map(p => p.produto).join(', ') : '',
+      m.categoria || ''
     ]);
     // fallback: se MAQUINAS_DATA vazio, usa MAQUINAS array
     if (!rowsMaq.length && Array.isArray(window.MAQUINAS)) {
-      window.MAQUINAS.forEach(nome => rowsMaq.push([nome,'',  'Empacotadeira','Embalagem','ativa',0,100,8,1,0,'']));
+      window.MAQUINAS.forEach(nome => rowsMaq.push([nome,'',  'Empacotadeira','Embalagem','ativa',0,100,8,1,0,'','']));
     }
-    const hdrMaq = ['nome','codigo','tipo','setor','status','undMin','eficiencia','hTurno','nTurnos','setup','produtos'];
+    const hdrMaq = ['nome','codigo','tipo','setor','status','undMin','eficiencia','hTurno','nTurnos','setup','produtos','categoria'];
     const wsMaq = XLSX.utils.aoa_to_sheet([
       ...cabecalho('CADASTRO DE MÁQUINAS',
         'Uma linha por máquina. A coluna "produtos" lista os produtos compatíveis separados por vírgula.',
         hdrMaq),
       ...rowsMaq
     ]);
-    wsMaq['!cols'] = [{wch:26},{wch:12},{wch:16},{wch:14},{wch:10},{wch:10},{wch:12},{wch:10},{wch:10},{wch:10},{wch:80}];
+    wsMaq['!cols'] = [{wch:26},{wch:12},{wch:16},{wch:14},{wch:10},{wch:10},{wch:12},{wch:10},{wch:10},{wch:10},{wch:80},{wch:20}];
 
     // ── Aba Produtos ──────────────────────────────────────────────
     const produtos = getAllProdutos ? getAllProdutos() : (window.PRODUTOS || []);
-    const hdrProd = ['cod','descricao','unid','pc_min','maquina','categoria','coberturaDias','producaoMinima','status'];
+    const hdrProd = ['cod','descricao','unid','pc_min','maquina','categoria','coberturaDias','producaoMinima','status','alergênico'];
     const rowsProd = produtos.map(p => [
       p.cod, p.descricao, p.unid, p.pc_min, p.maquina,
       p.categoria || '',
       p.metaCoberturaDias || p.coberturaDias || 0,
       p.producaoMinima || 0,
-      p.produtoAtivo !== false ? 'ATIVO' : 'DESATIVADO'
+      p.produtoAtivo !== false ? 'ATIVO' : 'DESATIVADO',
+      p.alergenico ? 'SIM' : 'NÃO'
     ]);
     const wsProd = XLSX.utils.aoa_to_sheet([
       ...cabecalho('PRODUTOS — Base Máquina x Tempo',
@@ -8682,7 +8688,7 @@ async function _baixarTemplateCompleto() {
         hdrProd),
       ...rowsProd
     ]);
-    wsProd['!cols'] = [{wch:10},{wch:62},{wch:10},{wch:12},{wch:26},{wch:14},{wch:14},{wch:14},{wch:12}];
+    wsProd['!cols'] = [{wch:10},{wch:62},{wch:10},{wch:12},{wch:26},{wch:14},{wch:14},{wch:14},{wch:12},{wch:14}];
 
     // ── Aba Insumos ───────────────────────────────────────────────
     const fichas = (typeof fichaTecnicaData !== 'undefined' ? fichaTecnicaData : null) || (typeof FICHA_TECNICA !== 'undefined' ? FICHA_TECNICA : []);
@@ -8784,8 +8790,12 @@ async function importarArquivoPadrao(input) {
             unid:         parseInt(r[2]) || 1,
             pc_min:       parseFloat(r[3]) || 0,
             maquina:      String(r[4] || 'MANUAL').trim().toUpperCase(),
-            produtoAtivo: _parseAtivo(r[5]),
-            ativo:        _parseAtivo(r[5])
+            categoria:    String(r[5] || '').trim(),
+            metaCoberturaDias: parseFloat(r[6]) || 0,
+            producaoMinima:    parseFloat(r[7]) || 0,
+            produtoAtivo: _parseAtivo(r[8]),
+            ativo:        _parseAtivo(r[8]),
+            alergenico:   String(r[9] || '').trim().toUpperCase() === 'SIM'
           }));
 
         // Insumos
@@ -8827,7 +8837,8 @@ async function importarArquivoPadrao(input) {
             hTurno:     parseFloat(r[7]) || 8,
             nTurnos:    parseFloat(r[8]) || 1,
             tempoSetupPadrao: parseFloat(r[9]) || 0,
-            produtosCompativeis: prodListStr.split(',').map(p => p.trim()).filter(Boolean).map(p => ({ produto: p, velocidade: null }))
+            produtosCompativeis: prodListStr.split(',').map(p => p.trim()).filter(Boolean).map(p => ({ produto: p, velocidade: null })),
+            categoria:  String(r[11] || '').trim()
           });
         });
 
@@ -8885,7 +8896,7 @@ async function importarArquivoPadrao(input) {
 
       // Limpar memória
       if (Array.isArray(window.PRODUTOS)) window.PRODUTOS.splice(0, window.PRODUTOS.length);
-      if (typeof PRODUTOS_EXTRA !== 'undefined' && Array.isArray(PRODUTOS_EXTRA)) { PRODUTOS_EXTRA.splice(0, PRODUTOS_EXTRA.length); localStorage.removeItem('produtos_extra'); }
+      if (typeof PRODUTOS_EXTRA !== 'undefined' && Array.isArray(PRODUTOS_EXTRA)) { PRODUTOS_EXTRA.splice(0, PRODUTOS_EXTRA.length); localStorage.removeItem('cfg_produtos'); }
       if (typeof fichaTecnicaData !== 'undefined' && Array.isArray(fichaTecnicaData)) fichaTecnicaData.splice(0, fichaTecnicaData.length);
       if (typeof FICHA_TECNICA !== 'undefined' && Array.isArray(FICHA_TECNICA)) FICHA_TECNICA.splice(0, FICHA_TECNICA.length);
       if (maquinasEntries.length > 0) { window.MAQUINAS_DATA = {}; if (typeof MAQUINAS !== 'undefined' && Array.isArray(MAQUINAS)) MAQUINAS.splice(0, MAQUINAS.length); }
@@ -14425,7 +14436,7 @@ window.debugSistema = function() {
 window.resetarConfiguracoes = function() {
   if (confirm('Tem certeza que deseja resetar todas as configurações? Esta ação não pode ser desfeita.')) {
     localStorage.removeItem('machineHours');
-    localStorage.removeItem('produtos_extra');
+    localStorage.removeItem('cfg_produtos');
     localStorage.removeItem('currentUser');
     
     // Recarregar página
@@ -15050,7 +15061,7 @@ async function confirmarExclusaoEmMassa() {
       if (Array.isArray(window.PRODUTOS)) window.PRODUTOS.splice(0, window.PRODUTOS.length);
       if (typeof PRODUTOS_EXTRA !== 'undefined' && Array.isArray(PRODUTOS_EXTRA)) {
         PRODUTOS_EXTRA.splice(0, PRODUTOS_EXTRA.length);
-        localStorage.removeItem('produtos_extra');
+        localStorage.removeItem('cfg_produtos');
       }
     }
 
