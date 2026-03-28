@@ -7482,9 +7482,8 @@ function openEditMaquina(nome) {
   const setupInp = document.getElementById('maq-setup-inp');
   if (setupInp) setupInp.value = (d.tempoSetupPadrao != null && d.tempoSetupPadrao !== '') ? d.tempoSetupPadrao : '';
   calcMaqCapacidade();
-  carregarCategoriasCached().then(()=>preencherSelectCategorias('maq-categoria-inp', d.categoria || ''));
   switchMaqTab('dados');
-  carregarCategoriasCached().then(()=>preencherSelectCategorias('maq-categoria-inp',''));
+  carregarCategoriasCached().then(()=>preencherSelectCategorias('maq-categoria-inp', d.categoria || ''));
   populateMaqProdSel();
   renderMaqProdsLista();
   document.getElementById('maq-modal').style.display = 'flex';
@@ -7606,6 +7605,8 @@ async function saveMaquinaModal() {
     codigo: document.getElementById('maq-cod-inp').value || '',
     tipo: document.getElementById('maq-tipo-inp').value || '',
     setor: document.getElementById('maq-setor-inp').value || '',
+    categoria: (document.getElementById('maq-categoria-inp')?.value || '').trim(),
+    classificacao: (document.getElementById('maq-classificacao-inp')?.value || '').trim(),
     status: document.getElementById('maq-status-inp').value || 'ativa',
     pcMin: pcMinVal || 0,
     eficiencia: parseFloat(document.getElementById('maq-efic-inp').value) || 100,
@@ -8489,6 +8490,10 @@ async function importProdutosExcel(input) {
         const classificacao = (row['classificacao'] || row['Classificacao'] || row['Classificação'] || '').toString().trim();
         const coberturaDias = parseInt(row['coberturaDias'] || row['CobDias'] || 0);
         const estoqueMinimo = parseFloat(row['estoqueMinimo'] || row['EstMin'] || 0);
+        const graoVal = String(row['grao'] || row['grão'] || row['Grao'] || row['Grão'] || 'NÃO').trim().toUpperCase();
+        const grao = graoVal === 'SIM' || graoVal === 'S' || graoVal === '1' || graoVal === 'TRUE';
+        const alergVal = String(row['alergênico'] || row['alergenico'] || row['Alergênico'] || row['Alergenico'] || 'NÃO').trim().toUpperCase();
+        const alergenico = alergVal === 'SIM' || alergVal === 'S' || alergVal === '1' || alergVal === 'TRUE';
         
         if (!cod || !desc || !unid || !maq) { erros++; return; }
         
@@ -8503,7 +8508,7 @@ async function importProdutosExcel(input) {
         
         maquinasMap.get(maqUpper).produtos.push({
           cod, descricao: desc, unid, pc_min: pcmin, maquina: maq, 
-          categoria, classificacao, coberturaDias, estoqueMinimo, ativo: true
+          categoria, classificacao, coberturaDias, estoqueMinimo, grao, alergenico, ativo: true
         });
         
         if (pcmin > 0) {
@@ -8579,7 +8584,9 @@ async function importProdutosExcel(input) {
               existente.categoria   !== (produto.categoria || '') ||
               (existente.classificacao || '') !== (produto.classificacao || '') ||
               (existente.coberturaDias  || 0) !== (produto.coberturaDias || 0) ||
-              (existente.estoqueMinimo  || 0) !== (produto.estoqueMinimo || 0);
+              (existente.estoqueMinimo  || 0) !== (produto.estoqueMinimo || 0) ||
+              (!!existente.grao) !== (!!produto.grao) ||
+              (!!existente.alergenico) !== (!!produto.alergenico);
 
             if (mudou) {
               // Preservar campos que não vêm na importação
@@ -8622,11 +8629,11 @@ async function importProdutosExcel(input) {
 function downloadProdTemplate(e) {
   e.preventDefault();
   const ws = XLSX.utils.aoa_to_sheet([
-    ['cod','descricao','maquina','pc_min','unid','categoria','classificacao','coberturaDias','estoqueMinimo'],
-    [12345,'POLVILHO AZEDO 500G - CX 12','SELGRON 01',46.75,12,'ESPECIARIA','PÓ',15,100],
-    [12346,'COCO RALADO 100G - CX 24','SELGRON 01',52.30,24,'ESPECIARIA','RALADOS',10,50],
-    [12347,'FARINHA MILHO 1KG - CX 10','ALFATECK 14',28.05,10,'FARINHA','FARINÁCEOS',20,75],
-    [12348,'BICARBONATO 250G - CX 20','ALFATECK 14',31.80,20,'ESPECIARIA','PÓ',12,40]
+    ['cod','descricao','maquina','pc_min','unid','categoria','classificacao','coberturaDias','estoqueMinimo','grao','alergênico'],
+    [12345,'POLVILHO AZEDO 500G - CX 12','SELGRON 01',46.75,12,'ESPECIARIA','PÓ',15,100,'NÃO','SIM'],
+    [12346,'COCO RALADO 100G - CX 24','SELGRON 01',52.30,24,'ESPECIARIA','RALADOS',10,50,'NÃO','NÃO'],
+    [12347,'FARINHA MILHO 1KG - CX 10','ALFATECK 14',28.05,10,'FARINHA','FARINÁCEOS',20,75,'SIM','NÃO'],
+    [12348,'BICARBONATO 250G - CX 20','ALFATECK 14',31.80,20,'ESPECIARIA','PÓ',12,40,'NÃO','NÃO']
   ]);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Produtos');
@@ -8676,18 +8683,23 @@ async function _baixarTemplateCompleto() {
 
     // ── Aba Produtos ──────────────────────────────────────────────
     const produtos = getAllProdutos ? getAllProdutos() : (window.PRODUTOS || []);
-    const hdrProd = ['cod','descricao','unid','pc_min','maquina','status'];
+    const hdrProd = ['cod','descricao','unid','pc_min','maquina','categoria','classificacao','coberturaDias','estoqueMinimo','grao','alergênico','status'];
     const rowsProd = produtos.map(p => [
       p.cod, p.descricao, p.unid, p.pc_min, p.maquina,
+      p.categoria || '', p.classificacao || '',
+      p.metaCoberturaDias || p.coberturaDias || 0,
+      p.producaoMinima || p.estoqueMinimo || 0,
+      p.grao ? 'SIM' : 'NÃO',
+      p.alergenico ? 'SIM' : 'NÃO',
       p.produtoAtivo !== false ? 'ATIVO' : 'DESATIVADO'
     ]);
     const wsProd = XLSX.utils.aoa_to_sheet([
       ...cabecalho('PRODUTOS — Base Máquina x Tempo',
-        'Preencha cod, descricao, unid, pc_min e maquina. Status: ATIVO ou DESATIVADO.',
+        'Preencha cod, descricao, unid, pc_min e maquina. grao e alergênico: SIM ou NÃO. Status: ATIVO ou DESATIVADO.',
         hdrProd),
       ...rowsProd
     ]);
-    wsProd['!cols'] = [{wch:10},{wch:62},{wch:10},{wch:12},{wch:26},{wch:12}];
+    wsProd['!cols'] = [{wch:10},{wch:62},{wch:10},{wch:12},{wch:26},{wch:14},{wch:16},{wch:14},{wch:14},{wch:8},{wch:12},{wch:12}];
 
     // ── Aba Insumos ───────────────────────────────────────────────
     const fichas = (typeof fichaTecnicaData !== 'undefined' ? fichaTecnicaData : null) || (typeof FICHA_TECNICA !== 'undefined' ? FICHA_TECNICA : []);

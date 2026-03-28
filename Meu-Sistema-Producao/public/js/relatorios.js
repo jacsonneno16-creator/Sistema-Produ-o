@@ -155,6 +155,12 @@ function buildRelatoriosHTML() {
           <option value="">Todos os produtos</option>
         </select>
       </div>
+      <div class="rel2-filter-group">
+        <label class="rel2-filter-label">Categoria</label>
+        <select id="rel2-categoria" class="rel2-input" onchange="relatorios.aplicarFiltros()">
+          <option value="">Todas as categorias</option>
+        </select>
+      </div>
       <div style="display:flex;gap:6px;margin-top:16px;flex-wrap:wrap">
         <button onclick="relatorios.setPreset('hoje')"    class="btn-rel-preset" id="preset-hoje">Hoje</button>
         <button onclick="relatorios.setPreset('semana')"  class="btn-rel-preset" id="preset-semana">Semana</button>
@@ -361,6 +367,7 @@ function _popularFiltros() {
   // Máquinas
   const maqSel = document.getElementById('rel2-maquina');
   const prodSel = document.getElementById('rel2-produto');
+  const catSel = document.getElementById('rel2-categoria');
   if (!maqSel || !prodSel) return;
 
   const allRecs = _getRecords();
@@ -371,6 +378,17 @@ function _popularFiltros() {
     maqs.map(m => `<option value="${m}">${m}</option>`).join('');
   prodSel.innerHTML = '<option value="">Todos os produtos</option>' +
     prods.map(p => `<option value="${_esc(p)}">${p}</option>`).join('');
+
+  if (catSel) {
+    const cats = Array.isArray(window.CATEGORIAS) && window.CATEGORIAS.length
+      ? window.CATEGORIAS.map(c => c.nome || c).filter(Boolean).sort()
+      : [...new Set(
+          (typeof window.getAllProdutos === 'function' ? window.getAllProdutos() : (window.PRODUTOS || []))
+            .map(p => p.categoria || '').filter(Boolean)
+        )].sort();
+    catSel.innerHTML = '<option value="">Todas as categorias</option>' +
+      cats.map(c => `<option value="${_esc(c)}">${c}</option>`).join('');
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -387,6 +405,7 @@ function renderRelatorios() {
   _relFiltros.dataFim    = document.getElementById('rel2-data-fim')?.value    || '';
   _relFiltros.maquina    = document.getElementById('rel2-maquina')?.value     || '';
   _relFiltros.produto    = document.getElementById('rel2-produto')?.value     || '';
+  _relFiltros.categoria  = document.getElementById('rel2-categoria')?.value   || '';
 
   // Timestamp de atualização
   const lblUpdate = document.getElementById('rel2-last-update');
@@ -1276,15 +1295,19 @@ function _getRecords() {
 // ─────────────────────────────────────────────────────────────────
 function getDadosFiltrados() {
   const allRecs = _getRecords();
-  const { dataInicio, dataFim, maquina, produto } = _relFiltros;
+  const { dataInicio, dataFim, maquina, produto, categoria } = _relFiltros;
 
-  // Filtrar registros pelos 4 critérios
+  // Filtrar registros pelos critérios
   const recs = allRecs.filter(r => {
     const dt = r.dtDesejada || r.dtSolicitacao || '';
     if (dataInicio && dt && dt < dataInicio) return false;
     if (dataFim    && dt && dt > dataFim)    return false;
     if (maquina    && r.maquina !== maquina) return false;
     if (produto    && r.produto !== produto) return false;
+    if (categoria) {
+      const catProd = _getCategoriaProduto(r);
+      if (catProd !== categoria) return false;
+    }
     return true;
   });
 
@@ -1539,6 +1562,8 @@ const relatorios = {
     if (fim) fim.value = _fmtDateInput(hoje);
     if (maq) maq.value = '';
     if (prod) prod.value = '';
+    const cat = document.getElementById('rel2-categoria');
+    if (cat) cat.value = '';
     document.querySelectorAll('.btn-rel-preset').forEach(b => b.classList.remove('active'));
     renderRelatorios();
   },
