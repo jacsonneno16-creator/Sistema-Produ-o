@@ -188,7 +188,7 @@ function buildRelatoriosHTML() {
     <div class="rel2-card">
       <div class="rel2-card-hd"><span>🏭 Produção por Máquina</span></div>
       <div style="position:relative;height:220px">
-        <canvas id="chart-maquinas"></canvas>
+        <div style="font-size:9px;color:var(--text3);text-align:right;margin-bottom:4px;font-style:italic">clique na barra para filtrar</div><canvas id="chart-maquinas" style="cursor:pointer"></canvas>
         <div id="chart-maquinas-empty" class="rel2-chart-empty" style="display:none">Sem dados no período</div>
       </div>
     </div>
@@ -199,7 +199,7 @@ function buildRelatoriosHTML() {
     <div class="rel2-card">
       <div class="rel2-card-hd"><span>🏆 Top Produtos Produzidos</span></div>
       <div style="position:relative;height:220px">
-        <canvas id="chart-top-produtos"></canvas>
+        <div style="font-size:9px;color:var(--text3);text-align:right;margin-bottom:4px;font-style:italic">clique para filtrar</div><canvas id="chart-top-produtos" style="cursor:pointer"></canvas>
         <div id="chart-top-produtos-empty" class="rel2-chart-empty" style="display:none">Sem dados no período</div>
       </div>
     </div>
@@ -797,7 +797,13 @@ function _renderChartMaquinas(d) {
         }
       ]
     },
-    options: { ..._chartOptions('Caixas'), indexAxis: 'y' }
+    options: { ..._chartOptions('Caixas', (evt, els) => {
+      if (!els.length) return;
+      const maqNome = entries[els[0].index]?.[0];
+      if (!maqNome) return;
+      const sel = document.getElementById('rel2-maquina');
+      if (sel) { sel.value = sel.value === maqNome ? '' : maqNome; relatorios.aplicarFiltros(); }
+    }), indexAxis: 'y' }
   });
 }
 
@@ -1111,7 +1117,13 @@ function exportXLSX() {
     return;
   }
   try {
-    const dados = _calcularDados();
+  // Sincronizar filtros do DOM antes de exportar
+  _relFiltros.dataInicio = document.getElementById('rel2-data-inicio')?.value || '';
+  _relFiltros.dataFim    = document.getElementById('rel2-data-fim')?.value    || '';
+  _relFiltros.maquina    = document.getElementById('rel2-maquina')?.value     || '';
+  _relFiltros.produto    = document.getElementById('rel2-produto')?.value     || '';
+  _relFiltros.categoria  = document.getElementById('rel2-categoria')?.value   || '';
+  _dadosCache = null; // forçar recálculo com filtros atuais
     const wb = XLSX.utils.book_new();
 
     // Aba 1: Resumo KPIs
@@ -1186,7 +1198,13 @@ function exportPDF() {
     return;
   }
   try {
-    const { jsPDF } = window.jspdf;
+  // Sincronizar filtros do DOM antes de exportar
+  _relFiltros.dataInicio = document.getElementById('rel2-data-inicio')?.value || '';
+  _relFiltros.dataFim    = document.getElementById('rel2-data-fim')?.value    || '';
+  _relFiltros.maquina    = document.getElementById('rel2-maquina')?.value     || '';
+  _relFiltros.produto    = document.getElementById('rel2-produto')?.value     || '';
+  _relFiltros.categoria  = document.getElementById('rel2-categoria')?.value   || '';
+  _dadosCache = null; // forçar recálculo com filtros atuais
     const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
     const dados = _calcularDados();
 
@@ -1259,7 +1277,13 @@ async function exportImagem() {
     return;
   }
   try {
-    const el = document.getElementById('rel2-root');
+  // Sincronizar filtros do DOM antes de exportar
+  _relFiltros.dataInicio = document.getElementById('rel2-data-inicio')?.value || '';
+  _relFiltros.dataFim    = document.getElementById('rel2-data-fim')?.value    || '';
+  _relFiltros.maquina    = document.getElementById('rel2-maquina')?.value     || '';
+  _relFiltros.produto    = document.getElementById('rel2-produto')?.value     || '';
+  _relFiltros.categoria  = document.getElementById('rel2-categoria')?.value   || '';
+  _dadosCache = null; // forçar recálculo com filtros atuais
     if (!el) return;
     _toast('Gerando imagem...', 'info');
     const canvas = await html2canvas(el, {
@@ -1472,8 +1496,8 @@ function _getVelMaquina(maquina) {
 // ─────────────────────────────────────────────────────────────────
 // CHART OPTIONS PADRÃO
 // ─────────────────────────────────────────────────────────────────
-function _chartOptions(yLabel) {
-  return {
+function _chartOptions(yLabel, onClickCb) {
+  const base = {
     responsive: true,
     maintainAspectRatio: false,
     interaction: { mode: 'index', intersect: false },
@@ -1509,6 +1533,8 @@ function _chartOptions(yLabel) {
       }
     }
   };
+  if (onClickCb) base.onClick = onClickCb;
+  return base;
 }
 
 // ─────────────────────────────────────────────────────────────────

@@ -3494,7 +3494,12 @@ function renderGanttSemanal(){
         const blocks=ganttGetBlocks(day,maq);
         const dayCapMin=(hoursOnDayMaq(day,maq))*60;
 
-        html+=`<div class="g-day ${isWknd?'weekend':''}" style="${isToday?'background:rgba(0,229,204,.04)':''}">`;
+        const dayDateStr = dateStr(day);
+        const canEditGantt = typeof can==='function' && can('gantt','editar');
+        html+=`<div class="g-day ${isWknd?'weekend':''}" style="${isToday?'background:rgba(0,229,204,.04)':''}"
+          data-day="${dayDateStr}" data-maq="${recMaq.replace(/"/g,'&quot;')}"
+          ${canEditGantt?`ondragover="ganttDayDragOver(event)" ondragleave="ganttDayDragLeave(event)" ondrop="ganttDayDrop(event)"`:''}
+        >`;
 
         if((daySeg.length||daySetupSeg.length) && dayCapMin>0){
           // Show bars for each segment (one per shift block used)
@@ -3522,6 +3527,7 @@ function renderGanttSemanal(){
             </div>`;
           });
 
+          const recIds = recs.map(r=>r.id).join(',');
           daySeg.forEach(seg=>{
             const leftPct=seg.startPct.toFixed(1);
             const widthPct=(seg.endPct-seg.startPct).toFixed(1);
@@ -3529,8 +3535,13 @@ function renderGanttSemanal(){
             const hrsLabel=fmtHrs(seg.hrsNoDia);
             const turnoTip=seg.turnoLabel?` · ${seg.turnoLabel}`:'';
             const obsTip=obs?` — ${obs}`:'';
-            html+=`<div class="g-bar" style="left:${leftPct}%;width:${widthPct}%;background:${color};opacity:0.9;position:absolute;top:30%;height:70%"
-              title="${produto}${obsTip}${turnoTip} · ${cx} cx · ${hrsLabel}">
+            const canEdit = typeof can==='function' && can('gantt','editar');
+            html+=`<div class="g-bar${canEdit?' g-bar-drag':''}" draggable="${canEdit}"
+              data-recids="${recIds}" data-produto="${produto.replace(/"/g,'&quot;')}"
+              style="left:${leftPct}%;width:${widthPct}%;background:${color};opacity:0.9;position:absolute;top:30%;height:70%;${canEdit?'cursor:grab;':''}"
+              title="${produto}${obsTip}${turnoTip} · ${cx} cx · ${hrsLabel}"
+              ondragstart="ganttBarDragStart(event)"
+              ondragend="ganttBarDragEnd(event)">
               <div class="g-bar-tip">${produto.substring(0,40)}${obs?'<br><span style=\"font-size:9px;opacity:.8\">'+obs+'</span>':''}<br>${cx} cx · ${hrsLabel}${seg.turnoLabel?' · '+seg.turnoLabel:''}</div>
             </div>`;
           });
@@ -16756,3 +16767,90 @@ window.procExcluir           = procExcluir;
 window.procFinalizarProcesso = procFinalizarProcesso;
 window.procAdicionarProduto  = procAdicionarProduto;
 window.procRemoverProduto    = procRemoverProduto;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// GANTT — Drag & Drop para mover produto para outro dia
+// ═══════════════════════════════════════════════════════════════════════════
+
+let _ganttDragRecIds = null;
+let _ganttDragProduto = null;
+
+function ganttBarDragStart(e) {
+  if (!can('gantt', 'editar')) { e.preventDefault(); return; }
+  _ganttDragRecIds  = (e.currentTarget.dataset.recids || '').split(',').filter(Boolean);
+  _ganttDragProduto = e.currentTarget.dataset.produto || '';
+  e.dataTransfer.effectAllowed = 'move';
+  e.dataTransfer.setData('text/plain', _ganttDragRecIds.join(','));
+  e.currentTarget.style.opacity = '0.45';
+  // highlight drop zones
+  document.querySelectorAll('.g-day:not(.weekend)').forEach(el => {
+    el.classList.add('g-drop-ready');
+  });
+}
+
+function ganttBarDragEnd(e) {
+  e.currentTarget.style.opacity = '';
+  document.querySelectorAll('.g-day').forEach(el => {
+    el.classList.remove('g-drop-ready', 'g-drop-hover');
+  });
+}
+
+function ganttDayDragOver(e) {
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+  e.currentTarget.classList.add('g-drop-hover');
+}
+
+function ganttDayDragLeave(e) {
+  e.currentTarget.classList.remove('g-drop-hover');
+}
+
+async function ganttDayDrop(e) {
+  e.preventDefault();
+  e.currentTarget.classList.remove('g-drop-hover', 'g-drop-ready');
+  document.querySelectorAll('.g-day').forEach(el => el.classList.remove('g-drop-ready'));
+
+  if (!can('gantt', 'editar')) { toast('Sem permissão para editar o Gantt.', 'err'); return; }
+
+  const novaData  = e.currentTarget.dataset.day;
+  const recIds    = _ganttDragRecIds;
+  const produto   = _ganttDragProduto;
+
+  if (!novaData || !recIds || !recIds.length) return;
+
+  // Verificar se algum registro já está nessa data
+  const jaEssaData = recIds.every(id => {
+    const r = records.find(x => String(x.id) === String(id));
+    return r && (r.dtDesejada || r.dtSolicitacao) === novaData;
+  });
+  if (jaEssaData) return;
+
+  const dtLabel = new Date(novaData + 'T12:00:00').toLocaleDateString('pt-BR', { weekday:'long', day:'2-digit', month:'2-digit' });
+  if (!confirm(`Mover "${produto}" para ${dtLabel}?`)) return;
+
+  try {
+    toast('Movendo...', 'ok');
+    for (const id of recIds) {
+      const r = records.find(x => String(x.id) === String(id));
+      if (!r) continue;
+      r.dtDesejada = novaData;
+      await dbPut({ ...r, dtDesejada: novaData });
+    }
+    // Recalcular Gantt
+    if (ganttBaseMonday) {
+      await pdLoadWeek(ganttBaseMonday);
+      renderGantt();
+    }
+    toast(`"${produto}" movido para ${dtLabel}`, 'ok');
+    registrarAuditoria('GANTT_MOVER_DIA', { produto, novaData, recIds });
+  } catch(err) {
+    toast('Erro ao mover: ' + err.message, 'err');
+    console.error('[ganttDrop]', err);
+  }
+}
+
+window.ganttBarDragStart = ganttBarDragStart;
+window.ganttBarDragEnd   = ganttBarDragEnd;
+window.ganttDayDragOver  = ganttDayDragOver;
+window.ganttDayDragLeave = ganttDayDragLeave;
+window.ganttDayDrop      = ganttDayDrop;

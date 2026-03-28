@@ -331,6 +331,10 @@ body.light .g-day.weekend{background:rgba(42,26,8,.025)}
 .g-bar:hover{opacity:.8;z-index:10}
 .g-bar-tip{display:none;position:absolute;bottom:calc(100% + 6px);left:50%;transform:translateX(-50%);background:var(--s2);border:1px solid var(--border2);border-radius:8px;padding:8px 12px;font-size:11px;color:var(--text);white-space:nowrap;z-index:50;pointer-events:none;box-shadow:var(--shadow)}
 .g-bar:hover .g-bar-tip{display:block}
+.g-bar-drag{cursor:grab!important}
+.g-bar-drag:active{cursor:grabbing!important}
+.g-drop-ready{outline:1px dashed rgba(0,212,255,.25);background:rgba(0,212,255,.03)!important;transition:background .15s}
+.g-drop-hover{outline:2px solid var(--cyan)!important;background:rgba(0,212,255,.12)!important;z-index:2}
 .g-head-label{padding:8px 10px;font-family:'JetBrains Mono',monospace;font-weight:500;font-size:10px;text-transform:uppercase;letter-spacing:.8px;color:var(--text3);border-right:1px solid var(--border);text-align:center}
 .g-head-day{padding:8px 4px;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text2);border-right:1px solid var(--td-border);text-align:center}
 .g-head-day:last-child{border-right:none}
